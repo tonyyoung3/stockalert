@@ -25,7 +25,15 @@ jobs:
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
       - name: Run screener
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         run: |
+          echo "Checking SLACK_WEBHOOK_URL..."
+          if [ -n "$SLACK_WEBHOOK_URL" ]; then
+            echo "SLACK_WEBHOOK_URL is set (length: ${#SLACK_WEBHOOK_URL})"
+          else
+            echo "SLACK_WEBHOOK_URL is NOT set"
+          fi
           python screener.py
 
     # Prevent overlapping runs if a previous one is still executing

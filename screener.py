@@ -90,26 +90,29 @@ def create_stock_chart(df, ticker, filename, pattern_name, pattern_indices):
     """使用 mplfinance 為股票繪製 K 線圖並儲存"""
     df_plot = df.tail(40).copy()  # 取最近 40 天資料繪圖
 
-    # 準備標記信號
-    # 將負數索引轉換為 df_plot 中的位置
-    marker_points = []
+    # 準備標記信號：建立一個與 df_plot 相同 index 的 Series，並填滿 NaN
+    signal_series = pd.Series(float('nan'), index=df_plot.index)
+
+    # 將負數索引轉換為 df_plot 中的位置，並在 signal_series 中設定價格
     for idx in pattern_indices:
         # 轉換負索引為正索引
         plot_idx = len(df_plot) + idx
         if 0 <= plot_idx < len(df_plot):
-            price = df_plot['High'].iloc[plot_idx] * 1.015  # 標記在 K 線上方
-            marker_points.append((df_plot.index[plot_idx], price))
+            # 取得要標記的日期和價格
+            signal_date = df_plot.index[plot_idx]
+            price = df_plot['High'].iloc[plot_idx] * 1.015 # 標記在 K 線上方
+            # 在 Series 中設定價格
+            signal_series[signal_date] = price
 
     # 建立標記的 addplot
     ap = []
-    if marker_points:
+    if not signal_series.isnull().all():
         ap.append(mpf.make_addplot(
-            [p[1] for p in marker_points],
-            x=[p[0] for p in marker_points],
+            signal_series,
             type='scatter',
             marker='*',
             color='blue',
-            s=150  # 標記大小
+            markersize=150  # 標記大小
         ))
 
     # 設定圖表樣式
@@ -124,6 +127,7 @@ def create_stock_chart(df, ticker, filename, pattern_name, pattern_indices):
              ylabel='Price',
              addplot=ap,
              mav=(20),  # 加入 20 日均線
+             # 為了在本機執行時顯示圖表，可以暫時註解掉下面這行
              savefig=dict(fname=filename, dpi=100, pad_inches=0.25)
             )
 

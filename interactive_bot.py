@@ -40,15 +40,30 @@ def create_stock_chart_for_request(df, ticker, filename):
 # -----------------------------
 # Slack 事件監聽
 # -----------------------------
-# 使用正則表達式來匹配看起來像股票代碼的訊息
-# 範例: 2330.TW, 2330, TSLA, GOOGL
-@app.message(re.compile(r"^[A-Z0-9\.]+$", re.IGNORECASE))
-def handle_stock_request(message, say, logger):
-    """處理包含股票代碼的訊息"""
-    ticker = message['text'].upper()
+# 監聽所有訊息，並從中尋找股票代碼或 'help' 指令
+@app.message("") # 監聽所有訊息
+def handle_any_message(message, say, logger):
+    """處理任何訊息，並從中尋找指令"""
+    text = message.get('text', '').strip()
     channel_id = message['channel']
     thread_ts = message.get('ts') # 取得原始訊息的時間戳，用於回覆在同一個 thread
 
+    # 1. 檢查 'help' 指令
+    if text.lower() == 'help':
+        say(
+            text="如何使用我：\n直接輸入股票代碼（例如 `2330.TW` 或 `TSLA`），我就會回傳最近的 K 線圖。",
+            thread_ts=thread_ts
+        )
+        return
+
+    # 2. 使用正則表達式從訊息中尋找股票代碼
+    # 這個正則表達式會尋找像 2330.TW, TSLA, 0050.TW 這樣的字串
+    match = re.search(r'\b([A-Z0-9]{2,10}(\.[A-Z]{2,3})?)\b', text.upper())
+    if not match:
+        # 如果找不到符合的格式，就不做任何事
+        return
+
+    ticker = match.group(1)
     logger.info(f"Received ticker request: {ticker} in channel {channel_id}")
 
     try:
@@ -81,10 +96,14 @@ def handle_stock_request(message, say, logger):
         
         # 刪除 "處理中" 的訊息
         app.client.chat_delete(channel=channel_id, ts=reply['ts'])
+        
+        # 5. 刪除本機圖檔
+        os.remove(chart_path)
 
     except Exception as e:
         logger.error(f"Error processing ticker {ticker}: {e}")
         say(text=f"處理 `{ticker}` 時發生錯誤。", thread_ts=thread_ts)
+
 
 # -----------------------------
 # 啟動機器人

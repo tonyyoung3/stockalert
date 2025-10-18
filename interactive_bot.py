@@ -3,9 +3,11 @@ import re
 import yfinance as yf
 import pandas as pd
 import mplfinance as mpf
+import logging
 from pathlib import Path
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
+from yfinance.exceptions import YFPricesMissingError
 
 # -----------------------------
 # 初始化
@@ -84,14 +86,11 @@ def handle_any_message(message, say, logger):
         # 2. 抓取資料
         logger.info(f"Step 3: Downloading data for ticker '{ticker}'...")
         stock_data = yf.download(ticker, period="25d", interval="1d", progress=False, auto_adjust=True) # 多抓幾天以防假日, 關閉進度條
+        
+        # yfinance 在找不到股票時會拋出 YFPricesMissingError 或回傳空的 DataFrame
+        # 我們需要同時處理這兩種情況
         if stock_data.empty:
-            logger.warning(f"Ticker '{ticker}' data is empty. Updating Slack message.")
-            app.client.chat_update(
-                channel=channel_id,
-                ts=reply['ts'],
-                text=f"抱歉，找不到股票代碼 `{ticker}` 的資料。請確認代碼是否正確（台股請加上 `.TW` 或 `.TWO`）。"
-            )
-            return
+            raise YFPricesMissingError(f"No data found for {ticker}")
 
         logger.info(f"Step 4: Data for '{ticker}' downloaded successfully. Creating chart...")
         # 3. 產生圖表
@@ -113,9 +112,17 @@ def handle_any_message(message, say, logger):
         # 5. 刪除本機圖檔
         os.remove(chart_path)
 
+    except YFPricesMissingError as e:
+        logger.warning(f"Could not find ticker '{ticker}'. Error: {e}")
+        if reply and reply.get('ts'):
+            app.client.chat_update(
+                channel=channel_id,
+                ts=reply['ts'],
+                text=f"抱歉，找不到股票代碼 `{ticker}` 的資料。請確認代碼是否正確（例如 `2330.TW` 或 `TSLA`）。"
+            )
     except Exception as e:
         logger.error(f"Error processing ticker {ticker}: {e}")
-        say(text=f"處理 `{ticker}` 時發生錯誤。", thread_ts=thread_ts)
+        say(text=f"處理 `{ticker}` 時發生未預期的錯誤，請稍後再試。", thread_ts=thread_ts)
     finally:
         # 無論成功或失敗，最後都嘗試刪除 "處理中" 的訊息
         logger.info(f"Step 7: Entering finally block for cleanup (ticker: '{ticker}').")
@@ -123,10 +130,11 @@ def handle_any_message(message, say, logger):
             try:
                 app.client.chat_delete(channel=channel_id, ts=reply['ts'])
             except SlackApiError as slack_err:
-                # 如果訊息已經被更新或刪除，這裡可能會報錯，可以安全地忽略
-                logger.warning(f"Could not delete 'in-progress' message (Slack API Error): {slack_err.response['error']}")
+                # 如果訊息已被 chat_update 更新，再刪除會失敗 (message_not_found)。這是預期行為，可以忽略。
+                if slack_err.response['error'] != 'message_not_found':
+                    logger.error(f"Unexpected Slack API error during cleanup: {slack_err}")
             except Exception as e:
-                # 處理其他非 Slack API 的錯誤
+                # 處理其他非預期的清理錯誤
                 logger.error(f"An unexpected error occurred during cleanup: {e}")
 
 
@@ -139,6 +147,7 @@ if __name__ == "__main__":
     if not os.environ.get("SLACK_BOT_TOKEN") or not os.environ.get("SLACK_APP_TOKEN"):
         print("錯誤：SLACK_BOT_TOKEN 和 SLACK_APP_TOKEN 環境變數必須被設定。")
     else:
+        logging.basicConfig(level=logging.INFO) # 設定日誌級別為 INFO
         print("🤖 Slack bot is running in Socket Mode...")
         # SocketModeHandler 會處理與 Slack 的連線
         SocketModeHandler(app, os.environ["SLACK_APP_TOKEN"]).start()

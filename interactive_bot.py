@@ -1,5 +1,6 @@
 import os
 import re
+import sys
 import yfinance as yf
 import pandas as pd
 import mplfinance as mpf
@@ -50,9 +51,12 @@ def create_stock_chart_for_request(df, ticker, filename):
 def handle_any_message(message, say, logger):
     """處理任何訊息，並從中尋找指令"""
     logger.info(f"--- New message received: {message.get('text', '')} ---")
-    # 忽略所有帶有 subtype 的訊息（例如機器人自己的回覆、檔案上傳等）
+    
+    # 雙重保險：
+    # 1. 忽略所有帶有 subtype 的訊息（機器人回覆、檔案上傳等）
+    # 2. 確保訊息中有 'user' 欄位，這可以過濾掉非使用者事件（例如被錯誤捕捉的日誌）
     # 這是消除 "Unhandled request" 警告的最佳實踐
-    if message.get('subtype') is not None:
+    if message.get('subtype') is not None or 'user' not in message:
         return
 
     text = message.get('text', '').strip()
@@ -88,7 +92,16 @@ def handle_any_message(message, say, logger):
 
         # 2. 抓取資料
         logger.info(f"Step 3: Downloading data for ticker '{ticker}'...")
-        stock_data = yf.download(ticker, period="25d", interval="1d", progress=False, auto_adjust=True) # 多抓幾天以防假日, 關閉進度條
+        
+        # 釜底抽薪：將 yfinance 的輸出重定向到 /dev/null，防止其日誌干擾 slack-bolt
+        old_stdout, old_stderr = sys.stdout, sys.stderr
+        sys.stdout = sys.stderr = open(os.devnull, 'w')
+        try:
+            stock_data = yf.download(ticker, period="25d", interval="1d", progress=False, auto_adjust=True)
+        finally:
+            # 無論如何都要恢復標準輸出/錯誤
+            sys.stdout.close()
+            sys.stdout, sys.stderr = old_stdout, old_stderr
         
         # 檢查 yfinance 是否回傳了空的 DataFrame
         if stock_data.empty:

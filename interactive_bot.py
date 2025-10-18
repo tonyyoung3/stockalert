@@ -16,6 +16,10 @@ from yfinance.exceptions import YFPricesMissingError
 # 需要一個 App-Level Token (xapp-...) 來啟用 Socket Mode
 # 隔離 yfinance 的日誌，防止其干擾 slack-bolt
 logging.getLogger('yfinance').setLevel(logging.WARNING)
+# 精準地將 yfinance 及其底層網路函式庫的日誌級別調高，
+# 防止它們的 INFO 等級日誌干擾 slack-bolt。這是解決遞迴查詢 "HTTP" 問題的根本方法。
+logging.getLogger('yfinance').setLevel(logging.ERROR)
+logging.getLogger('urllib3').setLevel(logging.ERROR)
 
 # 和一個 Bot Token (xoxb-...) 來呼叫 API
 app = App(token=os.environ.get("SLACK_BOT_TOKEN"))
@@ -92,46 +96,47 @@ def handle_any_message(message, say, logger):
 
         # 2. 抓取資料
         logger.info(f"Step 3: Downloading data for ticker '{ticker}'...")
-        
+        #stock_data = yf.download(ticker, period="25d", interval="1d", progress=False, auto_adjust=True)
+        stock_date = pd.dataframe()
         # 釜底抽薪：將 yfinance 的輸出重定向到 /dev/null，防止其日誌干擾 slack-bolt
-        old_stdout, old_stderr = sys.stdout, sys.stderr
-        sys.stdout = sys.stderr = open(os.devnull, 'w')
-        try:
-            stock_data = yf.download(ticker, period="25d", interval="1d", progress=False, auto_adjust=True)
-        finally:
-            # 無論如何都要恢復標準輸出/錯誤
-            sys.stdout.close()
-            sys.stdout, sys.stderr = old_stdout, old_stderr
+        #old_stdout, old_stderr = sys.stdout, sys.stderr
+        #sys.stdout = sys.stderr = open(os.devnull, 'w')
+        #try:
+        #    stock_data = yf.download(ticker, period="25d", interval="1d", progress=False, auto_adjust=True)
+        #finally:
+        #    # 無論如何都要恢復標準輸出/錯誤
+        #    sys.stdout.close()
+        #    sys.stdout, sys.stderr = old_stdout, old_stderr
         
         # 檢查 yfinance 是否回傳了空的 DataFrame
-        if stock_data.empty:
-            logger.warning(f"Ticker '{ticker}' data is empty. Updating Slack message.")
-            app.client.chat_update(
-                channel=channel_id,
-                ts=reply['ts'],
-                text=f"抱歉，找不到股票代碼 `{ticker}` 的資料。請確認代碼是否正確（例如 `2330.TW` 或 `TSLA`）。"
-            )
-            return # 處理完畢，提前返回，讓 finally 區塊執行清理
+        # if stock_data.empty:
+        #     logger.warning(f"Ticker '{ticker}' data is empty. Updating Slack message.")
+        #     app.client.chat_update(
+        #         channel=channel_id,
+        #         ts=reply['ts'],
+        #         text=f"抱歉，找不到股票代碼 `{ticker}` 的資料。請確認代碼是否正確（例如 `2330.TW` 或 `TSLA`）。"
+        #     )
+        #     return # 處理完畢，提前返回，讓 finally 區塊執行清理
 
         logger.info(f"Step 4: Data for '{ticker}' downloaded successfully. Creating chart...")
         # 3. 產生圖表
-        chart_path = charts_dir / f"{ticker.replace('.', '_')}_chart.png"
-        create_stock_chart_for_request(stock_data, ticker, chart_path)
+        # chart_path = charts_dir / f"{ticker.replace('.', '_')}_chart.png"
+        # create_stock_chart_for_request(stock_data, ticker, chart_path)
 
         logger.info(f"Step 5: Chart for '{ticker}' created. Uploading to Slack...")
         # 4. 上傳圖表並更新訊息
-        with open(chart_path, "rb") as file_content:
-            app.client.files_upload_v2(
-                channel=channel_id,
-                thread_ts=thread_ts,
-                file=file_content,
-                initial_comment=f"這是 `{ticker}` 的最近 20 天 K 線圖：",
-                title=f"{ticker} Chart"
-            )
+        # with open(chart_path, "rb") as file_content:
+        #     app.client.files_upload_v2(
+        #         channel=channel_id,
+        #         thread_ts=thread_ts,
+        #         file=file_content,
+        #         initial_comment=f"這是 `{ticker}` 的最近 20 天 K 線圖：",
+        #         title=f"{ticker} Chart"
+        #     )
         
-        logger.info(f"Step 6: Chart for '{ticker}' uploaded. Deleting local file.")
-        # 5. 刪除本機圖檔
-        os.remove(chart_path)
+        # logger.info(f"Step 6: Chart for '{ticker}' uploaded. Deleting local file.")
+        # # 5. 刪除本機圖檔
+        # os.remove(chart_path)
 
     except YFPricesMissingError:
         logger.warning(f"yfinance could not find ticker '{ticker}'.")

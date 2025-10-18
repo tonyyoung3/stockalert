@@ -3,16 +3,26 @@ import re
 import sys
 import yfinance as yf
 import pandas as pd
+
+# 解決在 macOS 背景執行緒中使用 matplotlib 的問題
+# 必須在 import mplfinance 或 matplotlib.pyplot 之前設定
+import matplotlib
+matplotlib.use('Agg')
 import mplfinance as mpf
-import logging
 from pathlib import Path
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
+from slack_sdk.errors import SlackApiError
 from yfinance.exceptions import YFPricesMissingError
+from dotenv import load_dotenv
 
+import logging
 # -----------------------------
 # 初始化
 # -----------------------------
+# 載入 .env 檔案中的環境變數，方便本地開發
+load_dotenv()
+
 # 需要一個 App-Level Token (xapp-...) 來啟用 Socket Mode
 # 隔離 yfinance 的日誌，防止其干擾 slack-bolt
 logging.getLogger('yfinance').setLevel(logging.WARNING)
@@ -72,14 +82,15 @@ def handle_any_message(message, say, logger):
     if text.lower() == 'help':
         say(
             text="如何使用我：\n直接輸入股票代碼（例如 `2330.TW` 或 `TSLA`），我就會回傳最近的 K 線圖。",
-            thread_ts=thread_ts
+            thread_ts=thread_ts,
+            reply_broadcast=True # 將 help 訊息也廣播到頻道
         )
         return
-
+    text = text.replace("http://", "")
     # 2. 使用正則表達式從訊息中尋找股票代碼
     # 這個正則表達式會尋找像 2330.TW, TSLA, 0050.TW 這樣的字串
     match = re.search(r'\b([A-Z0-9]{2,10}(\.[A-Z]{2,3})?)\b', text.upper())
-    say(text=f"INPUT is `{match}", thread_ts=thread_ts)
+    
     # 只有在找到匹配項時才繼續
     if match:
         ticker = match.group(1)
@@ -96,47 +107,42 @@ def handle_any_message(message, say, logger):
 
         # 2. 抓取資料
         logger.info(f"Step 3: Downloading data for ticker '{ticker}'...")
-        #stock_data = yf.download(ticker, period="25d", interval="1d", progress=False, auto_adjust=True)
-        #stock_date = pd.dataframe()
-        # 釜底抽薪：將 yfinance 的輸出重定向到 /dev/null，防止其日誌干擾 slack-bolt
-        #old_stdout, old_stderr = sys.stdout, sys.stderr
-        #sys.stdout = sys.stderr = open(os.devnull, 'w')
-        #try:
-        #    stock_data = yf.download(ticker, period="25d", interval="1d", progress=False, auto_adjust=True)
-        #finally:
-        #    # 無論如何都要恢復標準輸出/錯誤
-        #    sys.stdout.close()
-        #    sys.stdout, sys.stderr = old_stdout, old_stderr
+        stock_data = yf.download( ticker, period="25d", interval="1d", group_by='ticker', progress=False, auto_adjust=True)
+        stock_data = stock_data[ticker]
         
         # 檢查 yfinance 是否回傳了空的 DataFrame
-        # if stock_data.empty:
-        #     logger.warning(f"Ticker '{ticker}' data is empty. Updating Slack message.")
-        #     app.client.chat_update(
-        #         channel=channel_id,
-        #         ts=reply['ts'],
-        #         text=f"抱歉，找不到股票代碼 `{ticker}` 的資料。請確認代碼是否正確（例如 `2330.TW` 或 `TSLA`）。"
-        #     )
-        #     return # 處理完畢，提前返回，讓 finally 區塊執行清理
+        if stock_data.empty:
+            logger.warning(f"Ticker '{ticker}' data is empty. Updating Slack message.")
+            app.client.chat_update(
+                channel=channel_id,
+                ts=reply['ts'],
+                text=f"抱歉，找不到股票代碼 `{ticker}` 的資料。請確認代碼是否正確（例如 `2330.TW` 或 `TSLA`）。"
+            )
+            return # 處理完畢，提前返回，讓 finally 區塊執行清理
 
         logger.info(f"Step 4: Data for '{ticker}' downloaded successfully. Creating chart...")
         # 3. 產生圖表
-        # chart_path = charts_dir / f"{ticker.replace('.', '_')}_chart.png"
-        # create_stock_chart_for_request(stock_data, ticker, chart_path)
+        chart_path = charts_dir / f"{ticker.replace('.', '_')}_chart.png"
+        create_stock_chart_for_request(stock_data, ticker, chart_path)
 
         logger.info(f"Step 5: Chart for '{ticker}' created. Uploading to Slack...")
         # 4. 上傳圖表並更新訊息
-        # with open(chart_path, "rb") as file_content:
-        #     app.client.files_upload_v2(
-        #         channel=channel_id,
-        #         thread_ts=thread_ts,
-        #         file=file_content,
-        #         initial_comment=f"這是 `{ticker}` 的最近 20 天 K 線圖：",
-        #         title=f"{ticker} Chart"
-        #     )
+        with open(chart_path, "rb") as file_content:
+            app.client.files_upload_v2(
+                channel=channel_id,
+                # thread_ts=thread_ts, # 移除 thread_ts，讓它成為一則新訊息
+                # reply_broadcast=True, # 因為不是回覆，所以這個參數也不需要了
+                file=file_content,
+                initial_comment=f"這是 `{ticker}` 的最近 20 天 K 線圖：",
+                title=f"{ticker} Chart"
+            )
         
-        # logger.info(f"Step 6: Chart for '{ticker}' uploaded. Deleting local file.")
-        # # 5. 刪除本機圖檔
-        # os.remove(chart_path)
+        logger.info(f"Step 6: Chart for '{ticker}' uploaded. Deleting temporary message and local file.")
+        # 5. 刪除 "處理中" 的訊息
+        if reply and reply.get('ts'):
+            app.client.chat_delete(channel=channel_id, ts=reply['ts'])
+        # 6. 刪除本機圖檔
+        os.remove(chart_path)
 
     except YFPricesMissingError:
         logger.warning(f"yfinance could not find ticker '{ticker}'.")
@@ -158,23 +164,14 @@ def handle_any_message(message, say, logger):
     finally:
         # 無論成功或失敗，最後都嘗試刪除 "處理中" 的訊息
         logger.info(f"Step 7: Entering finally block for cleanup (ticker: '{ticker}').")
-        if reply and reply.get('ts'):
-            try:
-                #app.client.chat_delete(channel=channel_id, ts=reply['ts'])
-                pass
-            except SlackApiError as slack_err:
-                # 如果訊息已被 chat_update 更新，再刪除會失敗 (message_not_found)。這是預期行為，可以忽略。
-                if slack_err.response['error'] != 'message_not_found':
-                    logger.error(f"Unexpected Slack API error during cleanup: {slack_err}")
-            except Exception as e:
-                # 處理其他非預期的清理錯誤
-                logger.error(f"An unexpected error occurred during cleanup: {e}")
+        # 在成功的情況下，訊息已經被刪除。
+        # 在失敗的情況下，訊息會被 chat_update 更新為錯誤提示，我們希望保留它，所以這裡不需要做任何事。
+        pass
 
 
 # -----------------------------
 # 啟動機器人
 # -----------------------------
-from slack_sdk.errors import SlackApiError
 if __name__ == "__main__":
     # 檢查必要的 token
     if not os.environ.get("SLACK_BOT_TOKEN") or not os.environ.get("SLACK_APP_TOKEN"):

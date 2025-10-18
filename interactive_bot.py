@@ -44,6 +44,11 @@ def create_stock_chart_for_request(df, ticker, filename):
 @app.message("") # 監聽所有訊息
 def handle_any_message(message, say, logger):
     """處理任何訊息，並從中尋找指令"""
+    # 忽略所有帶有 subtype 的訊息（例如機器人自己的回覆、檔案上傳等）
+    # 這是消除 "Unhandled request" 警告的最佳實踐
+    if message.get('subtype') is not None:
+        return
+
     text = message.get('text', '').strip()
     channel_id = message['channel']
     thread_ts = message.get('ts') # 取得原始訊息的時間戳，用於回覆在同一個 thread
@@ -109,9 +114,12 @@ def handle_any_message(message, say, logger):
         if reply and reply.get('ts'):
             try:
                 app.client.chat_delete(channel=channel_id, ts=reply['ts'])
-            except Exception as e:
+            except SlackApiError as slack_err:
                 # 如果訊息已經被更新或刪除，這裡可能會報錯，可以安全地忽略
-                logger.warning(f"Could not delete 'in-progress' message: {e.response['error']}")
+                logger.warning(f"Could not delete 'in-progress' message (Slack API Error): {slack_err.response['error']}")
+            except Exception as e:
+                # 處理其他非 Slack API 的錯誤
+                logger.error(f"An unexpected error occurred during cleanup: {e}")
 
 
 # -----------------------------

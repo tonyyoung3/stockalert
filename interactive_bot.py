@@ -79,7 +79,7 @@ def handle_any_message(message, say, logger):
     # 2. 使用正則表達式從訊息中尋找股票代碼
     # 這個正則表達式會尋找像 2330.TW, TSLA, 0050.TW 這樣的字串
     match = re.search(r'\b([A-Z0-9]{2,10}(\.[A-Z]{2,3})?)\b', text.upper())
-
+    say(text=f"INPUT is `{match}", thread_ts=thread_ts)
     # 只有在找到匹配項時才繼續
     if match:
         ticker = match.group(1)

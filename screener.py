@@ -134,17 +134,38 @@ def create_stock_chart(df, ticker, filename, pattern_name, pattern_indices):
 # -----------------------------
 # Slack 通知
 # -----------------------------
-def send_to_slack(client, channel, text, file_path=None):
+def upload_file_and_get_public_url(client, channel, file_path, title):
+    """上傳檔案到 Slack 並取得公開分享的 URL"""
+    try:
+        # 1. 上傳檔案
+        result = client.files_upload_v2(
+            channel=channel,
+            file=file_path,
+            title=title,
+        )
+        file_id = result["file"]["id"]
+
+        # 2. 公開分享檔案以取得 URL
+        # 注意：這會讓任何擁有連結的人都能看到圖片。
+        # 如果你的 Slack Workspace 有限制，這一步可能需要管理員權限或調整設定。
+        share_result = client.files_sharedPublicURL(file=file_id)
+        if share_result.get("ok"):
+            # URL 在 share_result['file']['permalink_public']
+            # 我們需要從中提取直接的圖片 URL
+            # 格式通常是： https://files.slack.com/files-pri/T...-F.../download/filename.png
+            return share_result['file']['permalink_public']
+        else:
+            print(f"Error making file public: {share_result.get('error')}")
+            return None
+
+    except SlackApiError as e:
+        print(f"Error uploading or sharing file: {e.response['error']}")
+        return None
+
+def send_to_slack(client, channel, text=None, blocks=None):
     """傳送訊息和檔案到 Slack"""
     try:
-        if file_path:
-            client.files_upload_v2(
-                channel=channel,
-                initial_comment=text,
-                file=file_path,
-            )
-        else:
-            client.chat_postMessage(channel=channel, text=text)
+        client.chat_postMessage(channel=channel, text=text, blocks=blocks)
     except SlackApiError as e:
         print(f"Error sending to Slack: {e.response['error']}")
 
@@ -204,13 +225,41 @@ def main():
         if upper_shadow_results:
             send_to_slack(client, slack_channel, "--- 🔺 台股篩選結果：上影線反轉 (Upper Shadow Reversal) ---")
             for ticker, chart_path in upper_shadow_results:
-                send_to_slack(client, slack_channel, f"標的: {ticker}", chart_path)
+                public_url = upload_file_and_get_public_url(client, slack_channel, str(chart_path), f"{ticker} Chart")
+                if public_url:
+                    blocks = [
+                        {
+                            "type": "section",
+                            "text": {"type": "mrkdwn", "text": f"標的: *{ticker}*"}
+                        },
+                        {
+                            "type": "image",
+                            "title": {"type": "plain_text", "text": f"{ticker} - Upper Shadow Reversal"},
+                            "image_url": public_url,
+                            "alt_text": f"Chart for {ticker}"
+                        }
+                    ]
+                    send_to_slack(client, slack_channel, text=f"標的: {ticker}", blocks=blocks)
         
         # 傳送 Inside Day 結果
         if inside_day_results:
             send_to_slack(client, slack_channel, "--- 📦 台股篩選結果：Inside Day ---")
             for ticker, chart_path in inside_day_results:
-                send_to_slack(client, slack_channel, f"標的: {ticker}", chart_path)
+                public_url = upload_file_and_get_public_url(client, slack_channel, str(chart_path), f"{ticker} Chart")
+                if public_url:
+                    blocks = [
+                        {
+                            "type": "section",
+                            "text": {"type": "mrkdwn", "text": f"標的: *{ticker}*"}
+                        },
+                        {
+                            "type": "image",
+                            "title": {"type": "plain_text", "text": f"{ticker} - Inside Day"},
+                            "image_url": public_url,
+                            "alt_text": f"Chart for {ticker}"
+                        }
+                    ]
+                    send_to_slack(client, slack_channel, text=f"標的: {ticker}", blocks=blocks)
     else:
         print("\nSLACK_BOT_TOKEN or SLACK_CHANNEL not set; skipping Slack notification.")
         print("上影線反轉篩選結果:", [item[0] for item in upper_shadow_results])

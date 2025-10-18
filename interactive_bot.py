@@ -49,6 +49,7 @@ def handle_any_message(message, say, logger):
     thread_ts = message.get('ts') # 取得原始訊息的時間戳，用於回覆在同一個 thread
 
     # 1. 檢查 'help' 指令
+    # 1. 優先檢查 'help' 指令
     if text.lower() == 'help':
         say(
             text="如何使用我：\n直接輸入股票代碼（例如 `2330.TW` 或 `TSLA`），我就會回傳最近的 K 線圖。",
@@ -59,11 +60,13 @@ def handle_any_message(message, say, logger):
     # 2. 使用正則表達式從訊息中尋找股票代碼
     # 這個正則表達式會尋找像 2330.TW, TSLA, 0050.TW 這樣的字串
     match = re.search(r'\b([A-Z0-9]{2,10}(\.[A-Z]{2,3})?)\b', text.upper())
-    if not match:
-        # 如果找不到符合的格式，就不做任何事
-        return
 
-    ticker = match.group(1)
+    # 只有在找到匹配項時才繼續
+    if match:
+        ticker = match.group(1)
+    else:
+        # 如果訊息不是 'help' 也找不到股票代碼，就忽略它
+        return
     logger.info(f"Received ticker request: {ticker} in channel {channel_id}")
 
     try:

@@ -97,7 +97,7 @@ def handle_any_message(message, say, logger):
         # 2. 抓取資料
         logger.info(f"Step 3: Downloading data for ticker '{ticker}'...")
         #stock_data = yf.download(ticker, period="25d", interval="1d", progress=False, auto_adjust=True)
-        stock_date = pd.dataframe()
+        #stock_date = pd.dataframe()
         # 釜底抽薪：將 yfinance 的輸出重定向到 /dev/null，防止其日誌干擾 slack-bolt
         #old_stdout, old_stderr = sys.stdout, sys.stderr
         #sys.stdout = sys.stderr = open(os.devnull, 'w')
@@ -160,7 +160,8 @@ def handle_any_message(message, say, logger):
         logger.info(f"Step 7: Entering finally block for cleanup (ticker: '{ticker}').")
         if reply and reply.get('ts'):
             try:
-                app.client.chat_delete(channel=channel_id, ts=reply['ts'])
+                #app.client.chat_delete(channel=channel_id, ts=reply['ts'])
+                pass
             except SlackApiError as slack_err:
                 # 如果訊息已被 chat_update 更新，再刪除會失敗 (message_not_found)。這是預期行為，可以忽略。
                 if slack_err.response['error'] != 'message_not_found':

@@ -13,6 +13,9 @@ from yfinance.exceptions import YFPricesMissingError
 # 初始化
 # -----------------------------
 # 需要一個 App-Level Token (xapp-...) 來啟用 Socket Mode
+# 隔離 yfinance 的日誌，防止其干擾 slack-bolt
+logging.getLogger('yfinance').setLevel(logging.WARNING)
+
 # 和一個 Bot Token (xoxb-...) 來呼叫 API
 app = App(token=os.environ.get("SLACK_BOT_TOKEN"))
 
@@ -87,10 +90,15 @@ def handle_any_message(message, say, logger):
         logger.info(f"Step 3: Downloading data for ticker '{ticker}'...")
         stock_data = yf.download(ticker, period="25d", interval="1d", progress=False, auto_adjust=True) # 多抓幾天以防假日, 關閉進度條
         
-        # yfinance 在找不到股票時會拋出 YFPricesMissingError 或回傳空的 DataFrame
-        # 我們需要同時處理這兩種情況
+        # 檢查 yfinance 是否回傳了空的 DataFrame
         if stock_data.empty:
-            raise YFPricesMissingError(f"No data found for {ticker}")
+            logger.warning(f"Ticker '{ticker}' data is empty. Updating Slack message.")
+            app.client.chat_update(
+                channel=channel_id,
+                ts=reply['ts'],
+                text=f"抱歉，找不到股票代碼 `{ticker}` 的資料。請確認代碼是否正確（例如 `2330.TW` 或 `TSLA`）。"
+            )
+            return # 處理完畢，提前返回，讓 finally 區塊執行清理
 
         logger.info(f"Step 4: Data for '{ticker}' downloaded successfully. Creating chart...")
         # 3. 產生圖表
@@ -112,8 +120,8 @@ def handle_any_message(message, say, logger):
         # 5. 刪除本機圖檔
         os.remove(chart_path)
 
-    except YFPricesMissingError as e:
-        logger.warning(f"Could not find ticker '{ticker}'. Error: {e}")
+    except YFPricesMissingError:
+        logger.warning(f"yfinance could not find ticker '{ticker}'.")
         if reply and reply.get('ts'):
             app.client.chat_update(
                 channel=channel_id,
@@ -122,7 +130,13 @@ def handle_any_message(message, say, logger):
             )
     except Exception as e:
         logger.error(f"Error processing ticker {ticker}: {e}")
-        say(text=f"處理 `{ticker}` 時發生未預期的錯誤，請稍後再試。", thread_ts=thread_ts)
+        # 同樣使用 chat_update 更新訊息，而不是 say
+        if reply and reply.get('ts'):
+            app.client.chat_update(
+                channel=channel_id,
+                ts=reply['ts'],
+                text=f"處理 `{ticker}` 時發生未預期的錯誤，請聯繫管理員。"
+            )
     finally:
         # 無論成功或失敗，最後都嘗試刪除 "處理中" 的訊息
         logger.info(f"Step 7: Entering finally block for cleanup (ticker: '{ticker}').")

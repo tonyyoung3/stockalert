@@ -4,3 +4,4 @@ requests>=2.31,<3.0
 matplotlib>=3.8,<4.0
 mplfinance>=0.12.10b0,<0.13
 slack-sdk>=3.20,<4.0
+slack-bolt>=1.18,<2.0

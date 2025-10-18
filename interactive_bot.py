@@ -69,12 +69,13 @@ def handle_any_message(message, say, logger):
         return
     logger.info(f"Received ticker request: {ticker} in channel {channel_id}")
 
+    reply = None  # 先將 reply 初始化為 None
     try:
         # 1. 回覆一個處理中的訊息
         reply = say(text=f"好的，正在查詢 `{ticker}` 的最近 20 天股價...", thread_ts=thread_ts)
 
         # 2. 抓取資料
-        stock_data = yf.download(ticker, period="25d", interval="1d") # 多抓幾天以防假日
+        stock_data = yf.download(ticker, period="25d", interval="1d", progress=False, auto_adjust=True) # 多抓幾天以防假日, 關閉進度條
         if stock_data.empty:
             app.client.chat_update(
                 channel=channel_id,
@@ -97,20 +98,26 @@ def handle_any_message(message, say, logger):
                 title=f"{ticker} Chart"
             )
         
-        # 刪除 "處理中" 的訊息
-        app.client.chat_delete(channel=channel_id, ts=reply['ts'])
-        
         # 5. 刪除本機圖檔
         os.remove(chart_path)
 
     except Exception as e:
         logger.error(f"Error processing ticker {ticker}: {e}")
         say(text=f"處理 `{ticker}` 時發生錯誤。", thread_ts=thread_ts)
+    finally:
+        # 無論成功或失敗，最後都嘗試刪除 "處理中" 的訊息
+        if reply and reply.get('ts'):
+            try:
+                app.client.chat_delete(channel=channel_id, ts=reply['ts'])
+            except Exception as e:
+                # 如果訊息已經被更新或刪除，這裡可能會報錯，可以安全地忽略
+                logger.warning(f"Could not delete 'in-progress' message: {e.response['error']}")
 
 
 # -----------------------------
 # 啟動機器人
 # -----------------------------
+from slack_sdk.errors import SlackApiError
 if __name__ == "__main__":
     # 檢查必要的 token
     if not os.environ.get("SLACK_BOT_TOKEN") or not os.environ.get("SLACK_APP_TOKEN"):

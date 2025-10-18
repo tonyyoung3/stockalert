@@ -44,6 +44,7 @@ def create_stock_chart_for_request(df, ticker, filename):
 @app.message("") # 監聽所有訊息
 def handle_any_message(message, say, logger):
     """處理任何訊息，並從中尋找指令"""
+    logger.info(f"--- New message received: {message.get('text', '')} ---")
     # 忽略所有帶有 subtype 的訊息（例如機器人自己的回覆、檔案上傳等）
     # 這是消除 "Unhandled request" 警告的最佳實踐
     if message.get('subtype') is not None:
@@ -72,16 +73,19 @@ def handle_any_message(message, say, logger):
     else:
         # 如果訊息不是 'help' 也找不到股票代碼，就忽略它
         return
-    logger.info(f"Received ticker request: {ticker} in channel {channel_id}")
+    logger.info(f"Step 1: Parsed ticker '{ticker}' from message.")
 
     reply = None  # 先將 reply 初始化為 None
     try:
         # 1. 回覆一個處理中的訊息
         reply = say(text=f"好的，正在查詢 `{ticker}` 的最近 20 天股價...", thread_ts=thread_ts)
+        logger.info(f"Step 2: Sent 'in-progress' message for ticker '{ticker}'.")
 
         # 2. 抓取資料
+        logger.info(f"Step 3: Downloading data for ticker '{ticker}'...")
         stock_data = yf.download(ticker, period="25d", interval="1d", progress=False, auto_adjust=True) # 多抓幾天以防假日, 關閉進度條
         if stock_data.empty:
+            logger.warning(f"Ticker '{ticker}' data is empty. Updating Slack message.")
             app.client.chat_update(
                 channel=channel_id,
                 ts=reply['ts'],
@@ -89,10 +93,12 @@ def handle_any_message(message, say, logger):
             )
             return
 
+        logger.info(f"Step 4: Data for '{ticker}' downloaded successfully. Creating chart...")
         # 3. 產生圖表
         chart_path = charts_dir / f"{ticker.replace('.', '_')}_chart.png"
         create_stock_chart_for_request(stock_data, ticker, chart_path)
 
+        logger.info(f"Step 5: Chart for '{ticker}' created. Uploading to Slack...")
         # 4. 上傳圖表並更新訊息
         with open(chart_path, "rb") as file_content:
             app.client.files_upload_v2(
@@ -103,6 +109,7 @@ def handle_any_message(message, say, logger):
                 title=f"{ticker} Chart"
             )
         
+        logger.info(f"Step 6: Chart for '{ticker}' uploaded. Deleting local file.")
         # 5. 刪除本機圖檔
         os.remove(chart_path)
 
@@ -111,6 +118,7 @@ def handle_any_message(message, say, logger):
         say(text=f"處理 `{ticker}` 時發生錯誤。", thread_ts=thread_ts)
     finally:
         # 無論成功或失敗，最後都嘗試刪除 "處理中" 的訊息
+        logger.info(f"Step 7: Entering finally block for cleanup (ticker: '{ticker}').")
         if reply and reply.get('ts'):
             try:
                 app.client.chat_delete(channel=channel_id, ts=reply['ts'])

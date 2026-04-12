@@ -7,10 +7,11 @@ from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 
 # -----------------------------
-# 使用者設定lll
+# 使用者設定 (可透過環境變數覆蓋)
 # -----------------------------
-shadow_ratio = 1.5  # 上影線至少是實體的 1.5 倍
-upper_shadow_min_pct = 0.02  # 前一天上影線至少佔收盤價的 2%
+shadow_ratio         = float(os.environ.get("SHADOW_RATIO",         "1.5"))   # 上影線至少是實體的 N 倍
+upper_shadow_min_pct = float(os.environ.get("UPPER_SHADOW_MIN_PCT", "0.02"))  # 前一天上影線至少佔收盤價的 N%
+min_daily_gain       = float(os.environ.get("MIN_DAILY_GAIN",       "0.01"))  # 當天漲幅至少 N%
 
 def load_tickers_from_file(filename="taiwan_stocks.txt"):
     """從檔案讀取股票代碼列表"""
@@ -42,10 +43,12 @@ def _check_reversal_pattern(df, day1_idx, day2_idx):
     # 第二天收復上影線
     second_day_recover = close2 >= high1
     
-    # 第二天漲幅要 1% 以上
-    daily_gain = (close2 - df['Close'].iloc[day1_idx]) / df['Close'].iloc[day1_idx] >= 0.01
-    
-    return first_day_shadow and second_day_recover and daily_gain
+    # 第二天漲幅要 min_daily_gain 以上，且成交量高於均量
+    daily_gain     = (close2 - df['Close'].iloc[day1_idx]) / df['Close'].iloc[day1_idx] >= min_daily_gain
+    vol2           = df['Volume'].iloc[day2_idx]
+    volume_confirm = vol2 > df['Volume'].mean()
+
+    return first_day_shadow and second_day_recover and daily_gain and volume_confirm
 
 def check_upper_shadow_reversal(df):
     if len(df) < 22:  # 需要至少22天資料來計算月線和檢查模式

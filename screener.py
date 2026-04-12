@@ -1,10 +1,12 @@
 import yfinance as yf
 import pandas as pd
 import os
+from datetime import date
 from pathlib import Path
 import mplfinance as mpf
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
+from db import init_db, save_alert
 
 # -----------------------------
 # 使用者設定 (可透過環境變數覆蓋)
@@ -176,6 +178,8 @@ def send_to_slack(client, channel, text=None, blocks=None):
 # 主要執行邏輯
 # -----------------------------
 def main():
+    init_db()
+
     taiwan_stocks = load_tickers_from_file("taiwan_stocks.txt")
     if not taiwan_stocks:
         print("No tickers loaded. Exiting.")
@@ -206,12 +210,14 @@ def main():
                 chart_path = charts_dir / f"{ticker_clean}_upper_shadow.png"
                 create_stock_chart(df, ticker, chart_path, "Upper Shadow Reversal", [-2, -1])
                 upper_shadow_results.append((ticker_clean, chart_path))
+                save_alert(ticker_clean, "upper_shadow_reversal", str(date.today()), float(df["Close"].iloc[-1]))
 
             elif check_inside_day(df):
                 print(f"  -> Inside day match: {ticker_clean}")
                 chart_path = charts_dir / f"{ticker_clean}_inside_day.png"
                 create_stock_chart(df, ticker, chart_path, "Inside Day", [-3, -2, -1])
                 inside_day_results.append((ticker_clean, chart_path))
+                save_alert(ticker_clean, "inside_day", str(date.today()), float(df["Close"].iloc[-1]))
 
         except Exception as e:
             print(f"Error processing {ticker}: {e}")

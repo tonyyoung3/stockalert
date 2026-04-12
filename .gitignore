@@ -55,3 +55,6 @@ venv.bak/
 # Cache
 .cache/
 .pytest_cache/
+
+# Local database
+screener.db

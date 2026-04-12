@@ -56,5 +56,5 @@ venv.bak/
 .cache/
 .pytest_cache/
 
-# Local database
-screener.db
+# charts output (regenerated each run)
+charts/

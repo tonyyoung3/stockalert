@@ -6,7 +6,7 @@ from pathlib import Path
 import mplfinance as mpf
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
-from db import init_db, save_alert
+from db import init_db, save_alert, has_alert
 
 # -----------------------------
 # 使用者設定 (可透過環境變數覆蓋)
@@ -87,6 +87,28 @@ def check_inside_day(df):
     above_ma20 = today_close > ma20
     
     return day_before_match and yesterday_match and is_three_day_high and above_ma20
+
+
+def last_bar_date(df) -> date:
+    """Calendar date of the last candle, in Taiwan time if the index is tz-aware."""
+    ts = pd.Timestamp(df.index[-1])
+    if ts.tz is not None:
+        ts = ts.tz_convert("Asia/Taipei")
+    return ts.date()
+
+
+def classify_pattern(df) -> str | None:
+    """Return the matched pattern name.
+
+    Inside Day is a stricter form of upper-shadow reversal (it also requires
+    the prior pair to match), so it must be checked first. The old
+    `if upper_shadow / elif inside_day` order made Inside Day unreachable.
+    """
+    if check_inside_day(df):
+        return "inside_day"
+    if check_upper_shadow_reversal(df):
+        return "upper_shadow_reversal"
+    return None
 
 # -----------------------------
 # 繪製 K 線圖
@@ -204,20 +226,30 @@ def main():
                 continue
 
             ticker_clean = ticker.split('.')[0]  # 去除 .TW/.TWO
-            
-            if check_upper_shadow_reversal(df):
-                print(f"  -> Upper shadow reversal match: {ticker_clean}")
-                chart_path = charts_dir / f"{ticker_clean}_upper_shadow.png"
-                create_stock_chart(df, ticker, chart_path, "Upper Shadow Reversal", [-2, -1])
-                upper_shadow_results.append((ticker_clean, chart_path))
-                save_alert(ticker_clean, "upper_shadow_reversal", str(date.today()), float(df["Close"].iloc[-1]))
+            pattern = classify_pattern(df)
+            if not pattern:
+                continue
 
-            elif check_inside_day(df):
-                print(f"  -> Inside day match: {ticker_clean}")
+            # Use the last candle date, not the runner's calendar date, so
+            # weekend/holiday reruns do not create a second alert for the same bar.
+            signal_date = str(last_bar_date(df))
+            if has_alert(ticker_clean, pattern, signal_date):
+                print(f"  -> Skip duplicate {pattern} for {ticker_clean} on {signal_date}")
+                continue
+
+            price = float(df["Close"].iloc[-1])
+            if pattern == "inside_day":
+                print(f"  -> Inside day match: {ticker_clean} ({signal_date})")
                 chart_path = charts_dir / f"{ticker_clean}_inside_day.png"
                 create_stock_chart(df, ticker, chart_path, "Inside Day", [-3, -2, -1])
-                inside_day_results.append((ticker_clean, chart_path))
-                save_alert(ticker_clean, "inside_day", str(date.today()), float(df["Close"].iloc[-1]))
+                if save_alert(ticker_clean, pattern, signal_date, price):
+                    inside_day_results.append((ticker_clean, chart_path))
+            else:
+                print(f"  -> Upper shadow reversal match: {ticker_clean} ({signal_date})")
+                chart_path = charts_dir / f"{ticker_clean}_upper_shadow.png"
+                create_stock_chart(df, ticker, chart_path, "Upper Shadow Reversal", [-2, -1])
+                if save_alert(ticker_clean, pattern, signal_date, price):
+                    upper_shadow_results.append((ticker_clean, chart_path))
 
         except Exception as e:
             print(f"Error processing {ticker}: {e}")

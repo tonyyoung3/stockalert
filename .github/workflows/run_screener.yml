@@ -29,6 +29,9 @@ jobs:
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -v
+
       - name: Run screener
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
@@ -42,6 +45,9 @@ jobs:
             echo "SLACK_WEBHOOK_URL is NOT set"
           fi
           python screener.py
+
+      - name: Check alert performance
+        run: python performance_checker.py
 
       - name: Persist alert database
         run: |

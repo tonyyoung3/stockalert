@@ -3,7 +3,7 @@ from datetime import date
 
 import pandas as pd
 
-from screener import (
+from signals.patterns import (
     check_inside_day,
     check_upper_shadow_reversal,
     classify_pattern,

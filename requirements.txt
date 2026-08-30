@@ -1,4 +1,6 @@
 pandas>=2.0,<3.0
+numpy>=1.26,<3.0
+scipy>=1.11,<2.0
 yfinance>=0.2.40,<0.3
 requests>=2.31,<3.0
 beautifulsoup4>=4.12,<5.0
@@ -7,3 +9,4 @@ mplfinance>=0.12.10b0,<0.13
 slack-sdk>=3.20,<4.0
 slack-bolt>=1.18,<2.0
 python-dotenv>=1.0,<2.0
+libsql>=0.1.0,<1.0

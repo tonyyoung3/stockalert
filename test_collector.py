@@ -301,6 +301,50 @@ class TestBackfill(DBTestCase):
             backfill.backfill(14)
         self.assertTrue(all(d.weekday() < 5 for d in seen), "不該請求週末")
 
+    def test_default_excludes_today(self):
+        seen = []
+
+        def fake(day):
+            seen.append(day)
+            return []
+
+        today = date(2026, 8, 31)  # Monday
+        with patch.object(backfill, "fetch_index_5sec", side_effect=fake), \
+             patch.object(backfill, "fetch_foreign", return_value=[]), \
+             patch.object(backfill, "fetch_margin", return_value=([], [])):
+            backfill.backfill(3, today=today, include_today=False)
+        self.assertNotIn(today, seen)
+
+    def test_include_today_requests_today(self):
+        seen = []
+
+        def fake(day):
+            seen.append(day)
+            return []
+
+        today = date(2026, 8, 31)  # Monday
+        with patch.object(backfill, "fetch_index_5sec", side_effect=fake), \
+             patch.object(backfill, "fetch_foreign", return_value=[]), \
+             patch.object(backfill, "fetch_margin", return_value=([], [])):
+            backfill.backfill(3, today=today, include_today=True)
+        self.assertIn(today, seen)
+
+    def test_stock_daily_uses_market_wide_endpoint(self):
+        requested = []
+
+        def fake(day):
+            requested.append(day)
+            return [(day.isoformat(), "2330", "台積電", 1., 1., 1., 1., 1, 1)]
+
+        today = date(2026, 8, 31)
+        with patch.object(backfill, "fetch_stock_day_all", side_effect=fake):
+            n = backfill.backfill_stock_daily(3, today=today, include_today=True)
+        self.assertGreater(n, 0)
+        self.assertTrue(all(d.weekday() < 5 for d in requested))
+        self.assertIn(today, requested)
+        rows = self.rows("SELECT COUNT(*) FROM stock_daily")
+        self.assertGreater(rows[0][0], 0)
+
     def test_stocks_resume_skips_completed(self):
         """已涵蓋回補區間的股票要跳過(中斷續跑)。"""
         today = date.today()

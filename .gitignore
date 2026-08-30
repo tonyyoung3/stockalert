@@ -58,3 +58,8 @@ venv.bak/
 
 # charts output (regenerated each run)
 charts/
+charts_interactive/
+
+# Market databases (restored from Actions cache / artifacts, do not commit)
+twse_data.db
+us_data.db

@@ -46,12 +46,24 @@ def init_db() -> None:
                 check_date      TEXT    NOT NULL,
                 price_at_check  REAL    NOT NULL,
                 return_pct      REAL    NOT NULL,
-                checked_at      TEXT    DEFAULT CURRENT_TIMESTAMP
+                checked_at      TEXT    DEFAULT CURRENT_TIMESTAMP,
+                horizon_td      INTEGER NOT NULL DEFAULT 20
             );
 
             CREATE UNIQUE INDEX IF NOT EXISTS idx_alerts_ticker_pattern_date
             ON alerts (ticker, pattern_type, alert_date);
         """)
+        _ensure_performance_horizons(conn)
+
+
+def _ensure_performance_horizons(conn: sqlite3.Connection) -> None:
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(performance)")}
+    if "horizon_td" not in cols:
+        conn.execute("ALTER TABLE performance ADD COLUMN horizon_td INTEGER NOT NULL DEFAULT 20")
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_performance_alert_horizon "
+        "ON performance (alert_id, horizon_td)"
+    )
 
 
 def save_alert(ticker: str, pattern_type: str, alert_date: str, price_at_alert: float) -> int | None:
@@ -76,19 +88,31 @@ def has_alert(ticker: str, pattern_type: str, alert_date: str) -> bool:
     return row is not None
 
 
-def save_performance(alert_id: int, check_date: str, price_at_check: float, return_pct: float) -> None:
+def save_performance(
+    alert_id: int,
+    check_date: str,
+    price_at_check: float,
+    return_pct: float,
+    horizon_td: int = 20,
+) -> bool:
+    """Insert one horizon row. Returns False if that (alert, horizon) already exists."""
     with get_conn() as conn:
-        conn.execute(
-            "INSERT INTO performance (alert_id, check_date, price_at_check, return_pct) VALUES (?, ?, ?, ?)",
-            (alert_id, check_date, price_at_check, return_pct),
-        )
+        try:
+            conn.execute(
+                """
+                INSERT INTO performance
+                    (alert_id, check_date, price_at_check, return_pct, horizon_td)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (alert_id, check_date, price_at_check, return_pct, horizon_td),
+            )
+            return True
+        except sqlite3.IntegrityError:
+            return False
 
 
 def get_pending_alerts(min_age_days: int = 28):
-    """Return alerts at least min_age_days old that have no performance record yet.
-
-    There is no upper bound: missing a daily run no longer drops alerts forever.
-    """
+    """Alerts old enough that have no performance row at all (any horizon)."""
     cutoff = str(date.today() - timedelta(days=min_age_days))
     with get_conn() as conn:
         rows = conn.execute(
@@ -103,3 +127,32 @@ def get_pending_alerts(min_age_days: int = 28):
             (cutoff,),
         ).fetchall()
     return rows
+
+
+def get_pending_horizon_jobs(
+    horizons: tuple[int, ...] = (5, 20, 60),
+    today: date | None = None,
+):
+    """Alerts missing a row for a given trading-day horizon and old enough to try."""
+    from prices import calendar_buffer_days
+
+    today = today or date.today()
+    jobs = []
+    with get_conn() as conn:
+        for horizon_td in horizons:
+            cutoff = str(today - timedelta(days=calendar_buffer_days(horizon_td)))
+            rows = conn.execute(
+                """
+                SELECT a.*
+                FROM alerts a
+                LEFT JOIN performance p
+                  ON p.alert_id = a.id AND p.horizon_td = ?
+                WHERE a.alert_date <= ?
+                  AND p.id IS NULL
+                ORDER BY a.alert_date
+                """,
+                (horizon_td, cutoff),
+            ).fetchall()
+            for row in rows:
+                jobs.append((row, horizon_td))
+    return jobs

@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
-"""Push local SQLite market files to a Turso / libSQL database.
+"""Push local SQLite files to a Turso / libSQL database.
 
-Collectors keep writing twse_data.db / us_data.db. When TURSO_DATABASE_URL and
-TURSO_AUTH_TOKEN are set, the scheduled updater copies recent rows to one remote
-database (台股 + 美股表可以共存).
+Collectors keep writing twse_data.db / us_data.db. The screener keeps writing
+screener.db. When TURSO_DATABASE_URL and TURSO_AUTH_TOKEN are set, scheduled
+jobs copy recent rows to one remote database (市場表 + 訊號表可以共存).
+
+Incremental copy uses the first present of trade_date / alert_date / check_date.
+Tables without those columns (e.g. stocks) are copied in full.
 
 用法:
   python cloud_db.py status
   python cloud_db.py push --days 14
+  python cloud_db.py push-alerts
 """
 from __future__ import annotations
 
@@ -26,6 +30,8 @@ ROOT = Path(__file__).parent
 IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 CHUNK = 400
 DEFAULT_FILES = (ROOT / "twse_data.db", ROOT / "us_data.db")
+ALERT_FILES = (ROOT / "screener.db",)
+SINCE_COLUMNS = ("trade_date", "alert_date", "check_date")
 
 
 def _ident(name: str) -> str:
@@ -78,8 +84,12 @@ def _columns(local: sqlite3.Connection, table: str) -> list[str]:
     return [row[1] for row in local.execute(f"PRAGMA table_info({_ident(table)})")]
 
 
-def _has_column(local: sqlite3.Connection, table: str, column: str) -> bool:
-    return column in _columns(local, table)
+def _since_column(local: sqlite3.Connection, table: str) -> str | None:
+    cols = set(_columns(local, table))
+    for name in SINCE_COLUMNS:
+        if name in cols:
+            return name
+    return None
 
 
 def copy_table(local: sqlite3.Connection, remote, table: str, since: str | None) -> int:
@@ -91,8 +101,9 @@ def copy_table(local: sqlite3.Connection, remote, table: str, since: str | None)
     placeholders = ",".join("?" * len(cols))
     sql = f"SELECT {col_sql} FROM {table}"
     params: tuple = ()
-    if since and _has_column(local, table, "trade_date"):
-        sql += " WHERE trade_date >= ?"
+    date_col = _since_column(local, table) if since else None
+    if since and date_col:
+        sql += f" WHERE {_ident(date_col)} >= ?"
         params = (since,)
     rows = local.execute(sql, params).fetchall()
     insert = f"INSERT OR REPLACE INTO {table} ({col_sql}) VALUES ({placeholders})"
@@ -124,10 +135,10 @@ def push_file(path: Path, remote, since: str | None = None) -> dict[str, int]:
         local.close()
 
 
-def push_market_files(
-    files: tuple[Path, ...] | None = None,
-    days: int | None = 14,
-    today: date | None = None,
+def _push_paths(
+    files: tuple[Path, ...],
+    days: int | None,
+    today: date | None,
     remote=None,
 ) -> dict[str, dict[str, int]]:
     if not configured() and remote is None:
@@ -138,24 +149,55 @@ def push_market_files(
     if days is not None:
         since = ((today or date.today()) - timedelta(days=days)).isoformat()
     out = {}
-    for path in files or DEFAULT_FILES:
+    for path in files:
         out[path.name] = push_file(path, remote, since)
     return out
 
 
+def push_market_files(
+    files: tuple[Path, ...] | None = None,
+    days: int | None = 14,
+    today: date | None = None,
+    remote=None,
+) -> dict[str, dict[str, int]]:
+    return _push_paths(files or DEFAULT_FILES, days, today, remote)
+
+
+def push_alert_files(
+    files: tuple[Path, ...] | None = None,
+    days: int | None = None,
+    today: date | None = None,
+    remote=None,
+) -> dict[str, dict[str, int]]:
+    """Copy screener.db. Default days=None is a full copy: the file is small
+    and performance.alert_id must already exist on the remote."""
+    return _push_paths(files or ALERT_FILES, days, today, remote)
+
+
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-    parser = argparse.ArgumentParser(description="Sync local market sqlite files to Turso")
-    parser.add_argument("command", nargs="?", choices=("status", "push"), default="status")
-    parser.add_argument("--days", type=int, default=14)
+    parser = argparse.ArgumentParser(description="Sync local sqlite files to Turso")
+    parser.add_argument(
+        "command",
+        nargs="?",
+        choices=("status", "push", "push-alerts"),
+        default="status",
+    )
+    parser.add_argument("--days", type=int, default=None)
     args = parser.parse_args(argv)
     if args.command == "status":
         print("turso", "configured" if configured() else "not configured")
         return 0
     if not configured():
+        if args.command == "push-alerts":
+            log.info("Turso not configured; leaving screener.db local")
+            return 0
         log.error("set TURSO_DATABASE_URL and TURSO_AUTH_TOKEN")
         return 1
-    push_market_files(days=args.days)
+    if args.command == "push-alerts":
+        push_alert_files(days=args.days)
+        return 0
+    push_market_files(days=args.days if args.days is not None else 14)
     return 0
 
 

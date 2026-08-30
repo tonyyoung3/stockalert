@@ -7,19 +7,60 @@
 設了 TURSO_DATABASE_URL 跟 TURSO_AUTH_TOKEN 就讀雲端,否則讀本機 sqlite。
 """
 import json
+import re
 import webbrowser
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
 from data import market_db
 
+_YMD = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
 
 def q(sql, params=()):
     return market_db.fetchall(sql, params)
 
 
+def _ymd(qs, key):
+    v = (qs.get(key, [""])[0] or "").strip()
+    return v if _YMD.fullmatch(v) else None
+
+
+def _foreign_window(qs):
+    """Inclusive (start, end) for foreign ranking. Empty DB → (None, None).
+
+    start/end (YYYY-MM-DD) win if either is set; otherwise `days` is the last N
+    trading days in foreign_daily. With neither param, latest day only.
+    """
+    latest_row = q("SELECT MAX(trade_date) FROM foreign_daily")
+    latest = latest_row[0][0] if latest_row else None
+    if not latest:
+        return None, None
+    start, end = _ymd(qs, "start"), _ymd(qs, "end")
+    if start or end:
+        start = start or latest
+        end = end or latest
+        if start > end:
+            start, end = end, start
+        return start, end
+    raw = (qs.get("days", [""])[0] or "").strip()
+    if raw.isdigit():
+        n = max(1, min(int(raw), 730))
+        span = q(
+            "SELECT MIN(d), MAX(d) FROM ("
+            "SELECT DISTINCT trade_date AS d FROM foreign_daily "
+            "ORDER BY trade_date DESC LIMIT ?) AS t",
+            (n,),
+        )[0]
+        return span[0], span[1]
+    return latest, latest
+
+
 def api(path, qs):
-    days = int(qs.get("days", ["90"])[0])
+    try:
+        days = int(qs.get("days", ["90"])[0])
+    except (TypeError, ValueError):
+        days = 90
     if path == "/api/summary":
         idx = q("SELECT ts, index_value, change FROM taiex_hourly ORDER BY ts DESC LIMIT 1")
         latest = q("SELECT MAX(trade_date) FROM foreign_daily")[0][0]
@@ -46,12 +87,30 @@ def api(path, qs):
                  (f"-{days} day",))
         return {"data": rows}
     if path == "/api/top":
-        latest = q("SELECT MAX(trade_date) FROM foreign_daily")[0][0]
-        buy = q("SELECT stock_id, stock_name, foreign_net FROM foreign_daily "
-                "WHERE trade_date=? ORDER BY foreign_net DESC LIMIT 15", (latest,))
-        sell = q("SELECT stock_id, stock_name, foreign_net FROM foreign_daily "
-                 "WHERE trade_date=? ORDER BY foreign_net ASC LIMIT 15", (latest,))
-        return {"date": latest, "buy": buy, "sell": sell}
+        start, end = _foreign_window(qs)
+        if not start:
+            return {"date": None, "start": None, "end": None,
+                    "trading_days": 0, "buy": [], "sell": []}
+        buy = q(
+            "SELECT stock_id, MAX(stock_name), SUM(foreign_net) FROM foreign_daily "
+            "WHERE trade_date BETWEEN ? AND ? GROUP BY stock_id "
+            "ORDER BY SUM(foreign_net) DESC LIMIT 15",
+            (start, end),
+        )
+        sell = q(
+            "SELECT stock_id, MAX(stock_name), SUM(foreign_net) FROM foreign_daily "
+            "WHERE trade_date BETWEEN ? AND ? GROUP BY stock_id "
+            "ORDER BY SUM(foreign_net) ASC LIMIT 15",
+            (start, end),
+        )
+        n_days = q(
+            "SELECT COUNT(DISTINCT trade_date) FROM foreign_daily "
+            "WHERE trade_date BETWEEN ? AND ?",
+            (start, end),
+        )[0][0]
+        label = start if start == end else f"{start} ~ {end}"
+        return {"date": label, "start": start, "end": end,
+                "trading_days": n_days, "buy": buy, "sell": sell}
     if path == "/api/margin_total":
         fin = q("SELECT trade_date, balance FROM margin_total "
                 "WHERE item LIKE '融資金額%' AND trade_date >= date('now', ?) "
@@ -122,6 +181,7 @@ header select option{background:#1a1a2e}
 .hint{font-size:12px;color:#adb5bd}
 .reset-btn{padding:3px 10px;font-size:12px;border:1px solid #dee2e6;border-radius:4px;background:#fff;color:#6c757d;cursor:pointer}
 .reset-btn:hover{background:#f0f0f0}
+.top-range{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
 canvas{max-height:320px}
 table{width:100%;border-collapse:collapse;font-size:13px}
 th{text-align:left;padding:8px 10px;border-bottom:2px solid #dee2e6;color:#6c757d;font-size:12px;white-space:nowrap}
@@ -204,9 +264,26 @@ footer{text-align:center;color:#adb5bd;font-size:12px;padding:12px}
     <canvas id="c-net"></canvas></div>
 </section>
 
-<section class="two">
-  <div class="card"><h3 id="t-buy">外資買超前 15</h3><canvas id="c-buy"></canvas></div>
-  <div class="card"><h3 id="t-sell">外資賣超前 15</h3><canvas id="c-sell"></canvas></div>
+<section class="card" style="margin-bottom:16px">
+  <div class="chart-head">
+    <h3>外資買賣超排行</h3>
+    <span class="top-range">
+      <select id="top-preset" onchange="onTopPreset()">
+        <option value="1" selected>當日</option>
+        <option value="5">近 5 日累計</option>
+        <option value="20">近 20 日累計</option>
+        <option value="60">近 60 日累計</option>
+        <option value="custom">自訂區間</option>
+      </select>
+      <input type="date" id="top-start" onchange="onTopDates()" aria-label="起始日期">
+      <span class="hint">～</span>
+      <input type="date" id="top-end" onchange="onTopDates()" aria-label="結束日期">
+    </span>
+  </div>
+  <div class="two" style="margin-bottom:0">
+    <div><h3 id="t-buy">外資買超前 15</h3><canvas id="c-buy"></canvas></div>
+    <div><h3 id="t-sell">外資賣超前 15</h3><canvas id="c-sell"></canvas></div>
+  </div>
 </section>
 
 <section class="card" style="margin-bottom:16px">
@@ -474,6 +551,12 @@ async function loadSummary(){
   document.getElementById('k-netdate').textContent = s.latest_date;
   document.getElementById('k-cnt').textContent = fmt(s.stock_count);
   document.getElementById('k-span').textContent = s.date_range[0]+' ~ '+s.date_range[1];
+  if(s.date_range){
+    ['top-start','top-end'].forEach(id=>{
+      const el = document.getElementById(id);
+      el.min = s.date_range[0]; el.max = s.date_range[1];
+    });
+  }
 }
 
 async function loadKline(){
@@ -602,17 +685,46 @@ async function loadTaifexOi(){
                   min: rMin-pad, max: rMax+pad}}}});
 }
 
+function topRangeParams(){
+  const preset = document.getElementById('top-preset').value;
+  if(preset==='custom'){
+    const s = document.getElementById('top-start').value;
+    const e = document.getElementById('top-end').value;
+    const q = [];
+    if(s) q.push('start='+s);
+    if(e) q.push('end='+e);
+    return q.length ? '?'+q.join('&') : '';
+  }
+  return '?days='+encodeURIComponent(preset);
+}
+function onTopPreset(){
+  if(document.getElementById('top-preset').value==='custom') return;
+  loadTop();
+}
+function onTopDates(){
+  document.getElementById('top-preset').value = 'custom';
+  loadTop();
+}
 async function loadTop(){
-  const r = await j('/api/top');
-  document.getElementById('t-buy').textContent = r.date+' 外資買超前 15(張)';
-  document.getElementById('t-sell').textContent = r.date+' 外資賣超前 15(張)';
+  const r = await j('/api/top'+topRangeParams());
+  if(r.start){
+    const preset = document.getElementById('top-preset').value;
+    if(preset!=='custom' || !document.getElementById('top-start').value){
+      document.getElementById('top-start').value = r.start;
+      document.getElementById('top-end').value = r.end;
+    }
+  }
+  const span = (!r.start) ? '' : (r.start===r.end ? r.start : r.start+'～'+r.end);
+  const daysHint = r.trading_days>1 ? '（'+r.trading_days+' 個交易日）' : '';
+  document.getElementById('t-buy').textContent = span+' 外資買超前 15(張)'+daysHint;
+  document.getElementById('t-sell').textContent = span+' 外資賣超前 15(張)'+daysHint;
   const cfg = (rows, color) => ({type:'bar',
     data:{labels:rows.map(d=>d[0]+' '+d[1]),
       datasets:[{data:rows.map(d=>Math.abs(zhang(d[2]))), backgroundColor:color}]},
     options:{indexAxis:'y', animation:false, plugins:{legend:{display:false}},
       scales:{y:{ticks:{font:{size:11}}}}}});
-  mk('c-buy', cfg(r.buy, '#c0392bcc'));
-  mk('c-sell', cfg(r.sell, '#27ae60cc'));
+  mk('c-buy', cfg(r.buy||[], '#c0392bcc'));
+  mk('c-sell', cfg(r.sell||[], '#27ae60cc'));
 }
 
 async function loadStock(){

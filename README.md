@@ -1,6 +1,6 @@
 # stockalert
 
-台股型態篩選、固定持有期績效、PTT 週報，以及指數／外資收集。
+台股型態篩選、固定持有期績效、PTT / Reddit 週報，以及指數／外資收集。
 
 對外兩張臉是 **Slack 通知** 跟 **本地網站**。共用層是行情、規則、績效；SQLite 檔仍在 repo 根目錄。
 
@@ -12,6 +12,7 @@ data/       價格解析、Turso 同步、repo 路徑
 signals/    型態規則（上影線 / Inside Day）
 alertsdb/   screener.db
 ptt/        股板週報
+reddit/     Reddit 投資想法週報
 harness/    唯讀查詢迴圈
 ```
 
@@ -27,6 +28,7 @@ cp .env.example .env
 python -m notify.screener
 python -m notify.performance_checker
 python -m ptt.ptt_stock
+python -m reddit.ideas             # Reddit 投資想法週報
 python -m notify.interactive_bot   # 需要長期主機
 python -m web.dashboard            # 本地 http://localhost:8765；Cloud Run 見下方
 ```
@@ -45,6 +47,8 @@ Slack bot 預設只認 ticker / help。設 `HARNESS_ENABLED=1` 且有 API key，
 ```bash
 python -m unittest discover -s tests -v
 ```
+
+PTT 股板週報跟 Reddit 投資想法週報都是本機整理、印到 stdout（可加 `--json`）。Reddit 預設看 r/SecurityAnalysis、r/ValueInvesting、r/investing、r/stocks 近一週高分文，略過 Daily Discussion，抽出 `$TICKER` / DD 文跟精選留言。分點買賣超資料源記在 `TODO.md`，還沒做。
 
 ## 台股資料收集器
 

@@ -8,7 +8,7 @@ from typing import Any, Callable
 import pandas as pd
 
 import db
-from screener import classify_pattern
+from signals.patterns import classify_pattern
 
 ALLOWED_PATTERNS = frozenset({"upper_shadow_reversal", "inside_day"})
 MAX_LIMIT = 50

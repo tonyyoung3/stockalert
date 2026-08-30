@@ -1,11 +1,11 @@
 """Collect and summarize hot PTT Stock posts.
 
 Usage:
-    python ptt_stock.py
-    python ptt_stock.py --days 7 --min-push 30 --json ptt_week.json
-    python ptt_stock.py --raw
-    python ptt_stock.py --no-chat
-    python ptt_stock.py --chat-comments 4
+    python -m ptt.ptt_stock
+    python -m ptt.ptt_stock --days 7 --min-push 30 --json ptt_week.json
+    python -m ptt.ptt_stock --raw
+    python -m ptt.ptt_stock --no-chat
+    python -m ptt.ptt_stock --chat-comments 4
 """
 
 from __future__ import annotations
@@ -24,6 +24,8 @@ from urllib.parse import urljoin
 import requests
 from bs4 import BeautifulSoup
 
+from data.paths import repo_file
+
 BOARD_URL = "https://www.ptt.cc/bbs/Stock/index.html"
 PTT_ORIGIN = "https://www.ptt.cc"
 USER_AGENT = "stockalert-ptt-weekly/1.0 (personal research; +https://github.com/tonyyoung3/stockalert)"
@@ -33,7 +35,7 @@ TICKER_RE = re.compile(r"(?<!\d)(\d{4})(?!\d)(?!元|萬|億|張)")
 YEAR_LIKE = {str(y) for y in range(1990, 2036)}
 PRICE_LIKE = {"1000", "1100", "1200", "1500", "3000", "7000", "8000", "9000"}
 ROUTINE_MARKERS = ("三大法人", "信用交易", "買賣超排行", "SCFI")
-_STOCKS_PATH = Path(__file__).with_name("taiwan_stocks.txt")
+_STOCKS_PATH = repo_file("taiwan_stocks.txt")
 _KNOWN_TICKERS: set[str] | None = None
 COMPANY_ALIASES = (
     ("欣興", "欣興"),

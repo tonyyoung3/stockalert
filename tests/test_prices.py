@@ -3,8 +3,8 @@ from datetime import date
 
 import pandas as pd
 
-from performance_checker import evaluate_row
-from prices import (
+from notify.performance_checker import evaluate_row
+from data.prices import (
     calendar_buffer_days,
     extract_ohlcv,
     horizon_exit,

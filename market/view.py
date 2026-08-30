@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """快速查看已收集的資料
-  python view.py              # 總覽:指數最近10筆 + 最新一日外資買賣超前後10名
-  python view.py 2330         # 查個股外資買賣超歷史
-  python view.py csv          # 全部匯出成 CSV (taiex.csv, foreign.csv)
+  python -m market.view              # 總覽:指數最近10筆 + 最新一日外資買賣超前後10名
+  python -m market.view 2330         # 查個股外資買賣超歷史
+  python -m market.view csv          # 全部匯出成 CSV (taiex.csv, foreign.csv)
 """
 import sys
 import sqlite3
 import csv
-from pathlib import Path
 
-DB = Path(__file__).parent / "twse_data.db"
+from data.paths import repo_file
+
+DB = repo_file("twse_data.db")
 conn = sqlite3.connect(DB)
 
 
@@ -28,7 +29,7 @@ arg = sys.argv[1] if len(sys.argv) > 1 else None
 if arg == "csv":
     for table, fname in [("taiex_hourly", "taiex.csv"), ("foreign_daily", "foreign.csv")]:
         cur = conn.execute(f"SELECT * FROM {table}")
-        with open(Path(__file__).parent / fname, "w", newline="", encoding="utf-8-sig") as f:
+        with open(repo_file(fname), "w", newline="", encoding="utf-8-sig") as f:
             w = csv.writer(f)
             w.writerow([d[0] for d in cur.description])
             w.writerows(cur)

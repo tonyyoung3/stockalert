@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """台股資料儀表板(本地網頁)
-  python dashboard.py        # 啟動後自動開瀏覽器 http://localhost:8765
+  python -m web.dashboard        # 啟動後自動開瀏覽器 http://localhost:8765
 只用 Python 內建套件,直接讀 twse_data.db,資料永遠是最新的。
 """
 import json
@@ -8,13 +8,11 @@ import sqlite3
 import sys
 import webbrowser
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
-sys.path.insert(0, str(Path(__file__).parent))
-import backtest_engine
+from data.paths import repo_file
 
-DB = Path(__file__).parent / "twse_data.db"
+DB = repo_file("twse_data.db")
 PORT = 8765
 
 
@@ -1039,6 +1037,7 @@ class Handler(BaseHTTPRequestHandler):
             rule = json.loads(self.rfile.read(length) or b"{}")
             conn = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
             try:
+                from web import backtest_engine
                 result = backtest_engine.run_backtest(conn, rule)
             finally:
                 conn.close()
@@ -1057,7 +1056,7 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     if not DB.exists():
-        raise SystemExit(f"找不到 {DB},請先執行 collector.py 或 backfill.py")
+        raise SystemExit(f"找不到 {DB},請先執行 python -m market.collector 或 python -m market.backfill")
 
     server = None
     port = PORT

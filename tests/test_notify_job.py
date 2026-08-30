@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock
 
-import notify_job
+from notify import notify_job
 
 
 class TailTextTests(unittest.TestCase):

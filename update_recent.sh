@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Catch up recent market data. Thin wrapper around update_market_data.py.
+# Catch up recent market data. Thin wrapper around market.update_market_data.
 #
 #   ./update_recent.sh
 #   ./update_recent.sh 30
@@ -19,4 +19,4 @@ fi
 if [[ "${1:-}" == "--stocks" ]]; then
   shift
 fi
-exec "$PY" update_market_data.py "${args[@]}" "$@"
+exec "$PY" -m market.update_market_data "${args[@]}" "$@"

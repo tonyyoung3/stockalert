@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import cloud_db
+from data import cloud_db
 
 
 class FakeRemote:
@@ -32,7 +32,7 @@ class ConfiguredTests(unittest.TestCase):
         }))
 
     def test_status_without_secrets(self):
-        with patch("cloud_db.configured", return_value=False):
+        with patch("data.cloud_db.configured", return_value=False):
             self.assertEqual(cloud_db.main(["status"]), 0)
 
 
@@ -95,7 +95,7 @@ class PushTests(unittest.TestCase):
             cloud_db._ident("taiex;drop")
 
     def test_push_market_files_noop_without_config(self):
-        with patch("cloud_db.configured", return_value=False):
+        with patch("data.cloud_db.configured", return_value=False):
             self.assertEqual(cloud_db.push_market_files(files=(self.path,)), {})
 
     def test_alerts_filter_on_alert_date_and_performance_on_check_date(self):
@@ -160,10 +160,10 @@ class PushTests(unittest.TestCase):
         conn.commit()
         conn.close()
         remote = FakeRemote()
-        with patch("cloud_db.configured", return_value=False):
+        with patch("data.cloud_db.configured", return_value=False):
             counts = cloud_db.push_alert_files(files=(path,), remote=remote)
         self.assertEqual(counts["screener.db"]["alerts"], 1)
 
     def test_push_alerts_cli_ok_without_secrets(self):
-        with patch("cloud_db.configured", return_value=False):
+        with patch("data.cloud_db.configured", return_value=False):
             self.assertEqual(cloud_db.main(["push-alerts"]), 0)

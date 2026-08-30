@@ -4,15 +4,15 @@
 - 外資買賣超:T86 逐日回補
 
 用法:
-  python backfill.py            # 回補兩年
-  python backfill.py 90         # 回補近 90 天
-  python backfill.py index 90   # 只回補指數
-  python backfill.py foreign 90 # 只回補外資
-  python backfill.py margin 90  # 只回補融資融券
-  python backfill.py ohlc       # 只回補大盤日K
-  python backfill.py stock 2330,2454 730  # 回補指定個股日K
-  python backfill.py stock              # 回補主檔全部股票日K(量大,會先確認)
-  python backfill.py stock-daily 14     # 全市場日K(MI_INDEX,每天一次請求)
+  python -m market.backfill            # 回補兩年
+  python -m market.backfill 90         # 回補近 90 天
+  python -m market.backfill index 90   # 只回補指數
+  python -m market.backfill foreign 90 # 只回補外資
+  python -m market.backfill margin 90  # 只回補融資融券
+  python -m market.backfill ohlc       # 只回補大盤日K
+  python -m market.backfill stock 2330,2454 730  # 回補指定個股日K
+  python -m market.backfill stock              # 回補主檔全部股票日K(量大,會先確認)
+  python -m market.backfill stock-daily 14     # 全市場日K(MI_INDEX,每天一次請求)
 
 支援中斷續跑:已存在的日期會自動跳過。
 每次請求間隔 4 秒(證交所有流量限制,請勿調低)。
@@ -24,7 +24,7 @@ from datetime import date, timedelta, datetime
 
 import requests
 
-from collector import (get_conn, fetch_foreign, fetch_taiex_ohlc_month,
+from market.collector import (get_conn, fetch_foreign, fetch_taiex_ohlc_month,
                        fetch_index_5sec, hourly_ohlc_from_5sec, fetch_margin,
                        fetch_stock_month, fetch_stock_day_all, update_stock_master,
                        HEADERS)
@@ -87,7 +87,7 @@ def backfill_stocks(stock_ids: list[str] | None, days: int):
         stock_ids = [r[0] for r in conn.execute(
             "SELECT stock_id FROM stocks ORDER BY stock_id")]
         if not stock_ids:
-            raise SystemExit("stocks 主檔是空的,請先執行: python collector.py sync")
+            raise SystemExit("stocks 主檔是空的,請先執行: python -m market.collector sync")
         months = days // 30 + 1
         est = len(stock_ids) * months
         print(f"將回補 {len(stock_ids)} 檔 × 約 {months} 個月 = 約 {est:,} 次請求,"
@@ -180,7 +180,7 @@ def backfill(days: int, do_index=True, do_foreign=True, do_margin=True,
                     if raw:
                         sampled = sample_hours(day, raw)
                         ohlc = hourly_ohlc_from_5sec(day, raw)
-                        from collector import save_open_5sec
+                        from market.collector import save_open_5sec
                         with conn:
                             conn.executemany(
                                 "INSERT OR REPLACE INTO taiex_hourly VALUES (?,?,?,?,?)", sampled)

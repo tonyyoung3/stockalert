@@ -31,4 +31,4 @@ jobs:
             echo "::error::SLACK_APP_TOKEN and SLACK_BOT_TOKEN secrets must be set."
             exit 1
           fi
-          python interactive_bot.py
+          python -m notify.interactive_bot

@@ -4,28 +4,29 @@
 - 每天:抓取證交所 T86 個股外資買賣超
 
 用法:
-  python collector.py index    # 抓一次大盤指數
-  python collector.py foreign  # 抓一次外資買賣超 (預設抓最近交易日)
-  python collector.py foreign 20260731  # 抓指定日期
-  python collector.py run      # 常駐執行,自動排程 (需 pip install schedule)
+  python -m market.collector index    # 抓一次大盤指數
+  python -m market.collector foreign  # 抓一次外資買賣超 (預設抓最近交易日)
+  python -m market.collector foreign 20260731  # 抓指定日期
+  python -m market.collector run      # 常駐執行,自動排程 (需 pip install schedule)
 """
 import sys
 import time
 import sqlite3
 import logging
 from datetime import datetime, date, timedelta
-from pathlib import Path
 
 import requests
 
-DB_PATH = Path(__file__).parent / "twse_data.db"
+from data.paths import repo_file
+
+DB_PATH = repo_file("twse_data.db")
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler(Path(__file__).parent / "collector.log", encoding="utf-8"),
+        logging.FileHandler(repo_file("collector.log"), encoding="utf-8"),
     ],
 )
 log = logging.getLogger(__name__)

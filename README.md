@@ -2,6 +2,21 @@
 
 台股型態篩選、固定持有期績效、PTT 週報，以及指數／外資收集。
 
+對外兩張臉是 **Slack 通知** 跟 **本地網站**。共用層是行情、規則、績效；SQLite 檔仍在 repo 根目錄。
+
+```
+notify/     Slack：篩選、績效、互動 bot、失敗通知
+web/        本地儀表板與指數回測
+market/     證交所／期交所／美股收集與每日補資料
+data/       價格解析、Turso 同步、repo 路徑
+signals/    型態規則（上影線 / Inside Day）
+alertsdb/   screener.db
+ptt/        股板週報
+harness/    唯讀查詢迴圈
+```
+
+啟動用 `python -m <套件>.<模組>`。
+
 ## 篩選器與 harness
 
 每天用 yfinance 掃 `taiwan_stocks.txt`，抓上影線反轉 / Inside Day，寫進 SQLite，再視需要打 Slack。報酬用 T+5 / T+20 / T+60 交易日衡量。
@@ -9,10 +24,11 @@
 ```bash
 pip install -r requirements.txt
 cp .env.example .env
-python screener.py
-python performance_checker.py
-python ptt_stock.py
-python interactive_bot.py   # 需要長期主機
+python -m notify.screener
+python -m notify.performance_checker
+python -m ptt.ptt_stock
+python -m notify.interactive_bot   # 需要長期主機
+python -m web.dashboard            # 本地 http://localhost:8765
 ```
 
 `harness/` 包在 model 外面：工具、迴圈、權限、trace。Model 只負責想；harness 負責查資料並停在唯讀範圍。
@@ -32,7 +48,7 @@ python -m unittest discover -s tests -v
 
 ## 台股資料收集器
 
-正式環境用 GitHub Actions 排程，每個台股交易日 **18:00 台灣時間** 跑 `update_market_data.py`，補最近 14 天缺的資料：
+正式環境用 GitHub Actions 排程，每個台股交易日 **18:00 台灣時間** 跑 `python -m market.update_market_data`，補最近 14 天缺的資料：
 
 - 大盤日 K / 小時 K / 開盤 5 秒
 - 外資買賣超、融資融券、全市場個股日 K
@@ -57,28 +73,28 @@ turso db tokens create stockalert
 把 URL 跟 token 加到 GitHub repo secrets（`TURSO_DATABASE_URL`、`TURSO_AUTH_TOKEN`），以及本機 `.env`。
 
 ```bash
-python update_market_data.py              # 預設近 14 天
-python update_market_data.py --days 730   # 歷史回補
-python update_market_data.py --dry-run
-python cloud_db.py status
-python cloud_db.py push --days 14
-python cloud_db.py push-alerts
+python -m market.update_market_data              # 預設近 14 天
+python -m market.update_market_data --days 730   # 歷史回補
+python -m market.update_market_data --dry-run
+python -m data.cloud_db status
+python -m data.cloud_db push --days 14
+python -m data.cloud_db push-alerts
 ```
 
 本機或 VPS 也用同一支腳本（台灣 18:00）：
 
 ```cron
-0 18 * * 1-5  cd /path/to/stockalert && python3 update_market_data.py --days 14
+0 18 * * 1-5  cd /path/to/stockalert && python3 -m market.update_market_data --days 14
 ```
 
-`collector.py run` 是長駐每小時抓即時指數，GitHub Actions runner 結束就死，不適合作正式排程。研究用的小時 K 在收盤後由 5 秒資料彙整，比盤中快照完整。證交所有流量限制，勿把間隔調低。
+`python -m market.collector run` 是長駐每小時抓即時指數，GitHub Actions runner 結束就死，不適合作正式排程。研究用的小時 K 在收盤後由 5 秒資料彙整，比盤中快照完整。證交所有流量限制，勿把間隔調低。
 
 手動單次：
 
 ```bash
-python collector.py index
-python collector.py foreign
-python backfill.py 90
-python taifex_collector.py recent 30
-python us_collector.py hourly
+python -m market.collector index
+python -m market.collector foreign
+python -m market.backfill 90
+python -m market.taifex_collector recent 30
+python -m market.us_collector hourly
 ```

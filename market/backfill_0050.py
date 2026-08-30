@@ -2,10 +2,10 @@
 """回補 0050(元大台灣50)成分股的日 K 資料
 
 用法:
-    python backfill_0050.py            # 回補全部 50 檔 × 730 天(預設)
-    python backfill_0050.py 365        # 指定天數
-    python backfill_0050.py 730 --top 20   # 只補權重前 20 大
-    python backfill_0050.py --list     # 只列出清單不回補
+    python -m market.backfill_0050            # 回補全部 50 檔 × 730 天(預設)
+    python -m market.backfill_0050 365        # 指定天數
+    python -m market.backfill_0050 730 --top 20   # 只補權重前 20 大
+    python -m market.backfill_0050 --list     # 只列出清單不回補
 
 預估:50 檔 × 約 25 個月 = 約 1,250 次請求,以 4 秒間隔約 1.4 小時。
 可隨時 Ctrl+C 中斷,重跑會自動跳過已完成的股票。
@@ -20,11 +20,9 @@
    若要做嚴謹的歷史回測,需要逐季的歷史成分股名單。
 """
 import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
-from backfill import backfill_stocks, SLEEP
-import backfill
+from market.backfill import backfill_stocks, SLEEP
+import market.backfill as backfill
 
 # 0050 成分股 —— 快照日期 2026-08-07,依權重由大到小排序
 CONSTITUENTS = [

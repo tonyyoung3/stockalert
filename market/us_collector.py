@@ -7,11 +7,11 @@
   us_minute  ←→ taiex_5sec_open  (1分K,yfinance 上限 7 天,需每週跑才能累積)
 
 用法:
-  python us_collector.py daily              # 抓日K(預設 SPY,QQQ,近15年)
-  python us_collector.py daily SPY,QQQ,IWM 20
-  python us_collector.py hourly             # 抓小時K(近730天,上限)
-  python us_collector.py minute             # 抓1分K(近7天;要長期累積需定期執行)
-  python us_collector.py all                # daily + hourly + minute
+  python -m market.us_collector daily              # 抓日K(預設 SPY,QQQ,近15年)
+  python -m market.us_collector daily SPY,QQQ,IWM 20
+  python -m market.us_collector hourly             # 抓小時K(近730天,上限)
+  python -m market.us_collector minute             # 抓1分K(近7天;要長期累積需定期執行)
+  python -m market.us_collector all                # daily + hourly + minute
 
 安裝: pip install yfinance
 
@@ -25,16 +25,17 @@ import time
 import sqlite3
 import logging
 from datetime import datetime
-from pathlib import Path
 
-DB_PATH = Path(__file__).parent / "us_data.db"
+from data.paths import repo_file
+
+DB_PATH = repo_file("us_data.db")
 DEFAULT_TICKERS = ["SPY", "QQQ"]
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[logging.StreamHandler(),
-              logging.FileHandler(Path(__file__).parent / "us_collector.log", encoding="utf-8")],
+              logging.FileHandler(repo_file("us_collector.log"), encoding="utf-8")],
 )
 log = logging.getLogger(__name__)
 

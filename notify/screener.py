@@ -6,19 +6,20 @@ import mplfinance as mpf
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 from alertsdb import init_db, save_alert, has_alert
-from company_info import (
+from data.paths import repo_file
+from data.prices import AUTO_ADJUST, extract_ohlcv, last_close
+from notify.company_info import (
     CompanyProfile,
     fetch_profiles,
     format_digest,
     format_slack_caption,
     maybe_enrich_themes,
 )
-from prices import AUTO_ADJUST, extract_ohlcv, last_close
 from signals.patterns import classify_pattern, last_bar_date
 
 def load_tickers_from_file(filename="taiwan_stocks.txt"):
     """從檔案讀取股票代碼列表"""
-    filepath = Path(__file__).parent / filename
+    filepath = repo_file(filename)
     if not filepath.is_file():
         print(f"Warning: Ticker file '{filename}' not found.")
         return []

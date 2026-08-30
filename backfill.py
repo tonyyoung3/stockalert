@@ -12,6 +12,7 @@
   python backfill.py ohlc       # 只回補大盤日K
   python backfill.py stock 2330,2454 730  # 回補指定個股日K
   python backfill.py stock              # 回補主檔全部股票日K(量大,會先確認)
+  python backfill.py stock-daily 14     # 全市場日K(MI_INDEX,每天一次請求)
 
 支援中斷續跑:已存在的日期會自動跳過。
 每次請求間隔 4 秒(證交所有流量限制,請勿調低)。
@@ -25,7 +26,8 @@ import requests
 
 from collector import (get_conn, fetch_foreign, fetch_taiex_ohlc_month,
                        fetch_index_5sec, hourly_ohlc_from_5sec, fetch_margin,
-                       fetch_stock_month, HEADERS)
+                       fetch_stock_month, fetch_stock_day_all, update_stock_master,
+                       HEADERS)
 
 log = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -120,17 +122,56 @@ def backfill_stocks(stock_ids: list[str] | None, days: int):
     log.info("個股日K回補完成,共 %d 筆", n)
 
 
-def backfill(days: int, do_index=True, do_foreign=True, do_margin=True):
+def window_end(today: date, include_today: bool) -> date:
+    """盤中回補預設不含今天(5 秒資料還不完整);收盤後的正式排程要含今天。"""
+    return today if include_today else today - timedelta(days=1)
+
+
+def backfill_stock_daily(days: int, today: date | None = None, include_today: bool = False):
+    """全市場個股日K(MI_INDEX,每天一次請求)。已有日期跳過,適合正式環境追平。"""
     conn = get_conn()
+    today = today or date.today()
+    have = existing_dates(conn, "stock_daily")
+    start = today - timedelta(days=days)
+    end = window_end(today, include_today)
+    n = 0
+    day = start
+    while day <= end:
+        if day.weekday() < 5:
+            ds = day.isoformat()
+            if ds not in have:
+                try:
+                    rows = fetch_stock_day_all(day)
+                    if rows:
+                        with conn:
+                            conn.executemany(
+                                "INSERT OR REPLACE INTO stock_daily VALUES (?,?,?,?,?,?,?,?,?)",
+                                rows)
+                            update_stock_master(conn, [(r[1], r[2]) for r in rows], ds)
+                        n += 1
+                        log.info("個股日K %s:%d 檔", ds, len(rows))
+                except Exception as e:
+                    log.warning("%s 個股日K失敗: %s", ds, e)
+                time.sleep(SLEEP)
+        day += timedelta(days=1)
+    log.info("個股日K(全市場)回補完成:%d 天", n)
+    return n
+
+
+def backfill(days: int, do_index=True, do_foreign=True, do_margin=True,
+             today: date | None = None, include_today: bool = False):
+    conn = get_conn()
+    today = today or date.today()
     have_idx = (existing_dates(conn, "taiex_hourly")
                 & existing_dates(conn, "taiex_hourly_ohlc")
                 & existing_dates(conn, "taiex_5sec_open")) if do_index else set()
     have_for = existing_dates(conn, "foreign_daily") if do_foreign else set()
     have_mar = existing_dates(conn, "margin_stock") if do_margin else set()
-    start = date.today() - timedelta(days=days)
+    start = today - timedelta(days=days)
+    end = window_end(today, include_today)
     day = start
     n_idx = n_for = n_mar = 0
-    while day < date.today():
+    while day <= end:
         if day.weekday() < 5:
             ds = day.isoformat()
             if do_index and ds not in have_idx:
@@ -184,8 +225,12 @@ def backfill(days: int, do_index=True, do_foreign=True, do_margin=True):
 if __name__ == "__main__":
     args = sys.argv[1:]
     mode = "all"
-    if args and args[0] in ("index", "foreign", "ohlc", "margin", "stock"):
+    if args and args[0] in ("index", "foreign", "ohlc", "margin", "stock", "stock-daily"):
         mode = args.pop(0)
+    if mode == "stock-daily":
+        days = int(args[0]) if args else 14
+        backfill_stock_daily(days)
+        raise SystemExit
     if mode == "stock":
         # 用法: python backfill.py stock                → 全部股票, 730天
         #      python backfill.py stock all 365        → 全部股票, 指定天數

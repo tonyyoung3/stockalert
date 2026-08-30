@@ -32,12 +32,35 @@ python -m unittest discover -s tests -v
 
 ## 台股資料收集器
 
-每小時抓台灣加權指數 (TAIEX)、每天抓證交所 T86 個股外資買賣超，存入 SQLite (`twse_data.db`)。
+正式環境用 GitHub Actions 排程，每個台股交易日 **18:00 台灣時間** 跑 `update_market_data.py`，補最近 14 天缺的資料：
+
+- 大盤日 K / 小時 K / 開盤 5 秒
+- 外資買賣超、融資融券、全市場個股日 K
+- 期交所三大法人未平倉
+- 美股 SPY / QQQ / IWM
+
+資料寫進 `twse_data.db`、`us_data.db`，用 Actions cache 接下一次、artifact 留 90 天，**不要 commit**。第一次或 cache 被清掉時，到 Actions → *Update market data* → Run workflow，把 `days` 設成 `730` 回補約兩年。
+
+```bash
+python update_market_data.py              # 預設近 14 天
+python update_market_data.py --days 730   # 歷史回補
+python update_market_data.py --dry-run
+```
+
+本機或 VPS 也用同一支腳本（台灣 18:00）：
+
+```cron
+0 18 * * 1-5  cd /path/to/stockalert && python3 update_market_data.py --days 14
+```
+
+`collector.py run` 是長駐每小時抓即時指數，GitHub Actions runner 結束就死，不適合作正式排程。研究用的小時 K 在收盤後由 5 秒資料彙整，比盤中快照完整。證交所有流量限制，勿把間隔調低。
+
+手動單次：
 
 ```bash
 python collector.py index
 python collector.py foreign
-python collector.py run
+python backfill.py 90
+python taifex_collector.py recent 30
+python us_collector.py hourly
 ```
-
-`run` 模式：交易日 09:00–14:00 每小時 :05 抓指數，每天 17:30 抓外資買賣超。證交所有流量限制，勿高頻請求。

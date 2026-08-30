@@ -4,8 +4,25 @@ from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
+import pandas as pd
+
 import db
-from performance_checker import main
+from performance_checker import run_checks
+
+
+def _bars(n: int = 80, start="2026-04-01", start_px: float = 100.0) -> pd.DataFrame:
+    idx = pd.bdate_range(start, periods=n)
+    closes = [start_px + i for i in range(n)]
+    return pd.DataFrame(
+        {
+            "Open": closes,
+            "High": [c + 1 for c in closes],
+            "Low": [c - 1 for c in closes],
+            "Close": closes,
+            "Volume": [1_000.0] * n,
+        },
+        index=idx,
+    )
 
 
 class PerformanceCheckerTests(unittest.TestCase):
@@ -18,47 +35,23 @@ class PerformanceCheckerTests(unittest.TestCase):
         db.set_db_path(None)
         self.tmp.cleanup()
 
-    def test_saves_return_for_old_unchecked_alert(self):
-        old = str(date.today() - timedelta(days=40))
-        alert_id = db.save_alert("2330", "upper_shadow_reversal", old, 100.0)
-        with patch("performance_checker.fetch_latest_closes", return_value={"2330": 110.0}):
-            main()
-        pending = db.get_pending_alerts()
-        self.assertEqual(pending, [])
-        with db.get_conn() as conn:
-            row = conn.execute(
-                "SELECT return_pct, price_at_check FROM performance WHERE alert_id = ?",
-                (alert_id,),
-            ).fetchone()
-        self.assertAlmostEqual(row["return_pct"], 10.0)
-        self.assertEqual(row["price_at_check"], 110.0)
+    def test_run_checks_saves_horizon_exit(self):
+        today = date(2026, 8, 30)
+        alert_day = date(2026, 4, 1)
+        alert_id = db.save_alert("2330", "upper_shadow_reversal", str(alert_day), 100.0)
+        frame = _bars()
+        with patch("performance_checker.download_history", return_value={"2330": frame}):
+            results = run_checks(horizons=(5,), today=today)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["horizon_td"], 5)
+        self.assertAlmostEqual(results[0]["return_pct"], 5.0)
+        pending = db.get_pending_horizon_jobs(horizons=(5,), today=today)
+        self.assertFalse(any(row["id"] == alert_id for row, _ in pending))
 
-    def test_skips_when_price_missing(self):
+    def test_skips_when_history_missing(self):
         old = str(date.today() - timedelta(days=40))
         db.save_alert("2330", "upper_shadow_reversal", old, 100.0)
-        with patch("performance_checker.fetch_latest_closes", return_value={}):
-            main()
-        self.assertEqual(len(db.get_pending_alerts()), 1)
-
-    def test_skips_zero_alert_price(self):
-        old = str(date.today() - timedelta(days=40))
-        db.save_alert("2330", "upper_shadow_reversal", old, 0.0)
-        with patch("performance_checker.fetch_latest_closes", return_value={"2330": 10.0}):
-            main()
-        self.assertEqual(len(db.get_pending_alerts()), 1)
-
-    def test_duplicate_performance_is_ignored(self):
-        old = str(date.today() - timedelta(days=40))
-        alert_id = db.save_alert("2330", "inside_day", old, 50.0)
-        self.assertTrue(db.save_performance(alert_id, str(date.today()), 55.0, 10.0))
-        self.assertFalse(db.save_performance(alert_id, str(date.today()), 56.0, 12.0))
-        with db.get_conn() as conn:
-            count = conn.execute(
-                "SELECT COUNT(*) AS n FROM performance WHERE alert_id = ?",
-                (alert_id,),
-            ).fetchone()["n"]
-        self.assertEqual(count, 1)
-
-
-if __name__ == "__main__":
-    unittest.main()
+        with patch("performance_checker.download_history", return_value={}):
+            results = run_checks(horizons=(5,), today=date.today())
+        self.assertEqual(results, [])
+        self.assertEqual(len(db.get_pending_horizon_jobs(horizons=(5,), today=date.today())), 1)

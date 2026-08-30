@@ -10,7 +10,7 @@ from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 
 from db import init_db, save_alert, has_alert
-from prices import download_history
+from prices import download_history, last_close
 
 # -----------------------------
 # 使用者設定 (可透過環境變數覆蓋)
@@ -240,7 +240,10 @@ def main():
                 print(f"  -> Skip duplicate {pattern} for {ticker_clean} on {signal_date}")
                 continue
 
-            price = float(df["Close"].iloc[-1])
+            price = last_close(df, ticker)
+            if price is None:
+                print(f"  -> Skip {ticker_clean}: could not read close")
+                continue
             if pattern == "inside_day":
                 print(f"  -> Inside day match: {ticker_clean} ({signal_date})")
                 chart_path = charts_dir / f"{ticker_clean}_inside_day.png"

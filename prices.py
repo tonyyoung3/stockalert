@@ -1,19 +1,31 @@
-"""Yahoo Finance helpers that tolerate the various yfinance DataFrame layouts."""
+"""Yahoo Finance helpers that tolerate MultiIndex columns and compute T+N exits."""
 
 from __future__ import annotations
+
+from datetime import date, datetime, timedelta
 
 import pandas as pd
 import yfinance as yf
 
+# Match screener alert prices (unadjusted). Checker must use the same basis.
+AUTO_ADJUST = False
+
 
 def to_yahoo_symbol(ticker: str) -> str:
-    """Map a stored ticker (often bare digits like 2330) to a Yahoo symbol."""
-    ticker = ticker.strip()
+    ticker = (ticker or "").strip()
     if not ticker:
         return ticker
     if "." in ticker:
         return ticker
     return f"{ticker}.TW" if ticker.isdigit() else ticker
+
+
+def parse_date(value: date | datetime | str) -> date:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    return date.fromisoformat(str(value)[:10])
 
 
 def _as_float(value) -> float | None:
@@ -61,11 +73,9 @@ def _close_from_multiindex(df: pd.DataFrame, symbol: str | None) -> pd.Series | 
     return None
 
 
-def last_close(df: pd.DataFrame | None, symbol: str | None = None) -> float | None:
-    """Last non-null Close from a yfinance-like frame, or None if unreadable."""
+def close_series(df: pd.DataFrame | None, symbol: str | None = None) -> pd.Series | None:
     if df is None or getattr(df, "empty", True):
         return None
-
     series = None
     if isinstance(df.columns, pd.MultiIndex):
         series = _close_from_multiindex(df, symbol)
@@ -75,9 +85,13 @@ def last_close(df: pd.DataFrame | None, symbol: str | None = None) -> float | No
             close = df["Close"]
             if isinstance(close, pd.DataFrame) and symbol in close.columns:
                 series = _series_from_close(close[symbol])
+    return series
+
+
+def last_close(df: pd.DataFrame | None, symbol: str | None = None) -> float | None:
+    series = close_series(df, symbol)
     if series is None:
         return None
-
     series = series.dropna()
     if series.empty:
         return None
@@ -85,7 +99,6 @@ def last_close(df: pd.DataFrame | None, symbol: str | None = None) -> float | No
 
 
 def extract_ohlcv(data: pd.DataFrame | None, symbol: str) -> pd.DataFrame:
-    """Extract a single-ticker OHLCV frame from a yfinance download result."""
     if data is None or getattr(data, "empty", True):
         return pd.DataFrame()
 
@@ -108,21 +121,93 @@ def extract_ohlcv(data: pd.DataFrame | None, symbol: str) -> pd.DataFrame:
     return pd.DataFrame()
 
 
-def _download(symbols: list[str] | str, period: str, group_by: str | None = None):
-    kwargs = dict(
-        period=period,
-        interval="1d",
-        threads=True,
-        progress=False,
-        auto_adjust=True,
-    )
+def bar_dates(df: pd.DataFrame) -> list[date]:
+    out: list[date] = []
+    for ts in df.index:
+        stamp = pd.Timestamp(ts)
+        if stamp.tz is not None:
+            stamp = stamp.tz_convert("Asia/Taipei")
+        out.append(stamp.date())
+    return out
+
+
+def signal_index(dates: list[date], alert_date: date) -> int | None:
+    """Index of the last bar on or before alert_date (handles weekend alert dates)."""
+    idx = None
+    for i, day in enumerate(dates):
+        if day <= alert_date:
+            idx = i
+        else:
+            break
+    return idx
+
+
+def horizon_exit(
+    df: pd.DataFrame,
+    alert_date: date | str,
+    horizon_td: int,
+    symbol: str | None = None,
+) -> tuple[date, float] | None:
+    """Close of the bar `horizon_td` trading days after the signal bar."""
+    if df is None or df.empty or horizon_td < 1:
+        return None
+    dates = bar_dates(df)
+    start = signal_index(dates, parse_date(alert_date))
+    if start is None:
+        return None
+    end = start + horizon_td
+    if end >= len(dates):
+        return None
+    series = close_series(df, symbol)
+    if series is None:
+        return None
+    px = _as_float(series.iloc[end])
+    if px is None:
+        return None
+    return dates[end], px
+
+
+def calendar_buffer_days(horizon_td: int) -> int:
+    """Minimum calendar age before we even try to fetch a T+N exit."""
+    return max(horizon_td + 5, int(horizon_td * 7 / 5) + 7)
+
+
+def _download(
+    symbols: list[str] | str,
+    *,
+    period: str | None = None,
+    start: str | date | None = None,
+    end: str | date | None = None,
+    group_by: str | None = None,
+):
+    kwargs: dict = {
+        "interval": "1d",
+        "threads": True,
+        "progress": False,
+        "auto_adjust": AUTO_ADJUST,
+    }
+    if period:
+        kwargs["period"] = period
+    if start is not None:
+        kwargs["start"] = str(start)
+    if end is not None:
+        kwargs["end"] = str(end)
     if group_by:
         kwargs["group_by"] = group_by
     return yf.download(symbols, **kwargs)
 
 
+def fetch_latest_close(ticker: str) -> float | None:
+    symbol = to_yahoo_symbol(ticker)
+    try:
+        df = _download(symbol, period="5d")
+        return last_close(df, symbol)
+    except Exception as exc:
+        print(f"  [warn] Could not fetch price for {ticker}: {exc}")
+        return None
+
+
 def fetch_latest_closes(tickers: list[str], chunk_size: int = 50) -> dict[str, float]:
-    """Batch-download latest closes. Falls back to one-by-one on a failed chunk."""
     prices: dict[str, float] = {}
     unique = list(dict.fromkeys(tickers))
     for i in range(0, len(unique), chunk_size):
@@ -131,19 +216,16 @@ def fetch_latest_closes(tickers: list[str], chunk_size: int = 50) -> dict[str, f
         symbol_to_ticker = dict(zip(symbols, chunk))
         try:
             data = _download(symbols, period="5d", group_by="ticker")
-        except Exception as e:
-            print(f"  [warn] Batch download failed ({chunk[0]}…): {e}")
-            for ticker, symbol in zip(chunk, symbols):
+        except Exception as exc:
+            print(f"  [warn] Batch download failed ({chunk[0]}…): {exc}")
+            for ticker in chunk:
                 px = fetch_latest_close(ticker)
                 if px is not None:
                     prices[ticker] = px
             continue
-
         for symbol, ticker in symbol_to_ticker.items():
             frame = extract_ohlcv(data, symbol)
-            px = last_close(frame, symbol)
-            if px is None:
-                px = last_close(data, symbol)
+            px = last_close(frame, symbol) or last_close(data, symbol)
             if px is None:
                 print(f"  [warn] Could not read price for {ticker}")
                 continue
@@ -151,43 +233,35 @@ def fetch_latest_closes(tickers: list[str], chunk_size: int = 50) -> dict[str, f
     return prices
 
 
-def fetch_latest_close(ticker: str) -> float | None:
-    """Return the most recent daily close for a ticker, or None on failure."""
-    symbol = to_yahoo_symbol(ticker)
-    try:
-        df = _download(symbol, period="5d")
-        return last_close(df, symbol)
-    except Exception as e:
-        print(f"  [warn] Could not fetch price for {ticker}: {e}")
-        return None
-
-
 def download_history(
     tickers: list[str],
-    period: str = "2mo",
-    chunk_size: int = 80,
+    *,
+    start: str | date | None = None,
+    end: str | date | None = None,
+    period: str | None = None,
+    chunk_size: int = 50,
 ) -> dict[str, pd.DataFrame]:
-    """Download daily OHLCV for many tickers, chunked to reduce Yahoo failures."""
     frames: dict[str, pd.DataFrame] = {}
     unique = list(dict.fromkeys(tickers))
     for i in range(0, len(unique), chunk_size):
         chunk = unique[i : i + chunk_size]
+        symbols = [to_yahoo_symbol(t) for t in chunk]
+        symbol_to_ticker = dict(zip(symbols, chunk))
         try:
-            data = _download(chunk, period=period, group_by="ticker")
-        except Exception as e:
-            print(f"  [warn] History download failed ({chunk[0]}…): {e}")
-            for ticker in chunk:
+            data = _download(symbols, period=period, start=start, end=end, group_by="ticker")
+        except Exception as exc:
+            print(f"  [warn] History download failed ({chunk[0]}…): {exc}")
+            for ticker, symbol in zip(chunk, symbols):
                 try:
-                    one = _download(ticker, period=period)
-                    frame = extract_ohlcv(one, ticker)
+                    one = _download(symbol, period=period, start=start, end=end)
+                    frame = extract_ohlcv(one, symbol)
                     if not frame.empty:
                         frames[ticker] = frame
-                except Exception as e2:
-                    print(f"  [warn] Could not download {ticker}: {e2}")
+                except Exception as exc2:
+                    print(f"  [warn] Could not download {ticker}: {exc2}")
             continue
-
-        for ticker in chunk:
-            frame = extract_ohlcv(data, ticker)
+        for symbol, ticker in symbol_to_ticker.items():
+            frame = extract_ohlcv(data, symbol)
             if frame.empty:
                 print(f"  [warn] No OHLCV for {ticker}")
                 continue

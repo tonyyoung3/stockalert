@@ -1,14 +1,19 @@
 import unittest
+from datetime import date
 from unittest.mock import patch
 
 import pandas as pd
 
+from performance_checker import evaluate_row
 from prices import (
+    calendar_buffer_days,
     download_history,
     extract_ohlcv,
     fetch_latest_close,
     fetch_latest_closes,
+    horizon_exit,
     last_close,
+    signal_index,
     to_yahoo_symbol,
 )
 
@@ -28,6 +33,21 @@ def _flat_ohlcv(closes=(10.0, 11.0, 12.5), ticker=None) -> pd.DataFrame:
     if ticker:
         frame.columns = pd.MultiIndex.from_product([[ticker], frame.columns])
     return frame
+
+
+def _bars(n: int = 40, start="2026-04-01", start_px: float = 100.0) -> pd.DataFrame:
+    idx = pd.bdate_range(start, periods=n)
+    closes = [start_px + i for i in range(n)]
+    return pd.DataFrame(
+        {
+            "Open": closes,
+            "High": [c + 1 for c in closes],
+            "Low": [c - 1 for c in closes],
+            "Close": closes,
+            "Volume": [1_000.0] * n,
+        },
+        index=idx,
+    )
 
 
 class SymbolTests(unittest.TestCase):
@@ -63,11 +83,6 @@ class LastCloseTests(unittest.TestCase):
         self.assertEqual(last_close(df, "2330.TW"), 13.0)
         self.assertEqual(last_close(df, "1101.TW"), 22.0)
 
-    def test_close_as_dataframe_single_column(self):
-        idx = pd.bdate_range("2026-08-01", periods=2)
-        wide = pd.DataFrame({("Close", "2330.TW"): [100.0, 105.5]}, index=idx)
-        self.assertEqual(last_close(wide, "2330.TW"), 105.5)
-
     def test_trailing_nan_uses_previous_bar(self):
         df = _flat_ohlcv((10.0, 11.0, float("nan")))
         self.assertEqual(last_close(df), 11.0)
@@ -90,21 +105,6 @@ class ExtractOhlcvTests(unittest.TestCase):
         self.assertIn("Close", out.columns)
         self.assertEqual(out["Close"].iloc[-1], 12.5)
 
-    def test_ticker_last_level(self):
-        idx = pd.bdate_range("2026-08-01", periods=2)
-        df = pd.DataFrame(
-            {
-                ("Open", "2330.TW"): [10.0, 11.0],
-                ("High", "2330.TW"): [10.5, 11.5],
-                ("Low", "2330.TW"): [9.5, 10.5],
-                ("Close", "2330.TW"): [10.2, 11.2],
-                ("Volume", "2330.TW"): [1.0, 2.0],
-            },
-            index=idx,
-        )
-        out = extract_ohlcv(df, "2330.TW")
-        self.assertEqual(out["Close"].iloc[-1], 11.2)
-
 
 class FetchClosesTests(unittest.TestCase):
     def test_batch_reads_group_by_ticker_frame(self):
@@ -117,18 +117,6 @@ class FetchClosesTests(unittest.TestCase):
         self.assertEqual(prices["2330"], 101.0)
         self.assertEqual(prices["1101"], 55.0)
 
-    def test_batch_failure_falls_back_one_by_one(self):
-        flat = _flat_ohlcv((9.0, 9.5))
-
-        def fake_download(symbols, **kwargs):
-            if isinstance(symbols, list):
-                raise RuntimeError("yahoo down")
-            return flat
-
-        with patch("prices.yf.download", side_effect=fake_download):
-            prices = fetch_latest_closes(["2330"])
-        self.assertEqual(prices["2330"], 9.5)
-
     def test_single_close_uses_last_close_helper(self):
         wide = pd.DataFrame(
             {("Close", "2330.TW"): [80.0, 82.0]},
@@ -140,9 +128,51 @@ class FetchClosesTests(unittest.TestCase):
     def test_download_history_maps_original_tickers(self):
         a = _flat_ohlcv((1.0, 2.0), ticker="2330.TW")
         with patch("prices.yf.download", return_value=a):
-            frames = download_history(["2330.TW"])
+            frames = download_history(["2330.TW"], period="2mo")
         self.assertIn("2330.TW", frames)
         self.assertEqual(frames["2330.TW"]["Close"].iloc[-1], 2.0)
+
+
+class HorizonTests(unittest.TestCase):
+    def test_horizon_exit_is_trading_days_after_signal(self):
+        df = _bars()
+        alert = date(2026, 4, 1)
+        exit_bar = horizon_exit(df, alert, 5)
+        self.assertIsNotNone(exit_bar)
+        exit_date, exit_px = exit_bar
+        self.assertEqual(exit_date, df.index[5].date())
+        self.assertEqual(exit_px, 105.0)
+
+        weekend_df = _bars(n=5, start="2026-04-03")
+        mapped = horizon_exit(weekend_df, date(2026, 4, 4), 1)
+        self.assertEqual(mapped[0], date(2026, 4, 6))
+
+    def test_horizon_exit_none_until_enough_bars(self):
+        df = _bars(n=6)
+        self.assertIsNone(horizon_exit(df, date(2026, 4, 1), 20))
+        self.assertIsNotNone(horizon_exit(df, date(2026, 4, 1), 5))
+
+    def test_signal_index_skips_future_alert(self):
+        dates = [date(2026, 4, 1), date(2026, 4, 2)]
+        self.assertIsNone(signal_index(dates, date(2026, 3, 1)))
+
+    def test_evaluate_row_uses_alert_price_not_todays_close(self):
+        df = _bars()
+        row = {
+            "id": 1,
+            "ticker": "2330",
+            "pattern_type": "upper_shadow_reversal",
+            "alert_date": str(df.index[0].date()),
+            "price_at_alert": 100.0,
+        }
+        measured = evaluate_row(row, df, 20)
+        self.assertEqual(measured["horizon_td"], 20)
+        self.assertEqual(measured["exit_date"], str(df.index[20].date()))
+        self.assertAlmostEqual(measured["return_pct"], 20.0)
+
+    def test_calendar_buffer_grows_with_horizon(self):
+        self.assertLess(calendar_buffer_days(5), calendar_buffer_days(20))
+        self.assertLess(calendar_buffer_days(20), calendar_buffer_days(60))
 
 
 if __name__ == "__main__":

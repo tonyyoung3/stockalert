@@ -1,6 +1,7 @@
 pandas>=2.0,<3.0
 yfinance>=0.2.40,<0.3
 requests>=2.31,<3.0
+beautifulsoup4>=4.12,<5.0
 matplotlib>=3.8,<4.0
 mplfinance>=0.12.10b0,<0.13
 python-dotenv>=1.0,<2.0

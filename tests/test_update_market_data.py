@@ -62,6 +62,34 @@ class DryRunTests(unittest.TestCase):
         self.assertEqual(code, 0)
         run.assert_not_called()
 
+    def test_main_pushes_turso_after_jobs(self):
+        with patch.object(umd, "run_jobs", return_value=[]), \
+             patch.object(umd, "coverage_lines", return_value=["ok"]), \
+             patch("cloud_db.configured", return_value=True), \
+             patch("cloud_db.push_market_files", return_value={"twse_data.db": {"taiex_daily": 3}}) as push, \
+             patch("collector.get_conn") as gc, \
+             patch("taifex_collector.get_conn") as tc, \
+             patch("us_collector.get_conn") as uc:
+            for m in (gc, tc, uc):
+                m.return_value.close.return_value = None
+            code = umd.main(["--exclude-today", "--skip-us", "--skip-taifex", "--skip-stocks"])
+        self.assertEqual(code, 0)
+        push.assert_called_once()
+
+    def test_main_skips_turso_when_asked(self):
+        with patch.object(umd, "run_jobs", return_value=[]), \
+             patch.object(umd, "coverage_lines", return_value=["ok"]), \
+             patch("cloud_db.configured", return_value=True), \
+             patch("cloud_db.push_market_files") as push, \
+             patch("collector.get_conn") as gc, \
+             patch("taifex_collector.get_conn") as tc, \
+             patch("us_collector.get_conn") as uc:
+            for m in (gc, tc, uc):
+                m.return_value.close.return_value = None
+            code = umd.main(["--exclude-today", "--skip-turso"])
+        self.assertEqual(code, 0)
+        push.assert_not_called()
+
 
 class CoverageTests(unittest.TestCase):
     def setUp(self):

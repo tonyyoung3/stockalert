@@ -46,6 +46,8 @@ jobs:
       - name: Catch up market data
         env:
           DAYS: ${{ github.event.inputs.days || '14' }}
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
         run: python update_market_data.py --days "$DAYS" --include-today
 
       - name: Save market databases

@@ -39,12 +39,27 @@ python -m unittest discover -s tests -v
 - 期交所三大法人未平倉
 - 美股 SPY / QQQ / IWM
 
-資料寫進 `twse_data.db`、`us_data.db`，用 Actions cache 接下一次、artifact 留 90 天，**不要 commit**。第一次或 cache 被清掉時，到 Actions → *Update market data* → Run workflow，把 `days` 設成 `730` 回補約兩年。
+資料先寫進 `twse_data.db`、`us_data.db`，用 Actions cache 接下一次、artifact 留 90 天，**不要 commit**。設了 `TURSO_DATABASE_URL` 跟 `TURSO_AUTH_TOKEN` 時，同一輪會把最近 N 天的列推到 Turso（一個 DB 裡同時放台股表跟美股表）。沒設 secrets 就只留本機檔，排程不會失敗。
+
+第一次或 cache 被清掉時，到 Actions → *Update market data* → Run workflow，把 `days` 設成 `730` 回補約兩年。
+
+開 Turso：
+
+```bash
+turso auth login
+turso db create stockalert
+turso db show stockalert --url
+turso db tokens create stockalert
+```
+
+把 URL 跟 token 加到 GitHub repo secrets（`TURSO_DATABASE_URL`、`TURSO_AUTH_TOKEN`），以及本機 `.env`。
 
 ```bash
 python update_market_data.py              # 預設近 14 天
 python update_market_data.py --days 730   # 歷史回補
 python update_market_data.py --dry-run
+python cloud_db.py status
+python cloud_db.py push --days 14
 ```
 
 本機或 VPS 也用同一支腳本（台灣 18:00）：

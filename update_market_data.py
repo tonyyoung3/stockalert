@@ -55,6 +55,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--us-hourly-days", type=int, default=None)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--skip-turso", action="store_true",
+                        help="do not push local sqlite to Turso even if secrets are set")
     parser.add_argument(
         "--include-today",
         action="store_true",
@@ -209,8 +211,10 @@ def main(argv: list[str] | None = None) -> int:
     jobs = planned_jobs(args)
     log.info("jobs: %s", ", ".join(jobs))
     if args.dry_run:
+        import cloud_db
         print("dry-run", " ".join(jobs), f"days={args.days}",
-              f"include_today={args.include_today}")
+              f"include_today={args.include_today}",
+              "turso=" + ("yes" if cloud_db.configured() and not args.skip_turso else "no"))
         return 0
 
     import collector
@@ -225,6 +229,22 @@ def main(argv: list[str] | None = None) -> int:
     print("=== coverage ===")
     for line in lines:
         print(line)
+
+    import cloud_db
+    if cloud_db.configured() and not args.skip_turso:
+        try:
+            pushed = cloud_db.push_market_files(days=args.days, today=taiwan_now().date())
+            print("=== turso ===")
+            for fname, tables in pushed.items():
+                print(fname, ", ".join(f"{k}={v}" for k, v in tables.items()) or "(empty)")
+        except Exception:
+            log.exception("Turso push failed")
+            failed.append("turso")
+    elif args.skip_turso:
+        log.info("Turso push skipped (--skip-turso)")
+    else:
+        log.info("Turso not configured; data stayed in local sqlite")
+
     if failed:
         log.error("failed jobs: %s", ", ".join(failed))
         return 1

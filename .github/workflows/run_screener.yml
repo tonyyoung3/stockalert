@@ -59,6 +59,12 @@ jobs:
           git diff --cached --quiet || git commit -m "chore: update screener.db [skip ci]"
           git push
 
+      - name: Push alerts to Turso
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+        run: python cloud_db.py push-alerts
+
     # Prevent overlapping runs if a previous one is still executing
     concurrency:
       group: run-screener

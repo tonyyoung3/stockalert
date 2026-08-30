@@ -97,3 +97,73 @@ class PushTests(unittest.TestCase):
     def test_push_market_files_noop_without_config(self):
         with patch("cloud_db.configured", return_value=False):
             self.assertEqual(cloud_db.push_market_files(files=(self.path,)), {})
+
+    def test_alerts_filter_on_alert_date_and_performance_on_check_date(self):
+        path = Path(self.tmp.name) / "screener.db"
+        conn = sqlite3.connect(path)
+        conn.executescript("""
+            CREATE TABLE alerts (
+                id INTEGER PRIMARY KEY,
+                ticker TEXT NOT NULL,
+                pattern_type TEXT NOT NULL,
+                alert_date TEXT NOT NULL,
+                price_at_alert REAL NOT NULL
+            );
+            CREATE TABLE performance (
+                id INTEGER PRIMARY KEY,
+                alert_id INTEGER NOT NULL,
+                check_date TEXT NOT NULL,
+                price_at_check REAL NOT NULL,
+                return_pct REAL NOT NULL,
+                horizon_td INTEGER NOT NULL DEFAULT 20
+            );
+        """)
+        conn.executemany(
+            "INSERT INTO alerts VALUES (?,?,?,?,?)",
+            [
+                (1, "2330", "upper_shadow_reversal", "2026-07-01", 100.0),
+                (2, "2317", "inside_day", "2026-08-20", 50.0),
+            ],
+        )
+        conn.executemany(
+            "INSERT INTO performance VALUES (?,?,?,?,?,?)",
+            [
+                (1, 1, "2026-07-08", 110.0, 10.0, 5),
+                (2, 1, "2026-08-20", 112.0, 12.0, 20),
+            ],
+        )
+        conn.commit()
+        conn.close()
+        remote = FakeRemote()
+        counts = cloud_db.push_file(path, remote, since="2026-08-15")
+        self.assertEqual(counts["alerts"], 1)
+        self.assertEqual(counts["performance"], 1)
+        self.assertEqual(
+            remote.execute("SELECT ticker FROM alerts").fetchone()[0],
+            "2317",
+        )
+        self.assertEqual(
+            remote.execute("SELECT horizon_td FROM performance").fetchone()[0],
+            20,
+        )
+
+    def test_push_alert_files_full_copy_by_default(self):
+        path = Path(self.tmp.name) / "screener.db"
+        conn = sqlite3.connect(path)
+        conn.execute(
+            "CREATE TABLE alerts (id INTEGER PRIMARY KEY, ticker TEXT, "
+            "pattern_type TEXT, alert_date TEXT, price_at_alert REAL)"
+        )
+        conn.execute(
+            "INSERT INTO alerts VALUES (1,'2330','inside_day','2026-01-01',10.0)"
+        )
+        conn.commit()
+        conn.close()
+        remote = FakeRemote()
+        with patch("cloud_db.configured", return_value=False):
+            counts = cloud_db.push_alert_files(files=(path,), remote=remote)
+        self.assertEqual(counts["screener.db"]["alerts"], 1)
+
+    def test_push_alerts_cli_ok_without_secrets(self):
+        with patch("cloud_db.configured", return_value=False):
+            self.assertEqual(cloud_db.main(["push-alerts"]), 0)

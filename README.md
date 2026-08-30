@@ -29,6 +29,7 @@ python -m notify.screener
 python -m notify.performance_checker
 python -m ptt.ptt_stock
 python -m reddit.ideas             # Reddit 投資想法週報
+python -m notify.daily_digest      # PTT + Reddit 今日重點打 Slack（--dry-run 只印）
 python -m notify.interactive_bot   # 需要長期主機
 python -m web.dashboard            # 本地 http://localhost:8765；Cloud Run 見下方
 ```
@@ -48,7 +49,7 @@ Slack bot 預設只認 ticker / help。設 `HARNESS_ENABLED=1` 且有 API key，
 python -m unittest discover -s tests -v
 ```
 
-PTT 股板週報跟 Reddit 投資想法週報都是本機整理、印到 stdout（可加 `--json`）。Reddit 預設看 r/SecurityAnalysis、r/ValueInvesting、r/investing、r/stocks、r/wallstreetbets 近一週高分文，略過 Daily Discussion，抽出 `$TICKER` / DD 文跟精選留言。WSB 只收 DD / 研究類 flair。雲端 IP 常被 Reddit 擋（403），`--source auto` 會改走 [Arctic Shift](https://arctic-shift.photon-reddit.com) 封存。分點買賣超資料源記在 `TODO.md`，還沒做。
+PTT 股板週報跟 Reddit 投資想法週報都是本機整理、印到 stdout（可加 `--json`）。`python -m notify.daily_digest` 抓近 1 天重點（PTT 題材／標的／盤後閒聊，Reddit DD）打到同一個 Slack channel。GitHub Actions 每天 **22:00 台灣時間** 跑。Reddit 預設看 r/SecurityAnalysis、r/ValueInvesting、r/investing、r/stocks、r/wallstreetbets；WSB 只收 DD / 研究類 flair。雲端 IP 常被 Reddit 擋（403），會改走 [Arctic Shift](https://arctic-shift.photon-reddit.com) 封存。分點買賣超資料源記在 `TODO.md`，還沒做。
 
 ## 台股資料收集器
 

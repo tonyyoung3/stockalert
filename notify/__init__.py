@@ -1,1 +1,1 @@
-"""Slack-facing jobs: daily screener, performance checks, bot, failure notices."""
+"""Slack-facing jobs: daily screener, forum digest, performance checks, bot, failure notices."""

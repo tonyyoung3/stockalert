@@ -51,6 +51,9 @@ def init_db() -> None:
 
             CREATE UNIQUE INDEX IF NOT EXISTS idx_alerts_ticker_pattern_date
             ON alerts (ticker, pattern_type, alert_date);
+
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_performance_alert_id
+            ON performance (alert_id);
         """)
 
 
@@ -76,12 +79,17 @@ def has_alert(ticker: str, pattern_type: str, alert_date: str) -> bool:
     return row is not None
 
 
-def save_performance(alert_id: int, check_date: str, price_at_check: float, return_pct: float) -> None:
+def save_performance(alert_id: int, check_date: str, price_at_check: float, return_pct: float) -> bool:
+    """Insert a performance row. Returns False if this alert was already checked."""
     with get_conn() as conn:
-        conn.execute(
-            "INSERT INTO performance (alert_id, check_date, price_at_check, return_pct) VALUES (?, ?, ?, ?)",
-            (alert_id, check_date, price_at_check, return_pct),
-        )
+        try:
+            conn.execute(
+                "INSERT INTO performance (alert_id, check_date, price_at_check, return_pct) VALUES (?, ?, ?, ?)",
+                (alert_id, check_date, price_at_check, return_pct),
+            )
+            return True
+        except sqlite3.IntegrityError:
+            return False
 
 
 def get_pending_alerts(min_age_days: int = 28):

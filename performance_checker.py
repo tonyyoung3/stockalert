@@ -9,63 +9,10 @@ Usage:
     python performance_checker.py
 """
 
-import yfinance as yf
 from datetime import date
+
 from db import init_db, get_pending_alerts, save_performance
-
-
-def _to_symbol(ticker: str) -> str:
-    return f"{ticker}.TW" if ticker.isdigit() else ticker
-
-
-def fetch_latest_close(ticker: str) -> float | None:
-    """Return the most recent daily close for a ticker, or None on failure."""
-    symbol = _to_symbol(ticker)
-    try:
-        df = yf.download(symbol, period="5d", interval="1d", progress=False, auto_adjust=True)
-        if df.empty:
-            return None
-        return float(df["Close"].iloc[-1])
-    except Exception as e:
-        print(f"  [warn] Could not fetch price for {ticker}: {e}")
-        return None
-
-
-def fetch_latest_closes(tickers: list[str], chunk_size: int = 50) -> dict[str, float]:
-    """Batch-download latest closes. Falls back to one-by-one on a failed chunk."""
-    prices: dict[str, float] = {}
-    unique = list(dict.fromkeys(tickers))
-    for i in range(0, len(unique), chunk_size):
-        chunk = unique[i:i + chunk_size]
-        symbols = [_to_symbol(t) for t in chunk]
-        symbol_to_ticker = dict(zip(symbols, chunk))
-        try:
-            data = yf.download(
-                symbols,
-                period="5d",
-                interval="1d",
-                group_by="ticker",
-                threads=True,
-                progress=False,
-                auto_adjust=True,
-            )
-        except Exception as e:
-            print(f"  [warn] Batch download failed ({chunk[0]}…): {e}")
-            for ticker in chunk:
-                px = fetch_latest_close(ticker)
-                if px is not None:
-                    prices[ticker] = px
-            continue
-
-        for symbol, ticker in symbol_to_ticker.items():
-            try:
-                part = data[symbol] if len(symbols) > 1 else data
-                if part.empty:
-                    continue
-                prices[ticker] = float(part["Close"].iloc[-1])
-            except Exception as e:
-                print(f"  [warn] Could not read price for {ticker}: {e}")
-    return prices
+from prices import fetch_latest_closes
 
 
 def main() -> None:
@@ -78,8 +25,10 @@ def main() -> None:
 
     print(f"Checking {len(pending)} alert(s)...\n")
     prices = fetch_latest_closes([row["ticker"] for row in pending])
+    print(f"Retrieved {len(prices)} / {len({row['ticker'] for row in pending})} unique ticker price(s).\n")
 
     results = []
+    skipped = 0
     for row in pending:
         ticker = row["ticker"]
         pattern_type = row["pattern_type"]
@@ -90,6 +39,11 @@ def main() -> None:
         current_price = prices.get(ticker)
         if current_price is None:
             print(f"  [skip] {ticker} — could not retrieve current price")
+            skipped += 1
+            continue
+        if not price_at_alert:
+            print(f"  [skip] {ticker} — alert price is zero, cannot compute return")
+            skipped += 1
             continue
 
         check_date = str(date.today())
@@ -106,7 +60,7 @@ def main() -> None:
         })
 
     if not results:
-        print("No results saved.")
+        print(f"No results saved ({skipped} skipped).")
         return
 
     header = f"{'Ticker':<10} {'Pattern':<25} {'Alert Date':<12} {'Alert $':>9} {'Now $':>9} {'Return %':>9}"
@@ -119,6 +73,7 @@ def main() -> None:
             f"{r['alert_price']:>9.2f} {r['current_price']:>9.2f} "
             f"{sign}{r['return_pct']:>8.2f}%"
         )
+    print(f"\nSaved {len(results)} performance row(s); skipped {skipped}.")
 
 
 if __name__ == "__main__":

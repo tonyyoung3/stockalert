@@ -58,3 +58,9 @@ venv.bak/
 
 # charts output (regenerated each run)
 charts/
+charts_interactive/
+
+# runtime SQLite (persisted via Actions cache/artifacts)
+screener.db
+*.db
+!screener.seed.db

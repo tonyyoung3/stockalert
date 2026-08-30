@@ -2,7 +2,7 @@ name: Run screener on schedule
 
 on:
   schedule:
-    # Runs daily at 9 PM Taiwan time (UTC+8) = 1 PM UTC
+    # After TW close: 9 PM Taiwan (UTC+8) = 1 PM UTC
     - cron: '0 13 * * *'
   workflow_dispatch: {}
 
@@ -10,13 +10,15 @@ jobs:
   run:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
+      actions: write
+    # Prevent overlapping runs if a previous one is still executing
+    concurrency:
+      group: run-screener
+      cancel-in-progress: false
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          # Need a token with write access so we can push screener.db back
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -27,40 +29,65 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install -r requirements.txt
+
+      - name: Restore alert database from cache
+        uses: actions/cache/restore@v4
+        with:
+          path: screener.db
+          key: screener-db-${{ github.run_id }}
+          restore-keys: |
+            screener-db-
+
+      - name: Restore alert database from last artifact
+        if: hashFiles('screener.db') == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          RUN_ID=$(gh run list \
+            --workflow run_screener.yml \
+            --branch "${{ github.ref_name }}" \
+            --status success \
+            --limit 10 \
+            --json databaseId \
+            --jq '.[0].databaseId' || true)
+          if [ -n "${RUN_ID:-}" ]; then
+            gh run download "$RUN_ID" --name screener-db || true
+          fi
+
+      - name: Seed database if missing
+        run: |
+          if [ -f screener.db ]; then
+            echo "Using existing screener.db"
+          else
+            cp screener.seed.db screener.db
+            echo "No cache or artifact; seeded screener.db from screener.seed.db"
+          fi
 
       - name: Run unit tests
         run: python -m unittest discover -s tests -v
 
       - name: Run screener
         env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
-        run: |
-          echo "Checking SLACK_WEBHOOK_URL..."
-          if [ -n "$SLACK_WEBHOOK_URL" ]; then
-            echo "SLACK_WEBHOOK_URL is set (length: ${#SLACK_WEBHOOK_URL})"
-          else
-            echo "SLACK_WEBHOOK_URL is NOT set"
-          fi
-          python screener.py
+        run: python screener.py
 
       - name: Check alert performance
         run: python performance_checker.py
 
-      - name: Persist alert database
-        run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add screener.db
-          # Only commit if screener.db actually changed
-          git diff --cached --quiet || git commit -m "chore: update screener.db [skip ci]"
-          git push
+      - name: Save alert database
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: screener.db
+          key: screener-db-${{ github.run_id }}
 
-    # Prevent overlapping runs if a previous one is still executing
-    concurrency:
-      group: run-screener
-      cancel-in-progress: false
-
-
+      - name: Upload alert database
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screener-db
+          path: screener.db
+          retention-days: 90

@@ -1,12 +1,16 @@
-import yfinance as yf
-import pandas as pd
 import os
 from datetime import date
 from pathlib import Path
+
+import matplotlib
+matplotlib.use("Agg")
 import mplfinance as mpf
+import pandas as pd
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
+
 from db import init_db, save_alert, has_alert
+from prices import download_history
 
 # -----------------------------
 # 使用者設定 (可透過環境變數覆蓋)
@@ -207,9 +211,9 @@ def main():
         print("No tickers loaded. Exiting.")
         return
 
-    # 批次抓取（S&P 500 股票不多，可以一次抓）
-    # 期間設為 "2mo" 確保有足夠資料計算月線和繪圖
-    data = yf.download(taiwan_stocks, period="2mo", interval="1d", group_by='ticker', threads=True)
+    # Chunked download: one 1000+ ticker request is unreliable on Yahoo.
+    # Period "2mo" is enough for MA20 and the last-40-day chart.
+    history = download_history(taiwan_stocks, period="2mo")
     upper_shadow_results = []
     inside_day_results = []
     
@@ -219,9 +223,8 @@ def main():
 
     for ticker in taiwan_stocks:
         try:
-            # yfinance 在多股票下載時，會將 ticker 作為列名
-            df = data[ticker] if len(taiwan_stocks) > 1 else data
-            if df.empty or len(df) < 22:
+            df = history.get(ticker)
+            if df is None or df.empty or len(df) < 22:
                 # print(f"Skipping {ticker} due to insufficient data ({len(df)} days)")
                 continue
 

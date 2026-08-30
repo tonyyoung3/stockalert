@@ -34,6 +34,20 @@ logging.getLogger('urllib3').setLevel(logging.ERROR)
 # 和一個 Bot Token (xoxb-...) 來呼叫 API
 app = App(token=os.environ.get("SLACK_BOT_TOKEN"))
 
+
+def harness_enabled() -> bool:
+    from harness.config import harness_enabled as _enabled
+
+    return _enabled()
+
+
+def answer_with_harness(question: str) -> str:
+    from harness.agent import run_agent
+    from harness.models import OpenAICompatModel
+
+    result = run_agent(question, OpenAICompatModel.from_env())
+    return result.answer or "沒有得到可用的回答。"
+
 # 建立儲存圖表的資料夾
 charts_dir = Path("charts_interactive")
 charts_dir.mkdir(exist_ok=True)
@@ -80,8 +94,11 @@ def handle_any_message(message, say, logger):
     # 1. 檢查 'help' 指令
     # 1. 優先檢查 'help' 指令
     if text.lower() == 'help':
+        help_text = "如何使用我：\n直接輸入股票代碼（例如 `2330.TW` 或 `TSLA`），我就會回傳最近的 K 線圖。"
+        if harness_enabled():
+            help_text += "\n也可以問訊號或績效，例如：`最近 alerts`、`2330 有沒有出過訊號`、`28 天績效如何`。"
         say(
-            text="如何使用我：\n直接輸入股票代碼（例如 `2330.TW` 或 `TSLA`），我就會回傳最近的 K 線圖。",
+            text=help_text,
             thread_ts=thread_ts,
             reply_broadcast=True # 將 help 訊息也廣播到頻道
         )
@@ -95,7 +112,13 @@ def handle_any_message(message, say, logger):
     if match:
         ticker = match.group(1)
     else:
-        # 如果訊息不是 'help' 也找不到股票代碼，就忽略它
+        # 沒有 ticker 時預設忽略；開了 harness 才把整句當問題。
+        if harness_enabled():
+            try:
+                say(text=answer_with_harness(text), thread_ts=thread_ts)
+            except Exception as exc:
+                logger.error(f"Harness failed: {exc}")
+                say(text="harness 暫時無法回答這個問題。", thread_ts=thread_ts)
         return
     logger.info(f"Step 1: Parsed ticker '{ticker}' from message.")
 

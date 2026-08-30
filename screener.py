@@ -7,6 +7,13 @@ import mplfinance as mpf
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 from db import init_db, save_alert, has_alert
+from company_info import (
+    CompanyProfile,
+    fetch_profiles,
+    format_digest,
+    format_slack_caption,
+    maybe_enrich_themes,
+)
 from prices import AUTO_ADJUST, extract_ohlcv, last_close
 
 # -----------------------------
@@ -197,6 +204,49 @@ def send_to_slack(client, channel, text=None, blocks=None):
     except SlackApiError as e:
         print(f"Error sending to Slack: {e.response['error']}")
 
+
+def chart_blocks(caption: str, image_url: str, title: str) -> list[dict]:
+    return [
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": caption},
+        },
+        {
+            "type": "image",
+            "title": {"type": "plain_text", "text": title},
+            "image_url": image_url,
+            "alt_text": title,
+        },
+    ]
+
+
+def post_alert_charts(
+    client,
+    channel: str,
+    heading: str,
+    hits: list[tuple[str, Path]],
+    profiles: dict[str, CompanyProfile],
+    pattern_title: str,
+) -> list[tuple[CompanyProfile, str]]:
+    posted: list[tuple[CompanyProfile, str]] = []
+    if not hits:
+        return posted
+    send_to_slack(client, channel, heading)
+    for ticker, chart_path in hits:
+        profile = profiles.get(ticker) or CompanyProfile(ticker=ticker, symbol=ticker)
+        public_url = upload_file_and_get_public_url(client, channel, str(chart_path), f"{ticker} Chart")
+        if not public_url:
+            continue
+        caption = format_slack_caption(profile)
+        send_to_slack(
+            client,
+            channel,
+            text=caption,
+            blocks=chart_blocks(caption, public_url, f"{ticker} - {pattern_title}"),
+        )
+        posted.append((profile, pattern_title))
+    return posted
+
 # -----------------------------
 # 主要執行邏輯
 # -----------------------------
@@ -273,45 +323,29 @@ def main():
         client = WebClient(token=slack_token)
         print("\nSending results to Slack...")
         
-        # 傳送上影線反轉結果
-        if upper_shadow_results:
-            send_to_slack(client, slack_channel, "--- 🔺 台股篩選結果：上影線反轉 (Upper Shadow Reversal) ---")
-            for ticker, chart_path in upper_shadow_results:
-                public_url = upload_file_and_get_public_url(client, slack_channel, str(chart_path), f"{ticker} Chart")
-                if public_url:
-                    blocks = [
-                        {
-                            "type": "section",
-                            "text": {"type": "mrkdwn", "text": f"標的: *{ticker}*"}
-                        },
-                        {
-                            "type": "image",
-                            "title": {"type": "plain_text", "text": f"{ticker} - Upper Shadow Reversal"},
-                            "image_url": public_url,
-                            "alt_text": f"Chart for {ticker}"
-                        }
-                    ]
-                    send_to_slack(client, slack_channel, text=f"標的: {ticker}", blocks=blocks)
-        
-        # 傳送 Inside Day 結果
-        if inside_day_results:
-            send_to_slack(client, slack_channel, "--- 📦 台股篩選結果：Inside Day ---")
-            for ticker, chart_path in inside_day_results:
-                public_url = upload_file_and_get_public_url(client, slack_channel, str(chart_path), f"{ticker} Chart")
-                if public_url:
-                    blocks = [
-                        {
-                            "type": "section",
-                            "text": {"type": "mrkdwn", "text": f"標的: *{ticker}*"}
-                        },
-                        {
-                            "type": "image",
-                            "title": {"type": "plain_text", "text": f"{ticker} - Inside Day"},
-                            "image_url": public_url,
-                            "alt_text": f"Chart for {ticker}"
-                        }
-                    ]
-                    send_to_slack(client, slack_channel, text=f"標的: {ticker}", blocks=blocks)
+        hit_tickers = [t for t, _ in upper_shadow_results] + [t for t, _ in inside_day_results]
+        profiles = fetch_profiles(hit_tickers)
+        maybe_enrich_themes(list(profiles.values()))
+
+        posted: list[tuple[CompanyProfile, str]] = []
+        posted += post_alert_charts(
+            client,
+            slack_channel,
+            "--- 🔺 台股篩選結果：上影線反轉 (Upper Shadow Reversal) ---",
+            upper_shadow_results,
+            profiles,
+            "上影線反轉",
+        )
+        posted += post_alert_charts(
+            client,
+            slack_channel,
+            "--- 📦 台股篩選結果：Inside Day ---",
+            inside_day_results,
+            profiles,
+            "Inside Day",
+        )
+        if posted:
+            send_to_slack(client, slack_channel, format_digest(posted))
     else:
         print("\nSLACK_BOT_TOKEN or SLACK_CHANNEL not set; skipping Slack notification.")
         print("上影線反轉篩選結果:", [item[0] for item in upper_shadow_results])

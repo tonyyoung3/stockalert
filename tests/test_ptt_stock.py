@@ -1,7 +1,7 @@
 import unittest
 from datetime import date
 
-from ptt_stock import (
+from ptt.ptt_stock import (
     Post,
     build_digest,
     chat_kind,

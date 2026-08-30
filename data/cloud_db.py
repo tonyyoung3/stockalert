@@ -9,9 +9,9 @@ Incremental copy uses the first present of trade_date / alert_date / check_date.
 Tables without those columns (e.g. stocks) are copied in full.
 
 用法:
-  python cloud_db.py status
-  python cloud_db.py push --days 14
-  python cloud_db.py push-alerts
+  python -m data.cloud_db status
+  python -m data.cloud_db push --days 14
+  python -m data.cloud_db push-alerts
 """
 from __future__ import annotations
 
@@ -24,13 +24,14 @@ import sys
 from datetime import date, timedelta
 from pathlib import Path
 
+from data.paths import REPO_ROOT
+
 log = logging.getLogger(__name__)
 
-ROOT = Path(__file__).parent
 IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 CHUNK = 400
-DEFAULT_FILES = (ROOT / "twse_data.db", ROOT / "us_data.db")
-ALERT_FILES = (ROOT / "screener.db",)
+DEFAULT_FILES = (REPO_ROOT / "twse_data.db", REPO_ROOT / "us_data.db")
+ALERT_FILES = (REPO_ROOT / "screener.db",)
 SINCE_COLUMNS = ("trade_date", "alert_date", "check_date")
 
 

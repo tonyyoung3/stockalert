@@ -5,12 +5,12 @@
 不常駐、不走 collector.py run(那是給本機長駐用的)。
 
 用法:
-  python update_market_data.py
-  python update_market_data.py --days 14
-  python update_market_data.py 30
-  python update_market_data.py --days 730          # 第一次回補歷史
-  python update_market_data.py --skip-us --skip-taifex
-  python update_market_data.py --dry-run
+  python -m market.update_market_data
+  python -m market.update_market_data --days 14
+  python -m market.update_market_data 30
+  python -m market.update_market_data --days 730          # 第一次回補歷史
+  python -m market.update_market_data --skip-us --skip-taifex
+  python -m market.update_market_data --dry-run
 """
 from __future__ import annotations
 
@@ -136,10 +136,7 @@ def coverage_lines(twse_path: Path, us_path: Path) -> list[str]:
 
 def run_jobs(args: argparse.Namespace) -> list[str]:
     """Run catch-up jobs. Returns names of jobs that failed."""
-    import backfill
-    import collector
-    import taifex_collector
-    import us_collector
+    from market import backfill, collector, taifex_collector, us_collector
 
     failed: list[str] = []
     today = taiwan_now().date()
@@ -207,30 +204,28 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s [%(levelname)s] %(message)s",
     )
     args = parse_args(argv)
-    root = Path(__file__).parent
+    from data.paths import REPO_ROOT
     jobs = planned_jobs(args)
     log.info("jobs: %s", ", ".join(jobs))
     if args.dry_run:
-        import cloud_db
+        from data import cloud_db
         print("dry-run", " ".join(jobs), f"days={args.days}",
               f"include_today={args.include_today}",
               "turso=" + ("yes" if cloud_db.configured() and not args.skip_turso else "no"))
         return 0
 
-    import collector
-    import taifex_collector
-    import us_collector
+    from market import collector, taifex_collector, us_collector
     collector.get_conn().close()
     taifex_collector.get_conn().close()
     us_collector.get_conn().close()
 
     failed = run_jobs(args)
-    lines = coverage_lines(root / "twse_data.db", root / "us_data.db")
+    lines = coverage_lines(REPO_ROOT / "twse_data.db", REPO_ROOT / "us_data.db")
     print("=== coverage ===")
     for line in lines:
         print(line)
 
-    import cloud_db
+    from data import cloud_db
     if cloud_db.configured() and not args.skip_turso:
         try:
             pushed = cloud_db.push_market_files(days=args.days, today=taiwan_now().date())

@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """taifex_collector.py 的單元測試(不打真實 API,全部用實際抓回的樣本資料 mock)。
 
-執行: python -m unittest test_taifex_collector -v
+執行: python -m unittest tests.test_taifex_collector -v
 """
 import sqlite3
 import unittest
 from datetime import date
 from unittest.mock import patch
 
-import taifex_collector as tc
+from market import taifex_collector as tc
 
 # ---- 以下兩段是 2026-08-06 實際從期交所抓回的原始 CSV 片段(Big5 解碼後) ----
 
@@ -49,7 +49,7 @@ class TestParsing(unittest.TestCase):
         self.assertIsNone(tc._num("-"))
         self.assertIsNone(tc._num("abc"))
 
-    @patch("taifex_collector.requests.get", fake_get)
+    @patch("market.taifex_collector.requests.get", fake_get)
     def test_fetch_fut_oi(self):
         rows = tc.fetch_fut_oi(date(2026, 8, 6), date(2026, 8, 6))
         self.assertEqual(len(rows), 4)          # 表頭已剝除
@@ -62,7 +62,7 @@ class TestParsing(unittest.TestCase):
         self.assertEqual(r[13], -89383)         # 未平倉淨額口數(負=淨空)
         self.assertEqual(len(r), 15)
 
-    @patch("taifex_collector.requests.get", fake_get)
+    @patch("market.taifex_collector.requests.get", fake_get)
     def test_fetch_opt_oi(self):
         rows = tc.fetch_opt_oi(date(2026, 8, 6), date(2026, 8, 6))
         self.assertEqual(len(rows), 4)
@@ -72,7 +72,7 @@ class TestParsing(unittest.TestCase):
         self.assertEqual(put_f[14], 3772)       # PUT  未平倉淨額
         self.assertEqual(len(call_f), 16)
 
-    @patch("taifex_collector.requests.get", fake_get)
+    @patch("market.taifex_collector.requests.get", fake_get)
     def test_net_consistency(self):
         """未平倉淨額 應該等於 多方 - 空方(資料完整性檢查)。"""
         for r in tc.fetch_fut_oi(date(2026, 8, 6), date(2026, 8, 6)):
@@ -96,8 +96,8 @@ class TestStorage(unittest.TestCase):
     def tearDown(self):
         self.conn.close()
 
-    @patch("taifex_collector.requests.get", fake_get)
-    @patch("taifex_collector.time.sleep", lambda *_: None)
+    @patch("market.taifex_collector.requests.get", fake_get)
+    @patch("market.taifex_collector.time.sleep", lambda *_: None)
     def test_collect_and_idempotent(self):
         nf, no = tc.collect_range(date(2026, 8, 6), date(2026, 8, 6), self.conn)
         self.assertEqual((nf, no), (4, 4))
@@ -108,8 +108,8 @@ class TestStorage(unittest.TestCase):
         self.assertEqual(
             self.conn.execute("SELECT COUNT(*) FROM taifex_opt_oi").fetchone()[0], 4)
 
-    @patch("taifex_collector.requests.get", fake_get)
-    @patch("taifex_collector.time.sleep", lambda *_: None)
+    @patch("market.taifex_collector.requests.get", fake_get)
+    @patch("market.taifex_collector.time.sleep", lambda *_: None)
     def test_query_roundtrip(self):
         tc.collect_range(date(2026, 8, 6), date(2026, 8, 6), self.conn)
         v = self.conn.execute(

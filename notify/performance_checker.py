@@ -5,7 +5,7 @@ Horizons are trading days after the signal bar (T+5 / T+20 / T+60),
 not "today's close after 28 calendar days".
 
 Usage:
-    python performance_checker.py
+    python -m notify.performance_checker
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 
 from alertsdb import get_pending_horizon_jobs, init_db, save_performance
-from prices import download_history, horizon_exit, parse_date, to_yahoo_symbol
+from data.prices import download_history, horizon_exit, parse_date, to_yahoo_symbol
 
 DEFAULT_HORIZONS = (5, 20, 60)
 

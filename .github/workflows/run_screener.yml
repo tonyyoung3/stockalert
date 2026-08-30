@@ -45,10 +45,10 @@ jobs:
           else
             echo "SLACK_WEBHOOK_URL is NOT set"
           fi
-          python screener.py
+          python -m notify.screener
 
       - name: Check alert performance
-        run: python performance_checker.py
+        run: python -m notify.performance_checker
 
       - name: Persist alert database
         run: |
@@ -63,7 +63,7 @@ jobs:
         env:
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
-        run: python cloud_db.py push-alerts
+        run: python -m data.cloud_db push-alerts
 
     # Prevent overlapping runs if a previous one is still executing
     concurrency:

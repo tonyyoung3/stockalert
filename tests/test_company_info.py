@@ -2,7 +2,7 @@ import os
 import unittest
 from unittest.mock import patch
 
-from company_info import (
+from notify.company_info import (
     CompanyProfile,
     fetch_profile,
     format_digest,
@@ -10,7 +10,7 @@ from company_info import (
     maybe_enrich_themes,
     profile_from_info,
 )
-from screener import chart_blocks, post_alert_charts
+from notify.screener import chart_blocks, post_alert_charts
 
 
 class CompanyInfoTests(unittest.TestCase):

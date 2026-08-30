@@ -6,11 +6,11 @@
   taifex_opt_oi  三大法人「選擇權買賣權分計」—— 台指選擇權 CALL/PUT 分開,自營/投信/外資 分計
 
 用法:
-  python taifex_collector.py test              # 抓最近 5 個交易日,印出來檢查欄位(不寫入)
-  python taifex_collector.py recent            # 抓最近 30 天寫入 DB
-  python taifex_collector.py backfill 730      # 回補近 730 天(逐月請求)
-  python taifex_collector.py backfill 5500     # 回補約 15 年
-  python taifex_collector.py summary           # 印出目前 DB 內容概況
+  python -m market.taifex_collector test              # 抓最近 5 個交易日,印出來檢查欄位(不寫入)
+  python -m market.taifex_collector recent            # 抓最近 30 天寫入 DB
+  python -m market.taifex_collector backfill 730      # 回補近 730 天(逐月請求)
+  python -m market.taifex_collector backfill 5500     # 回補約 15 年
+  python -m market.taifex_collector summary           # 印出目前 DB 內容概況
 
 ⚠️ 資料深度限制(2026-08 實測):
    期交所這兩個下載端點只提供**近三年滾動視窗**的資料,再往前查一律回空字串
@@ -31,11 +31,12 @@ import sqlite3
 import logging
 from io import StringIO
 from datetime import date, timedelta
-from pathlib import Path
 
 import requests
 
-DB_PATH = Path(__file__).parent / "twse_data.db"
+from data.paths import repo_file
+
+DB_PATH = repo_file("twse_data.db")
 BASE = "https://www.taifex.com.tw/cht/3"
 HEADERS = {"User-Agent": "Mozilla/5.0 (data-collector; personal use)"}
 SLEEP = 3
@@ -46,7 +47,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[logging.StreamHandler(),
-              logging.FileHandler(Path(__file__).parent / "taifex_collector.log",
+              logging.FileHandler(repo_file("taifex_collector.log"),
                                   encoding="utf-8")],
 )
 log = logging.getLogger(__name__)

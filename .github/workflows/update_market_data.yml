@@ -50,7 +50,7 @@ jobs:
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
         run: |
           set -o pipefail
-          python update_market_data.py --days "$DAYS" --include-today 2>&1 | tee market-update.log
+          python -m market.update_market_data --days "$DAYS" --include-today 2>&1 | tee market-update.log
 
       - name: Save market databases
         if: always()
@@ -78,4 +78,4 @@ jobs:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
           GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: python notify_job.py --title "市場資料更新失敗" --log market-update.log
+        run: python -m notify.notify_job --title "市場資料更新失敗" --log market-update.log

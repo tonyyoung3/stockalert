@@ -136,7 +136,7 @@ def get_pending_horizon_jobs(
     today: date | None = None,
 ):
     """Alerts missing a row for a given trading-day horizon and old enough to try."""
-    from prices import calendar_buffer_days
+    from data.prices import calendar_buffer_days
 
     today = today or date.today()
     jobs = []

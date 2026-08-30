@@ -6,7 +6,7 @@ import sqlite3
 import tempfile
 import shutil
 
-import update_market_data as umd
+from market import update_market_data as umd
 
 
 class TaiwanTimeTests(unittest.TestCase):
@@ -65,11 +65,11 @@ class DryRunTests(unittest.TestCase):
     def test_main_pushes_turso_after_jobs(self):
         with patch.object(umd, "run_jobs", return_value=[]), \
              patch.object(umd, "coverage_lines", return_value=["ok"]), \
-             patch("cloud_db.configured", return_value=True), \
-             patch("cloud_db.push_market_files", return_value={"twse_data.db": {"taiex_daily": 3}}) as push, \
-             patch("collector.get_conn") as gc, \
-             patch("taifex_collector.get_conn") as tc, \
-             patch("us_collector.get_conn") as uc:
+             patch("data.cloud_db.configured", return_value=True), \
+             patch("data.cloud_db.push_market_files", return_value={"twse_data.db": {"taiex_daily": 3}}) as push, \
+             patch("market.collector.get_conn") as gc, \
+             patch("market.taifex_collector.get_conn") as tc, \
+             patch("market.us_collector.get_conn") as uc:
             for m in (gc, tc, uc):
                 m.return_value.close.return_value = None
             code = umd.main(["--exclude-today", "--skip-us", "--skip-taifex", "--skip-stocks"])
@@ -79,11 +79,11 @@ class DryRunTests(unittest.TestCase):
     def test_main_skips_turso_when_asked(self):
         with patch.object(umd, "run_jobs", return_value=[]), \
              patch.object(umd, "coverage_lines", return_value=["ok"]), \
-             patch("cloud_db.configured", return_value=True), \
-             patch("cloud_db.push_market_files") as push, \
-             patch("collector.get_conn") as gc, \
-             patch("taifex_collector.get_conn") as tc, \
-             patch("us_collector.get_conn") as uc:
+             patch("data.cloud_db.configured", return_value=True), \
+             patch("data.cloud_db.push_market_files") as push, \
+             patch("market.collector.get_conn") as gc, \
+             patch("market.taifex_collector.get_conn") as tc, \
+             patch("market.us_collector.get_conn") as uc:
             for m in (gc, tc, uc):
                 m.return_value.close.return_value = None
             code = umd.main(["--exclude-today", "--skip-turso"])
@@ -119,17 +119,17 @@ class CoverageTests(unittest.TestCase):
 class RunJobsTests(unittest.TestCase):
     def test_records_failures_without_raising(self):
         args = umd.parse_args(["--exclude-today", "--skip-us", "--skip-taifex", "--skip-stocks"])
-        with patch("backfill.backfill_ohlc", side_effect=RuntimeError("ohlc boom")), \
-             patch("backfill.backfill", return_value=None), \
-             patch("collector.sync_stock_master", return_value=None):
+        with patch("market.backfill.backfill_ohlc", side_effect=RuntimeError("ohlc boom")), \
+             patch("market.backfill.backfill", return_value=None), \
+             patch("market.collector.sync_stock_master", return_value=None):
             failed = umd.run_jobs(args)
         self.assertEqual(failed, ["ohlc"])
 
     def test_passes_include_today_into_backfill(self):
         args = umd.parse_args(["--include-today", "--skip-us", "--skip-taifex", "--skip-stocks"])
-        with patch("backfill.backfill_ohlc") as ohlc, \
-             patch("backfill.backfill") as bf, \
-             patch("collector.sync_stock_master"):
+        with patch("market.backfill.backfill_ohlc") as ohlc, \
+             patch("market.backfill.backfill") as bf, \
+             patch("market.collector.sync_stock_master"):
             umd.run_jobs(args)
         ohlc.assert_called_once()
         kwargs = bf.call_args.kwargs

@@ -1,0 +1,1 @@
+"""PTT Stock weekly digest."""

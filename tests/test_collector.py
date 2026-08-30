@@ -2,9 +2,7 @@
 """台股資料收集器測試
 
 執行:
-    python test_collector.py           # 全部
-    python test_collector.py -v        # 顯示每個測試名稱
-    python test_collector.py TestParseForeign   # 只跑某個類別
+    python -m unittest tests.test_collector -v
 
 不需額外套件(內建 unittest)。所有測試都用假的 API 回應,
 不會真的連線證交所,也不會動到 twse_data.db(每個測試用暫存檔)。
@@ -12,7 +10,6 @@
 注意:假回應是依證交所文件手寫的。若證交所改版導致實際格式不同,
 這些測試仍會通過但線上會失敗 —— 那時請更新本檔的 FAKE_* 常數。
 """
-import sys
 import json
 import shutil
 import sqlite3
@@ -22,9 +19,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-sys.path.insert(0, str(Path(__file__).parent))
-import collector
-import backfill
+from market import backfill, collector
 
 
 # ---------------------------------------------------------------- 假回應
@@ -401,7 +396,7 @@ class TestDashboardAPI(DBTestCase):
             con.execute("INSERT INTO taiex_hourly_ohlc VALUES "
                         "('2026-07-31T13:00:00','2026-07-31',43000.,43200.,42900.,43119.75)")
         con.close()
-        import dashboard
+        from web import dashboard
         self.dash = dashboard
         dashboard.DB = self.db
 

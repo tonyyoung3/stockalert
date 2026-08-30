@@ -23,6 +23,7 @@ from urllib.parse import urljoin
 import requests
 
 REDDIT_ORIGIN = "https://www.reddit.com"
+ARCHIVE_ORIGIN = "https://arctic-shift.photon-reddit.com"
 USER_AGENT = "stockalert-reddit-ideas/1.0 (personal research; +https://github.com/tonyyoung3/stockalert)"
 DEFAULT_SUBS = (
     "SecurityAnalysis",
@@ -183,73 +184,94 @@ def is_idea_post(post: Post, min_score: int) -> bool:
     return False
 
 
+def row_to_post(row: dict) -> Post | None:
+    if row.get("stickied") or row.get("removed_by_category"):
+        return None
+    title = row.get("title") or ""
+    created = row.get("created_utc")
+    if not title or created is None:
+        return None
+    permalink = row.get("permalink") or ""
+    url = row.get("url") or ""
+    if permalink:
+        url = urljoin(REDDIT_ORIGIN, permalink)
+    return Post(
+        date=str(utc_date(created)),
+        score=int(row.get("score") or 0),
+        comments=int(row.get("num_comments") or 0),
+        title=title,
+        author=row.get("author") or "",
+        url=url,
+        permalink=permalink,
+        subreddit=row.get("subreddit") or "",
+        flair=(row.get("link_flair_text") or "").strip(),
+        selftext=row.get("selftext") or "",
+        post_id=str(row.get("id") or "").removeprefix("t3_"),
+    )
+
+
 def parse_listing(payload: dict) -> tuple[list[Post], str | None]:
     data = (payload or {}).get("data") or {}
     after = data.get("after")
     posts: list[Post] = []
     for child in data.get("children") or []:
-        row = child.get("data") or {}
         if child.get("kind") != "t3":
             continue
-        if row.get("stickied") or row.get("removed_by_category"):
-            continue
-        title = row.get("title") or ""
-        if not title:
-            continue
-        created = row.get("created_utc")
-        if created is None:
-            continue
-        permalink = row.get("permalink") or ""
-        url = row.get("url") or ""
-        if permalink:
-            url = urljoin(REDDIT_ORIGIN, permalink)
-        posts.append(
-            Post(
-                date=str(utc_date(created)),
-                score=int(row.get("score") or 0),
-                comments=int(row.get("num_comments") or 0),
-                title=title,
-                author=row.get("author") or "",
-                url=url,
-                permalink=permalink,
-                subreddit=row.get("subreddit") or "",
-                flair=(row.get("link_flair_text") or "").strip(),
-                selftext=row.get("selftext") or "",
-                post_id=row.get("id") or "",
-            )
-        )
+        post = row_to_post(child.get("data") or {})
+        if post is not None:
+            posts.append(post)
     return posts, after
 
 
+def parse_archive_posts(payload: dict) -> tuple[list[Post], str | None]:
+    rows = (payload or {}).get("data") or []
+    posts: list[Post] = []
+    oldest: float | None = None
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        post = row_to_post(row)
+        if post is None:
+            continue
+        posts.append(post)
+        created = row.get("created_utc")
+        if created is not None:
+            oldest = float(created) if oldest is None else min(oldest, float(created))
+    return posts, (str(int(oldest)) if oldest is not None else None)
+
+
+def comment_from_row(row: dict) -> Comment | None:
+    body = (row.get("body") or "").strip()
+    author = row.get("author") or ""
+    if not body or author in {"[deleted]", "AutoModerator"}:
+        return None
+    if body in {"[deleted]", "[removed]"}:
+        return None
+    if body.startswith("http") and len(body) < 40:
+        return None
+    if len(body) < 40:
+        return None
+    return Comment(author=author, score=int(row.get("score") or 0), body=clip_text(body, 220))
+
+
 def parse_comments(payload: list | dict, limit: int = 6) -> list[Comment]:
-    """Reddit comment JSON is [post_listing, comment_listing]."""
-    if isinstance(payload, list) and len(payload) >= 2:
-        listing = payload[1]
-    else:
-        listing = payload
-    children = ((listing or {}).get("data") or {}).get("children") or []
+    """Accept Reddit comment JSON or Arctic Shift `{data: [row, ...]}`."""
     comments: list[Comment] = []
-    for child in children:
-        if child.get("kind") != "t1":
-            continue
-        row = child.get("data") or {}
-        body = (row.get("body") or "").strip()
-        author = row.get("author") or ""
-        if not body or author in {"[deleted]", "AutoModerator"}:
-            continue
-        if body in {"[deleted]", "[removed]"}:
-            continue
-        if body.startswith("http") and len(body) < 40:
-            continue
-        if len(body) < 40:
-            continue
-        comments.append(
-            Comment(
-                author=author,
-                score=int(row.get("score") or 0),
-                body=clip_text(body, 220),
-            )
-        )
+    if isinstance(payload, dict) and isinstance(payload.get("data"), list):
+        rows = [row for row in payload.get("data") or [] if isinstance(row, dict)]
+        comments = [c for row in rows if (c := comment_from_row(row))]
+    else:
+        if isinstance(payload, list) and len(payload) >= 2:
+            listing = payload[1]
+        else:
+            listing = payload
+        children = ((listing or {}).get("data") or {}).get("children") or []
+        for child in children:
+            if child.get("kind") != "t1":
+                continue
+            comment = comment_from_row(child.get("data") or {})
+            if comment is not None:
+                comments.append(comment)
     comments.sort(key=lambda c: c.score, reverse=True)
     return comments[:limit]
 
@@ -267,9 +289,43 @@ def listing_url(sub: str, after: str | None = None, limit: int = 100) -> str:
     return f"{REDDIT_ORIGIN}/r/{sub}/top.json?{q}"
 
 
+def archive_posts_url(
+    sub: str,
+    *,
+    after: str,
+    before: str | None = None,
+    limit: int = 100,
+) -> str:
+    q = f"subreddit={sub}&after={after}&sort=desc&limit={limit}"
+    if before:
+        q += f"&before={before}"
+    return f"{ARCHIVE_ORIGIN}/api/posts/search?{q}"
+
+
 def comment_url(post: Post) -> str:
     path = post.permalink or f"/comments/{post.post_id}"
     return urljoin(REDDIT_ORIGIN, f"{path}.json?limit=20&sort=top&raw_json=1")
+
+
+def archive_comment_url(post: Post, limit: int = 50) -> str:
+    return f"{ARCHIVE_ORIGIN}/api/comments/search?link_id={post.post_id}&limit={limit}"
+
+
+def _blocked(exc: Exception) -> bool:
+    if not isinstance(exc, requests.HTTPError) or exc.response is None:
+        return False
+    return exc.response.status_code in {403, 429}
+
+
+def _keep_post(post: Post, cutoff: date, today: date, min_score: int, seen: set[str]) -> bool:
+    key = post.post_id or post.url
+    if not key or key in seen:
+        return False
+    seen.add(key)
+    posted = date.fromisoformat(post.date)
+    if posted < cutoff or posted > today:
+        return False
+    return is_idea_post(post, min_score)
 
 
 def collect_posts(
@@ -281,11 +337,13 @@ def collect_posts(
     sleep_s: float = 0.8,
     today: date | None = None,
     fetch: Callable[[str], dict | list] | None = None,
-) -> list[Post]:
+    source: str = "auto",
+) -> tuple[list[Post], str]:
     today = today or date.today()
     cutoff = today - timedelta(days=days)
     session = requests.Session()
     session.headers["User-Agent"] = USER_AGENT
+    backend = source
 
     def _fetch(url: str) -> dict | list:
         return fetch(url) if fetch is not None else fetch_json(url, session)
@@ -294,23 +352,33 @@ def collect_posts(
     kept: list[Post] = []
 
     for sub_i, sub in enumerate(subs):
-        after = None
-        for page_i in range(max_pages):
-            payload = _fetch(listing_url(sub, after=after))
-            posts, after = parse_listing(payload if isinstance(payload, dict) else {})
+        cursor = None
+        for _page in range(max_pages):
+            if backend != "archive":
+                url = listing_url(sub, after=cursor)
+                try:
+                    payload = _fetch(url)
+                    backend = "reddit"
+                    posts, cursor = parse_listing(payload if isinstance(payload, dict) else {})
+                except Exception as exc:
+                    if backend == "auto" and _blocked(exc):
+                        print("  [warn] Reddit 拒絕未登入請求，改走 Arctic Shift 封存。")
+                        backend = "archive"
+                    else:
+                        raise
+            if backend == "archive":
+                payload = _fetch(
+                    archive_posts_url(sub, after=str(cutoff), before=cursor)
+                )
+                posts, cursor = parse_archive_posts(
+                    payload if isinstance(payload, dict) else {}
+                )
             if not posts:
                 break
             for post in posts:
-                key = post.post_id or post.url
-                if not key or key in seen:
-                    continue
-                seen.add(key)
-                posted = date.fromisoformat(post.date)
-                if posted < cutoff or posted > today:
-                    continue
-                if is_idea_post(post, min_score):
+                if _keep_post(post, cutoff, today, min_score, seen):
                     kept.append(post)
-            if not after:
+            if not cursor:
                 break
             if fetch is None:
                 time.sleep(sleep_s)
@@ -318,7 +386,7 @@ def collect_posts(
             time.sleep(sleep_s)
 
     kept.sort(key=lambda p: (p.score, p.comments), reverse=True)
-    return kept
+    return kept, (backend if backend != "auto" else "reddit")
 
 
 def cluster_themes(posts: list[Post], limit: int = 8) -> list[Theme]:
@@ -363,6 +431,7 @@ def build_digest(
     comment_limit: int = 6,
     include_comments: bool = True,
     thread_limit: int = 5,
+    source: str = "reddit",
 ) -> Digest:
     session = requests.Session()
     session.headers["User-Agent"] = USER_AGENT
@@ -376,12 +445,21 @@ def build_digest(
     threads: list[IdeaThread] = []
     if include_comments:
         for i, post in enumerate(ideas[:thread_limit]):
+            url = archive_comment_url(post) if source == "archive" else comment_url(post)
             try:
-                payload = _fetch(comment_url(post))
+                payload = _fetch(url)
             except Exception as exc:
-                print(f"  [warn] comments failed {post.title}: {exc}")
-                threads.append(summarize_thread(post, {}, comment_limit=comment_limit))
-                continue
+                if source != "archive" and _blocked(exc):
+                    try:
+                        payload = _fetch(archive_comment_url(post))
+                    except Exception as archive_exc:
+                        print(f"  [warn] comments failed {post.title}: {archive_exc}")
+                        threads.append(summarize_thread(post, {}, comment_limit=comment_limit))
+                        continue
+                else:
+                    print(f"  [warn] comments failed {post.title}: {exc}")
+                    threads.append(summarize_thread(post, {}, comment_limit=comment_limit))
+                    continue
             threads.append(summarize_thread(post, payload, comment_limit=comment_limit))
             if fetch is None and i + 1 < min(thread_limit, len(ideas)):
                 time.sleep(sleep_s)
@@ -404,11 +482,18 @@ def format_table(posts: list[Post]) -> str:
     return "\n".join(lines)
 
 
-def format_digest(digest: Digest, days: int, min_score: int, subs: tuple[str, ...]) -> str:
+def format_digest(
+    digest: Digest,
+    days: int,
+    min_score: int,
+    subs: tuple[str, ...],
+    source: str = "reddit",
+) -> str:
     sub_txt = ", ".join(f"r/{s}" for s in subs)
+    feed = "Arctic Shift 封存（Reddit 未登入被擋時的備援）" if source == "archive" else "Reddit"
     lines = [
         f"Reddit 投資想法：近 {days} 天、分數 ≥ {min_score}，共 {len(digest.posts)} 篇",
-        f"來源：{sub_txt}",
+        f"來源：{sub_txt} · {feed}",
         "略過每日討論串與置頂，優先 DD / 研究文與有標的的長文。",
         "",
         "## 題材",
@@ -508,14 +593,21 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--raw", action="store_true", help="只列原始清單，不做週報")
     parser.add_argument("--no-comments", action="store_true", help="不抓文章留言")
     parser.add_argument("--comment-limit", type=int, default=6)
+    parser.add_argument(
+        "--source",
+        choices=("auto", "reddit", "archive"),
+        default="auto",
+        help="auto：先 Reddit，403/429 再改 Arctic Shift",
+    )
     args = parser.parse_args(argv)
 
     subs = parse_subs(args.subs)
-    posts = collect_posts(
+    posts, source = collect_posts(
         days=args.days,
         min_score=args.min_score,
         subs=subs,
         max_pages=args.max_pages,
+        source=args.source,
     )
     if args.raw:
         print(f"Reddit 近 {args.days} 天、分數 ≥ {args.min_score}：{len(posts)} 篇\n")
@@ -526,8 +618,9 @@ def main(argv: list[str] | None = None) -> int:
             posts,
             include_comments=not args.no_comments,
             comment_limit=args.comment_limit,
+            source=source,
         )
-        print(format_digest(digest, args.days, args.min_score, subs))
+        print(format_digest(digest, args.days, args.min_score, subs, source=source))
         payload = digest_json(digest)
     if args.json_path:
         with open(args.json_path, "w", encoding="utf-8") as fh:

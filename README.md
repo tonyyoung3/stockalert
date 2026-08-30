@@ -48,7 +48,7 @@ Slack bot 預設只認 ticker / help。設 `HARNESS_ENABLED=1` 且有 API key，
 python -m unittest discover -s tests -v
 ```
 
-PTT 股板週報跟 Reddit 投資想法週報都是本機整理、印到 stdout（可加 `--json`）。Reddit 預設看 r/SecurityAnalysis、r/ValueInvesting、r/investing、r/stocks 近一週高分文，略過 Daily Discussion，抽出 `$TICKER` / DD 文跟精選留言。分點買賣超資料源記在 `TODO.md`，還沒做。
+PTT 股板週報跟 Reddit 投資想法週報都是本機整理、印到 stdout（可加 `--json`）。Reddit 預設看 r/SecurityAnalysis、r/ValueInvesting、r/investing、r/stocks 近一週高分文，略過 Daily Discussion，抽出 `$TICKER` / DD 文跟精選留言。雲端 IP 常被 Reddit 擋（403），`--source auto` 會改走 [Arctic Shift](https://arctic-shift.photon-reddit.com) 封存。分點買賣超資料源記在 `TODO.md`，還沒做。
 
 ## 台股資料收集器
 

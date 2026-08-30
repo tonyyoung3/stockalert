@@ -3,6 +3,7 @@ from datetime import date, datetime, timezone
 
 from reddit.ideas import (
     Post,
+    archive_posts_url,
     build_digest,
     cluster_themes,
     collect_posts,
@@ -11,6 +12,7 @@ from reddit.ideas import (
     format_digest,
     is_daily_thread,
     listing_url,
+    parse_archive_posts,
     parse_comments,
     parse_listing,
     parse_subs,
@@ -145,7 +147,7 @@ class RedditIdeasTests(unittest.TestCase):
             listing_url("SecurityAnalysis"): SAMPLE_LISTING,
             listing_url("SecurityAnalysis", after="t3_next"): OLDER_LISTING,
         }
-        posts = collect_posts(
+        posts, source = collect_posts(
             days=7,
             min_score=40,
             subs=("SecurityAnalysis",),
@@ -156,6 +158,7 @@ class RedditIdeasTests(unittest.TestCase):
         ids = {p.post_id for p in posts}
         self.assertEqual(ids, {"abc"})
         self.assertEqual(posts[0].score, 120)
+        self.assertEqual(source, "reddit")
 
     def test_theme_key_uses_ticker(self):
         post = Post(
@@ -214,6 +217,47 @@ class RedditIdeasTests(unittest.TestCase):
         self.assertIn("精選留言", text)
         self.assertIn("NVDA", text)
         self.assertIn("aa", text)
+
+    def test_parse_archive_and_fallback(self):
+        archive = {
+            "data": [
+                {
+                    "id": "arc1",
+                    "title": "Archive $MSFT thesis",
+                    "selftext": "Cloud and office still print cash.",
+                    "score": 88,
+                    "num_comments": 12,
+                    "author": "arc",
+                    "created_utc": _utc(2026, 8, 27),
+                    "permalink": "/r/SecurityAnalysis/comments/arc1/msft/",
+                    "link_flair_text": "Research",
+                    "subreddit": "SecurityAnalysis",
+                    "stickied": False,
+                }
+            ]
+        }
+        posts, after = parse_archive_posts(archive)
+        self.assertEqual([p.post_id for p in posts], ["arc1"])
+        self.assertTrue(after)
+
+        def fake(url: str):
+            if "photon-reddit.com" in url:
+                return archive
+            err = __import__("requests").HTTPError("403")
+            err.response = type("R", (), {"status_code": 403})()
+            raise err
+
+        posts, source = collect_posts(
+            days=7,
+            min_score=40,
+            subs=("SecurityAnalysis",),
+            today=date(2026, 8, 30),
+            fetch=fake,
+            sleep_s=0,
+        )
+        self.assertEqual(source, "archive")
+        self.assertEqual([p.post_id for p in posts], ["arc1"])
+        self.assertIn("SecurityAnalysis", archive_posts_url("SecurityAnalysis", after="2026-08-23"))
 
     def test_parse_subs(self):
         self.assertEqual(parse_subs("r/investing, stocks"), ("investing", "stocks"))

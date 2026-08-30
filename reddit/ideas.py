@@ -386,7 +386,10 @@ def collect_posts(
     for sub_i, sub in enumerate(subs):
         cursor = None
         pages = max_pages * 2 if is_wsb(sub) else max_pages
+        archive_limit = 40 if sub.lower() in {"investing", "stocks", "wallstreetbets"} else 100
+        skip_sub = False
         for _page in range(pages):
+            posts: list[Post] = []
             if backend != "archive":
                 url = listing_url(sub, after=cursor)
                 try:
@@ -400,13 +403,19 @@ def collect_posts(
                     else:
                         raise
             if backend == "archive":
-                payload = _fetch(
-                    archive_posts_url(sub, after=str(cutoff), before=cursor)
-                )
-                posts, cursor = parse_archive_posts(
-                    payload if isinstance(payload, dict) else {}
-                )
-            if not posts:
+                try:
+                    payload = _fetch(
+                        archive_posts_url(
+                            sub, after=str(cutoff), before=cursor, limit=archive_limit
+                        )
+                    )
+                    posts, cursor = parse_archive_posts(
+                        payload if isinstance(payload, dict) else {}
+                    )
+                except Exception as exc:
+                    print(f"  [warn] archive r/{sub} failed: {exc}")
+                    skip_sub = True
+            if skip_sub or not posts:
                 break
             for post in posts:
                 if _keep_post(post, cutoff, today, min_score, seen):

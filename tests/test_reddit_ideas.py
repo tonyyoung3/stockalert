@@ -261,6 +261,47 @@ class RedditIdeasTests(unittest.TestCase):
         self.assertEqual([p.post_id for p in posts], ["arc1"])
         self.assertIn("SecurityAnalysis", archive_posts_url("SecurityAnalysis", after="2026-08-23"))
 
+    def test_archive_skips_failed_sub_and_keeps_others(self):
+        ok = {
+            "data": [
+                {
+                    "id": "ok1",
+                    "title": "Archive $MSFT thesis",
+                    "selftext": "Cloud still prints cash.",
+                    "score": 88,
+                    "num_comments": 12,
+                    "author": "arc",
+                    "created_utc": _utc(2026, 8, 27),
+                    "permalink": "/r/SecurityAnalysis/comments/ok1/msft/",
+                    "link_flair_text": "Research",
+                    "subreddit": "SecurityAnalysis",
+                    "stickied": False,
+                }
+            ]
+        }
+
+        def fake(url: str):
+            if "subreddit=investing" in url:
+                err = __import__("requests").HTTPError("422")
+                err.response = type("R", (), {"status_code": 422})()
+                raise err
+            if "photon-reddit.com" in url:
+                return ok
+            err = __import__("requests").HTTPError("403")
+            err.response = type("R", (), {"status_code": 403})()
+            raise err
+
+        posts, source = collect_posts(
+            days=7,
+            min_score=40,
+            subs=("investing", "SecurityAnalysis"),
+            today=date(2026, 8, 30),
+            fetch=fake,
+            sleep_s=0,
+        )
+        self.assertEqual(source, "archive")
+        self.assertEqual([p.post_id for p in posts], ["ok1"])
+
     def test_wsb_keeps_dd_drops_memes(self):
         dd = Post(
             "2026-08-29", 1, 20, "Why $NVDA still prints", "a",

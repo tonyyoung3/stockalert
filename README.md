@@ -28,7 +28,7 @@ python -m notify.screener
 python -m notify.performance_checker
 python -m ptt.ptt_stock
 python -m notify.interactive_bot   # 需要長期主機
-python -m web.dashboard            # 本地 http://localhost:8765
+python -m web.dashboard            # 本地 http://localhost:8765；Cloud Run 見下方
 ```
 
 `harness/` 包在 model 外面：工具、迴圈、權限、trace。Model 只負責想；harness 負責查資料並停在唯讀範圍。
@@ -98,3 +98,26 @@ python -m market.backfill 90
 python -m market.taifex_collector recent 30
 python -m market.us_collector hourly
 ```
+
+## 公開網站（Cloud Run）
+
+儀表板可以丟上 Cloud Run：閒置不計費，有人打開才跑。區域選 `us-central1`（或 `us-east1` / `us-west1`）才算免費額度。
+
+先在本機確認 Turso 已有資料（`python -m data.cloud_db status`），再：
+
+```bash
+gcloud run deploy stockalert \
+  --source . \
+  --region us-central1 \
+  --allow-unauthenticated \
+  --set-env-vars TURSO_DATABASE_URL="$TURSO_DATABASE_URL",TURSO_AUTH_TOKEN="$TURSO_AUTH_TOKEN"
+```
+
+會給一個 `*.run.app` 網址。設了那兩個 Turso 變數就讀雲端，不帶本機 `twse_data.db`。回測會把需要的表快照進暫存 sqlite，pandas 不用改。
+
+本機模擬 PaaS：
+
+```bash
+PORT=8080 DASHBOARD_NO_BROWSER=1 python -m web.dashboard
+```
+

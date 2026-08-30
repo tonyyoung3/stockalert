@@ -103,3 +103,116 @@ def get_pending_alerts(min_age_days: int = 28):
             (cutoff,),
         ).fetchall()
     return rows
+
+
+def _as_dicts(rows) -> list[dict]:
+    return [dict(row) for row in rows]
+
+
+def list_alerts(
+    *,
+    ticker: str | None = None,
+    pattern_type: str | None = None,
+    since: str | None = None,
+    limit: int = 20,
+) -> list[dict]:
+    """Newest alerts first. `since` is an inclusive YYYY-MM-DD on alert_date."""
+    clauses = ["1=1"]
+    params: list = []
+    if ticker:
+        clauses.append("ticker = ?")
+        params.append(ticker)
+    if pattern_type:
+        clauses.append("pattern_type = ?")
+        params.append(pattern_type)
+    if since:
+        clauses.append("alert_date >= ?")
+        params.append(since)
+    params.append(max(1, limit))
+    with get_conn() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT id, ticker, pattern_type, alert_date, price_at_alert, created_at
+            FROM alerts
+            WHERE {' AND '.join(clauses)}
+            ORDER BY alert_date DESC, id DESC
+            LIMIT ?
+            """,
+            params,
+        ).fetchall()
+    return _as_dicts(rows)
+
+
+def list_alert_history(ticker: str, limit: int = 20) -> list[dict]:
+    """Alerts for one ticker, joined with performance when it exists."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                a.id,
+                a.ticker,
+                a.pattern_type,
+                a.alert_date,
+                a.price_at_alert,
+                p.check_date,
+                p.price_at_check,
+                p.return_pct
+            FROM alerts a
+            LEFT JOIN performance p ON p.alert_id = a.id
+            WHERE a.ticker = ?
+            ORDER BY a.alert_date DESC, a.id DESC
+            LIMIT ?
+            """,
+            (ticker, max(1, limit)),
+        ).fetchall()
+    return _as_dicts(rows)
+
+
+def count_alerts() -> int:
+    with get_conn() as conn:
+        row = conn.execute("SELECT COUNT(*) AS n FROM alerts").fetchone()
+    return int(row["n"])
+
+
+def performance_summary(pattern_type: str | None = None) -> dict:
+    """Aggregate 28-day returns. `checked` is 0 when the table is still empty."""
+    where = "1=1"
+    params: list = []
+    if pattern_type:
+        where = "a.pattern_type = ?"
+        params.append(pattern_type)
+
+    with get_conn() as conn:
+        row = conn.execute(
+            f"""
+            SELECT
+                COUNT(*) AS checked,
+                AVG(p.return_pct) AS avg_return_pct,
+                SUM(CASE WHEN p.return_pct > 0 THEN 1 ELSE 0 END) AS wins,
+                SUM(CASE WHEN p.return_pct < 0 THEN 1 ELSE 0 END) AS losses,
+                SUM(CASE WHEN p.return_pct = 0 THEN 1 ELSE 0 END) AS flats,
+                MIN(p.return_pct) AS min_return_pct,
+                MAX(p.return_pct) AS max_return_pct
+            FROM performance p
+            JOIN alerts a ON a.id = p.alert_id
+            WHERE {where}
+            """,
+            params,
+        ).fetchone()
+        total = conn.execute("SELECT COUNT(*) AS n FROM alerts").fetchone()["n"]
+
+    checked = int(row["checked"] or 0)
+    wins = int(row["wins"] or 0)
+    return {
+        "total_alerts": int(total),
+        "checked": checked,
+        "pending_28d": len(get_pending_alerts()),
+        "wins": wins,
+        "losses": int(row["losses"] or 0),
+        "flats": int(row["flats"] or 0),
+        "win_rate_pct": round(100.0 * wins / checked, 2) if checked else None,
+        "avg_return_pct": round(float(row["avg_return_pct"]), 2) if row["avg_return_pct"] is not None else None,
+        "min_return_pct": round(float(row["min_return_pct"]), 2) if row["min_return_pct"] is not None else None,
+        "max_return_pct": round(float(row["max_return_pct"]), 2) if row["max_return_pct"] is not None else None,
+        "pattern_type": pattern_type,
+    }

@@ -144,6 +144,31 @@ def api(path, qs):
                  "FROM foreign_daily WHERE stock_id=? AND trade_date >= date('now', ?) "
                  "ORDER BY trade_date", (sid, f"-{days} day"))
         return {"id": sid, "data": rows}
+    if path == "/api/stocks":
+        needle = (qs.get("q", [""])[0] or "").strip()[:32]
+        if not needle:
+            return {"data": []}
+        like, prefix = f"%{needle}%", f"{needle}%"
+        rows = q(
+            "SELECT stock_id, stock_name FROM stocks "
+            "WHERE stock_id LIKE ? OR stock_name LIKE ? "
+            "ORDER BY CASE WHEN stock_id=? THEN 0 WHEN stock_id LIKE ? THEN 1 "
+            "WHEN stock_name LIKE ? THEN 2 ELSE 3 END, stock_id LIMIT 20",
+            (like, like, needle, prefix, prefix),
+        )
+        return {"data": rows}
+    if path == "/api/stock_ohlc":
+        sid = qs.get("id", [""])[0].strip()
+        rows = q(
+            "SELECT trade_date, close, stock_name FROM stock_daily "
+            "WHERE stock_id=? AND trade_date >= date('now', ?) ORDER BY trade_date",
+            (sid, f"-{days} day"),
+        )
+        name = rows[0][2] if rows else None
+        if not name:
+            got = q("SELECT stock_name FROM stocks WHERE stock_id=?", (sid,))
+            name = got[0][0] if got else sid
+        return {"id": sid, "name": name, "data": [[d, c] for d, c, _n in rows]}
     return None
 
 
@@ -182,6 +207,13 @@ header select option{background:#1a1a2e}
 .reset-btn{padding:3px 10px;font-size:12px;border:1px solid #dee2e6;border-radius:4px;background:#fff;color:#6c757d;cursor:pointer}
 .reset-btn:hover{background:#f0f0f0}
 .top-range{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
+.ov-wrap{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
+.ov-search{position:relative}
+.ov-search input{width:260px}
+.ov-menu{position:absolute;z-index:30;left:0;right:0;top:calc(100% + 2px);background:#fff;border:1px solid #dee2e6;border-radius:4px;max-height:260px;overflow:auto;box-shadow:0 6px 16px rgba(0,0,0,.12)}
+.ov-menu button{display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%;text-align:left;padding:8px 10px;border:none;background:#fff;cursor:pointer;font-size:13px}
+.ov-menu button:hover,.ov-menu button.active{background:#eef3fa}
+.ov-chip{font-size:11px;color:#6c757d;white-space:nowrap}
 canvas{max-height:320px}
 table{width:100%;border-collapse:collapse;font-size:13px}
 th{text-align:left;padding:8px 10px;border-bottom:2px solid #dee2e6;color:#6c757d;font-size:12px;white-space:nowrap}
@@ -240,14 +272,13 @@ footer{text-align:center;color:#adb5bd;font-size:12px;padding:12px}
     <canvas id="c-kline"></canvas></div>
   <div class="card">
     <div class="chart-head"><h3>加權指數走勢(每小時)</h3>
-      <span>
-        <select id="overlay" onchange="loadTaiex()" style="margin-right:8px">
-          <option value="none" selected>不疊圖</option>
-          <option value="taifex_ratio">疊圖:外資÷投信 台指期未平倉比</option>
-          <option value="foreign_net">疊圖:外資每日買賣超</option>
-          <option value="margin_fin">疊圖:融資餘額</option>
-          <option value="margin_short">疊圖:融券餘額</option>
-        </select>
+      <span class="ov-wrap">
+        <div class="ov-search">
+          <input id="ov-q" placeholder="搜尋疊圖: 2330、台積電、外資、融資" autocomplete="off"
+                 oninput="onOverlayInput()" onfocus="onOverlayFocus()" onkeydown="onOverlayKey(event)">
+          <div id="ov-menu" class="ov-menu" hidden></div>
+        </div>
+        <button type="button" id="ov-clear" class="reset-btn" onclick="clearOverlay()" hidden>清除疊圖</button>
         <span class="hint">拖曳平移 · 滾輪縮放　</span><button class="reset-btn" onclick="resetZoom('c-taiex')">重置</button></span></div>
     <canvas id="c-taiex"></canvas></div>
   <div class="card">
@@ -577,29 +608,145 @@ async function loadKline(){
               y:{grace:'2%'}}}});
 }
 
-const OVERLAY_LABELS = {
-  taifex_ratio: '外資÷投信 台指期未平倉比(恆為負)',
-  foreign_net: '外資每日買賣超(張)',
-  margin_fin: '融資餘額(億元)',
-  margin_short: '融券餘額(千張)',
-};
+const MARKET_OVERLAYS = [
+  {type:'market', kind:'taifex_ratio', label:'外資÷投信 台指期未平倉比', chip:'市場'},
+  {type:'market', kind:'foreign_net', label:'外資每日買賣超(張)', chip:'市場'},
+  {type:'market', kind:'margin_fin', label:'融資餘額(億元)', chip:'市場'},
+  {type:'market', kind:'margin_short', label:'融券餘額(千張)', chip:'市場'},
+];
+
+let ovChoice = null;
+let ovHits = [];
+let ovActive = -1;
+let ovTimer = null;
+
+function esc(s){
+  return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function overlayLabel(c){
+  if(!c) return '';
+  if(c.type==='stock_close') return c.id+' '+c.name+' 收盤';
+  if(c.type==='stock_foreign') return c.id+' '+c.name+' 外資買賣超';
+  return c.label;
+}
+
+function hideOverlayMenu(){
+  document.getElementById('ov-menu').hidden = true;
+  ovActive = -1;
+}
+
+function renderOverlayMenu(items){
+  ovHits = items;
+  if(ovActive >= items.length) ovActive = items.length ? 0 : -1;
+  const menu = document.getElementById('ov-menu');
+  if(!items.length){
+    menu.innerHTML = '<div class="hint" style="padding:8px 10px">沒有符合的疊圖</div>';
+    menu.hidden = false;
+    return;
+  }
+  menu.innerHTML = items.map((it,i)=>
+    '<button type="button" class="'+(i===ovActive?'active':'')+'" data-i="'+i+'">'
+    +'<span>'+esc(overlayLabel(it))+'</span><span class="ov-chip">'+esc(it.chip||'')+'</span></button>'
+  ).join('');
+  menu.hidden = false;
+  menu.querySelectorAll('button').forEach(btn=>{
+    btn.addEventListener('mousedown', ev=>{ ev.preventDefault(); pickOverlay(items[+btn.dataset.i]); });
+  });
+}
+
+function marketOverlayHits(q){
+  const t = q.trim().toLowerCase();
+  if(!t) return MARKET_OVERLAYS.slice();
+  return MARKET_OVERLAYS.filter(o =>
+    o.label.toLowerCase().includes(t) || o.kind.toLowerCase().includes(t) ||
+    (t==='外資' && o.kind!=='margin_fin' && o.kind!=='margin_short'));
+}
+
+async function fetchOverlayHits(q){
+  const market = marketOverlayHits(q);
+  const t = q.trim();
+  if(!t) return market;
+  const r = await j('/api/stocks?q='+encodeURIComponent(t));
+  const stocks = [];
+  (r.data||[]).forEach(row=>{
+    const id = row[0], name = row[1]||id;
+    stocks.push({type:'stock_close', id, name, chip:'收盤'});
+    stocks.push({type:'stock_foreign', id, name, chip:'外資買賣超'});
+  });
+  return market.concat(stocks);
+}
+
+function onOverlayFocus(){ onOverlayInput(); }
+function onOverlayInput(){
+  const q = document.getElementById('ov-q').value;
+  clearTimeout(ovTimer);
+  ovTimer = setTimeout(async ()=>{
+    ovActive = -1;
+    renderOverlayMenu(await fetchOverlayHits(q));
+  }, 160);
+}
+function onOverlayKey(ev){
+  const menu = document.getElementById('ov-menu');
+  if(ev.key==='Escape'){ hideOverlayMenu(); return; }
+  if(ev.key==='ArrowDown' || ev.key==='ArrowUp'){
+    ev.preventDefault();
+    if(menu.hidden){ onOverlayInput(); return; }
+    if(!ovHits.length) return;
+    const dir = ev.key==='ArrowDown' ? 1 : -1;
+    ovActive = (ovActive + dir + ovHits.length) % ovHits.length;
+    renderOverlayMenu(ovHits);
+    const el = menu.querySelector('button.active');
+    if(el) el.scrollIntoView({block:'nearest'});
+    return;
+  }
+  if(ev.key==='Enter'){
+    ev.preventDefault();
+    if(!menu.hidden && ovHits.length){
+      pickOverlay(ovHits[ovActive<0?0:ovActive]);
+    }
+  }
+}
+function pickOverlay(item){
+  ovChoice = item;
+  document.getElementById('ov-q').value = overlayLabel(item);
+  document.getElementById('ov-clear').hidden = false;
+  hideOverlayMenu();
+  loadTaiex();
+}
+function clearOverlay(){
+  ovChoice = null;
+  document.getElementById('ov-q').value = '';
+  document.getElementById('ov-clear').hidden = true;
+  hideOverlayMenu();
+  loadTaiex();
+}
+document.addEventListener('click', ev=>{
+  if(!ev.target.closest('.ov-search')) hideOverlayMenu();
+});
 
 // 疊圖資料都是日頻,指數走勢是小時頻 —— 用「當日值」對齊到當天每個小時點上,
 // 畫出來像階梯狀,一天內同一條水平線,換日才跳到新值,方便跟指數同框比較。
-async function buildOverlayMap(kind){
+async function buildOverlayMap(choice){
   const map = new Map();
-  if(kind==='taifex_ratio'){
+  if(!choice) return map;
+  if(choice.type==='market' && choice.kind==='taifex_ratio'){
     const r = await j('/api/taifex_oi?days='+days());
     r.dates.forEach((dt,i)=>{ if(r.ratio[i]!=null) map.set(dt, r.ratio[i]); });
-  } else if(kind==='foreign_net'){
+  } else if(choice.type==='market' && choice.kind==='foreign_net'){
     const r = await j('/api/foreign_total?days='+days());
     r.data.forEach(d=>map.set(d[0], zhang(d[1])));
-  } else if(kind==='margin_fin'){
+  } else if(choice.type==='market' && choice.kind==='margin_fin'){
     const r = await j('/api/margin_total?days='+days());
     r.fin.forEach(d=>map.set(d[0], Math.round(d[1]/100000)));
-  } else if(kind==='margin_short'){
+  } else if(choice.type==='market' && choice.kind==='margin_short'){
     const r = await j('/api/margin_total?days='+days());
     r.short.forEach(d=>map.set(d[0], Math.round(d[1]/1000)));
+  } else if(choice.type==='stock_close'){
+    const r = await j('/api/stock_ohlc?id='+encodeURIComponent(choice.id)+'&days='+days());
+    r.data.forEach(d=>map.set(d[0], d[1]));
+  } else if(choice.type==='stock_foreign'){
+    const r = await j('/api/stock?id='+encodeURIComponent(choice.id)+'&days='+days());
+    r.data.forEach(d=>map.set(d[0], zhang(d[4])));
   }
   return map;
 }
@@ -610,15 +757,14 @@ async function loadTaiex(){
   const datasets = [{label:'加權指數', data:r.data.map(d=>d[1]), borderColor:'#4C72B0',
     borderWidth:1.5, pointRadius:0, tension:.2}];
 
-  const ov = document.getElementById('overlay').value;
+  const ov = ovChoice;
   const scales = {x:{ticks:{maxTicksLimit:12}}, y:{grace:'2%'}};
-  if(ov !== 'none'){
+  if(ov){
     const map = await buildOverlayMap(ov);
     const vals = r.data.map(d => { const dt=d[0].slice(0,10); return map.has(dt) ? map.get(dt) : null; });
-    datasets.push({label:OVERLAY_LABELS[ov], data:vals, borderColor:'#c0392b',
+    datasets.push({label:overlayLabel(ov), data:vals, borderColor:'#c0392b',
       borderDash:[5,4], borderWidth:2, pointRadius:0, stepped:true, spanGaps:true, yAxisID:'y2'});
-    // 比值恆為負,鎖定右軸範圍避免自動刻度出現容易誤讀的 0 / 正值刻度
-    if(ov==='taifex_ratio'){
+    if(ov.type==='market' && ov.kind==='taifex_ratio'){
       const vv = vals.filter(v=>v!=null);
       if(vv.length){
         const lo=Math.min(...vv), hi=Math.max(...vv), pad=(hi-lo)*0.15||0.1;
@@ -630,7 +776,7 @@ async function loadTaiex(){
   }
 
   mk('c-taiex', {type:'line', data:{labels, datasets},
-    options:{animation:false, plugins:{legend:{display: ov!=='none'}, zoom:ZOOM},
+    options:{animation:false, plugins:{legend:{display: !!ov}, zoom:ZOOM},
       interaction:{mode:'index',intersect:false},
       scales}});
 }

@@ -488,11 +488,32 @@ class TestDashboardAPI(DBTestCase):
     def test_unknown_path_returns_none(self):
         self.assertIsNone(self.call("/api/nope"))
 
+    def test_stock_search_by_id_and_name(self):
+        by_id = self.call("/api/stocks", q="2330")
+        self.assertEqual(by_id["data"][0][0], "2330")
+        by_name = self.call("/api/stocks", q="台積")
+        self.assertEqual(by_name["data"][0][0], "2330")
+        self.assertEqual(self.call("/api/stocks")["data"], [])
+
+    def test_stock_ohlc(self):
+        con = sqlite3.connect(self.db)
+        with con:
+            con.execute(
+                "INSERT INTO stock_daily VALUES (?,?,?,?,?,?,?,?,?)",
+                ("2026-07-31", "2330", "台積電", 1450.0, 1465.0, 1445.0, 1460.0,
+                 42318827, 61362300000),
+            )
+        con.close()
+        r = self.call("/api/stock_ohlc", id="2330", days=90)
+        self.assertEqual(r["name"], "台積電")
+        self.assertEqual(r["data"][0], ["2026-07-31", 1460.0])
+
     def test_all_endpoints_json_serialisable(self):
         for p, kw in [("/api/summary", {}), ("/api/taiex", {"days": 90}),
                       ("/api/ohlc", {"days": 90}), ("/api/foreign_total", {"days": 90}),
                       ("/api/margin_total", {"days": 90}), ("/api/top", {}),
-                      ("/api/stock", {"id": "2330"}), ("/api/stock_margin", {"id": "2330"})]:
+                      ("/api/stock", {"id": "2330"}), ("/api/stock_margin", {"id": "2330"}),
+                      ("/api/stocks", {"q": "2330"}), ("/api/stock_ohlc", {"id": "2330"})]:
             with self.subTest(path=p):
                 json.dumps(self.call(p, **kw))
 

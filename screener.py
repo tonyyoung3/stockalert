@@ -5,7 +5,7 @@ from pathlib import Path
 import mplfinance as mpf
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
-from db import init_db, save_alert, has_alert
+from alertsdb import init_db, save_alert, has_alert
 from company_info import (
     CompanyProfile,
     fetch_profiles,

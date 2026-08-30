@@ -1,4 +1,4 @@
-"""Compatibility shim. New code should import from alertsdb."""
+"""screener.db access for Slack, harness, and later the website."""
 
 from alertsdb.store import (
     count_alerts,

@@ -7,19 +7,60 @@
 設了 TURSO_DATABASE_URL 跟 TURSO_AUTH_TOKEN 就讀雲端,否則讀本機 sqlite。
 """
 import json
+import re
 import webbrowser
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
 from data import market_db
 
+_YMD = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
 
 def q(sql, params=()):
     return market_db.fetchall(sql, params)
 
 
+def _ymd(qs, key):
+    v = (qs.get(key, [""])[0] or "").strip()
+    return v if _YMD.fullmatch(v) else None
+
+
+def _foreign_window(qs):
+    """Inclusive (start, end) for foreign ranking. Empty DB → (None, None).
+
+    start/end (YYYY-MM-DD) win if either is set; otherwise `days` is the last N
+    trading days in foreign_daily. With neither param, latest day only.
+    """
+    latest_row = q("SELECT MAX(trade_date) FROM foreign_daily")
+    latest = latest_row[0][0] if latest_row else None
+    if not latest:
+        return None, None
+    start, end = _ymd(qs, "start"), _ymd(qs, "end")
+    if start or end:
+        start = start or latest
+        end = end or latest
+        if start > end:
+            start, end = end, start
+        return start, end
+    raw = (qs.get("days", [""])[0] or "").strip()
+    if raw.isdigit():
+        n = max(1, min(int(raw), 730))
+        span = q(
+            "SELECT MIN(d), MAX(d) FROM ("
+            "SELECT DISTINCT trade_date AS d FROM foreign_daily "
+            "ORDER BY trade_date DESC LIMIT ?) AS t",
+            (n,),
+        )[0]
+        return span[0], span[1]
+    return latest, latest
+
+
 def api(path, qs):
-    days = int(qs.get("days", ["90"])[0])
+    try:
+        days = int(qs.get("days", ["90"])[0])
+    except (TypeError, ValueError):
+        days = 90
     if path == "/api/summary":
         idx = q("SELECT ts, index_value, change FROM taiex_hourly ORDER BY ts DESC LIMIT 1")
         latest = q("SELECT MAX(trade_date) FROM foreign_daily")[0][0]
@@ -46,12 +87,30 @@ def api(path, qs):
                  (f"-{days} day",))
         return {"data": rows}
     if path == "/api/top":
-        latest = q("SELECT MAX(trade_date) FROM foreign_daily")[0][0]
-        buy = q("SELECT stock_id, stock_name, foreign_net FROM foreign_daily "
-                "WHERE trade_date=? ORDER BY foreign_net DESC LIMIT 15", (latest,))
-        sell = q("SELECT stock_id, stock_name, foreign_net FROM foreign_daily "
-                 "WHERE trade_date=? ORDER BY foreign_net ASC LIMIT 15", (latest,))
-        return {"date": latest, "buy": buy, "sell": sell}
+        start, end = _foreign_window(qs)
+        if not start:
+            return {"date": None, "start": None, "end": None,
+                    "trading_days": 0, "buy": [], "sell": []}
+        buy = q(
+            "SELECT stock_id, MAX(stock_name), SUM(foreign_net) FROM foreign_daily "
+            "WHERE trade_date BETWEEN ? AND ? GROUP BY stock_id "
+            "ORDER BY SUM(foreign_net) DESC LIMIT 15",
+            (start, end),
+        )
+        sell = q(
+            "SELECT stock_id, MAX(stock_name), SUM(foreign_net) FROM foreign_daily "
+            "WHERE trade_date BETWEEN ? AND ? GROUP BY stock_id "
+            "ORDER BY SUM(foreign_net) ASC LIMIT 15",
+            (start, end),
+        )
+        n_days = q(
+            "SELECT COUNT(DISTINCT trade_date) FROM foreign_daily "
+            "WHERE trade_date BETWEEN ? AND ?",
+            (start, end),
+        )[0][0]
+        label = start if start == end else f"{start} ~ {end}"
+        return {"date": label, "start": start, "end": end,
+                "trading_days": n_days, "buy": buy, "sell": sell}
     if path == "/api/margin_total":
         fin = q("SELECT trade_date, balance FROM margin_total "
                 "WHERE item LIKE '融資金額%' AND trade_date >= date('now', ?) "
@@ -85,6 +144,31 @@ def api(path, qs):
                  "FROM foreign_daily WHERE stock_id=? AND trade_date >= date('now', ?) "
                  "ORDER BY trade_date", (sid, f"-{days} day"))
         return {"id": sid, "data": rows}
+    if path == "/api/stocks":
+        needle = (qs.get("q", [""])[0] or "").strip()[:32]
+        if not needle:
+            return {"data": []}
+        like, prefix = f"%{needle}%", f"{needle}%"
+        rows = q(
+            "SELECT stock_id, stock_name FROM stocks "
+            "WHERE stock_id LIKE ? OR stock_name LIKE ? "
+            "ORDER BY CASE WHEN stock_id=? THEN 0 WHEN stock_id LIKE ? THEN 1 "
+            "WHEN stock_name LIKE ? THEN 2 ELSE 3 END, stock_id LIMIT 20",
+            (like, like, needle, prefix, prefix),
+        )
+        return {"data": rows}
+    if path == "/api/stock_ohlc":
+        sid = qs.get("id", [""])[0].strip()
+        rows = q(
+            "SELECT trade_date, close, stock_name FROM stock_daily "
+            "WHERE stock_id=? AND trade_date >= date('now', ?) ORDER BY trade_date",
+            (sid, f"-{days} day"),
+        )
+        name = rows[0][2] if rows else None
+        if not name:
+            got = q("SELECT stock_name FROM stocks WHERE stock_id=?", (sid,))
+            name = got[0][0] if got else sid
+        return {"id": sid, "name": name, "data": [[d, c] for d, c, _n in rows]}
     return None
 
 
@@ -122,6 +206,14 @@ header select option{background:#1a1a2e}
 .hint{font-size:12px;color:#adb5bd}
 .reset-btn{padding:3px 10px;font-size:12px;border:1px solid #dee2e6;border-radius:4px;background:#fff;color:#6c757d;cursor:pointer}
 .reset-btn:hover{background:#f0f0f0}
+.top-range{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
+.ov-wrap{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
+.ov-search{position:relative}
+.ov-search input{width:260px}
+.ov-menu{position:absolute;z-index:30;left:0;right:0;top:calc(100% + 2px);background:#fff;border:1px solid #dee2e6;border-radius:4px;max-height:260px;overflow:auto;box-shadow:0 6px 16px rgba(0,0,0,.12)}
+.ov-menu button{display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%;text-align:left;padding:8px 10px;border:none;background:#fff;cursor:pointer;font-size:13px}
+.ov-menu button:hover,.ov-menu button.active{background:#eef3fa}
+.ov-chip{font-size:11px;color:#6c757d;white-space:nowrap}
 canvas{max-height:320px}
 table{width:100%;border-collapse:collapse;font-size:13px}
 th{text-align:left;padding:8px 10px;border-bottom:2px solid #dee2e6;color:#6c757d;font-size:12px;white-space:nowrap}
@@ -180,14 +272,13 @@ footer{text-align:center;color:#adb5bd;font-size:12px;padding:12px}
     <canvas id="c-kline"></canvas></div>
   <div class="card">
     <div class="chart-head"><h3>加權指數走勢(每小時)</h3>
-      <span>
-        <select id="overlay" onchange="loadTaiex()" style="margin-right:8px">
-          <option value="none" selected>不疊圖</option>
-          <option value="taifex_ratio">疊圖:外資÷投信 台指期未平倉比</option>
-          <option value="foreign_net">疊圖:外資每日買賣超</option>
-          <option value="margin_fin">疊圖:融資餘額</option>
-          <option value="margin_short">疊圖:融券餘額</option>
-        </select>
+      <span class="ov-wrap">
+        <div class="ov-search">
+          <input id="ov-q" placeholder="搜尋疊圖: 2330、台積電、外資、融資" autocomplete="off"
+                 oninput="onOverlayInput()" onfocus="onOverlayFocus()" onkeydown="onOverlayKey(event)">
+          <div id="ov-menu" class="ov-menu" hidden></div>
+        </div>
+        <button type="button" id="ov-clear" class="reset-btn" onclick="clearOverlay()" hidden>清除疊圖</button>
         <span class="hint">拖曳平移 · 滾輪縮放　</span><button class="reset-btn" onclick="resetZoom('c-taiex')">重置</button></span></div>
     <canvas id="c-taiex"></canvas></div>
   <div class="card">
@@ -204,9 +295,26 @@ footer{text-align:center;color:#adb5bd;font-size:12px;padding:12px}
     <canvas id="c-net"></canvas></div>
 </section>
 
-<section class="two">
-  <div class="card"><h3 id="t-buy">外資買超前 15</h3><canvas id="c-buy"></canvas></div>
-  <div class="card"><h3 id="t-sell">外資賣超前 15</h3><canvas id="c-sell"></canvas></div>
+<section class="card" style="margin-bottom:16px">
+  <div class="chart-head">
+    <h3>外資買賣超排行</h3>
+    <span class="top-range">
+      <select id="top-preset" onchange="onTopPreset()">
+        <option value="1" selected>當日</option>
+        <option value="5">近 5 日累計</option>
+        <option value="20">近 20 日累計</option>
+        <option value="60">近 60 日累計</option>
+        <option value="custom">自訂區間</option>
+      </select>
+      <input type="date" id="top-start" onchange="onTopDates()" aria-label="起始日期">
+      <span class="hint">～</span>
+      <input type="date" id="top-end" onchange="onTopDates()" aria-label="結束日期">
+    </span>
+  </div>
+  <div class="two" style="margin-bottom:0">
+    <div><h3 id="t-buy">外資買超前 15</h3><canvas id="c-buy"></canvas></div>
+    <div><h3 id="t-sell">外資賣超前 15</h3><canvas id="c-sell"></canvas></div>
+  </div>
 </section>
 
 <section class="card" style="margin-bottom:16px">
@@ -474,6 +582,12 @@ async function loadSummary(){
   document.getElementById('k-netdate').textContent = s.latest_date;
   document.getElementById('k-cnt').textContent = fmt(s.stock_count);
   document.getElementById('k-span').textContent = s.date_range[0]+' ~ '+s.date_range[1];
+  if(s.date_range){
+    ['top-start','top-end'].forEach(id=>{
+      const el = document.getElementById(id);
+      el.min = s.date_range[0]; el.max = s.date_range[1];
+    });
+  }
 }
 
 async function loadKline(){
@@ -494,29 +608,145 @@ async function loadKline(){
               y:{grace:'2%'}}}});
 }
 
-const OVERLAY_LABELS = {
-  taifex_ratio: '外資÷投信 台指期未平倉比(恆為負)',
-  foreign_net: '外資每日買賣超(張)',
-  margin_fin: '融資餘額(億元)',
-  margin_short: '融券餘額(千張)',
-};
+const MARKET_OVERLAYS = [
+  {type:'market', kind:'taifex_ratio', label:'外資÷投信 台指期未平倉比', chip:'市場'},
+  {type:'market', kind:'foreign_net', label:'外資每日買賣超(張)', chip:'市場'},
+  {type:'market', kind:'margin_fin', label:'融資餘額(億元)', chip:'市場'},
+  {type:'market', kind:'margin_short', label:'融券餘額(千張)', chip:'市場'},
+];
+
+let ovChoice = null;
+let ovHits = [];
+let ovActive = -1;
+let ovTimer = null;
+
+function esc(s){
+  return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function overlayLabel(c){
+  if(!c) return '';
+  if(c.type==='stock_close') return c.id+' '+c.name+' 收盤';
+  if(c.type==='stock_foreign') return c.id+' '+c.name+' 外資買賣超';
+  return c.label;
+}
+
+function hideOverlayMenu(){
+  document.getElementById('ov-menu').hidden = true;
+  ovActive = -1;
+}
+
+function renderOverlayMenu(items){
+  ovHits = items;
+  if(ovActive >= items.length) ovActive = items.length ? 0 : -1;
+  const menu = document.getElementById('ov-menu');
+  if(!items.length){
+    menu.innerHTML = '<div class="hint" style="padding:8px 10px">沒有符合的疊圖</div>';
+    menu.hidden = false;
+    return;
+  }
+  menu.innerHTML = items.map((it,i)=>
+    '<button type="button" class="'+(i===ovActive?'active':'')+'" data-i="'+i+'">'
+    +'<span>'+esc(overlayLabel(it))+'</span><span class="ov-chip">'+esc(it.chip||'')+'</span></button>'
+  ).join('');
+  menu.hidden = false;
+  menu.querySelectorAll('button').forEach(btn=>{
+    btn.addEventListener('mousedown', ev=>{ ev.preventDefault(); pickOverlay(items[+btn.dataset.i]); });
+  });
+}
+
+function marketOverlayHits(q){
+  const t = q.trim().toLowerCase();
+  if(!t) return MARKET_OVERLAYS.slice();
+  return MARKET_OVERLAYS.filter(o =>
+    o.label.toLowerCase().includes(t) || o.kind.toLowerCase().includes(t) ||
+    (t==='外資' && o.kind!=='margin_fin' && o.kind!=='margin_short'));
+}
+
+async function fetchOverlayHits(q){
+  const market = marketOverlayHits(q);
+  const t = q.trim();
+  if(!t) return market;
+  const r = await j('/api/stocks?q='+encodeURIComponent(t));
+  const stocks = [];
+  (r.data||[]).forEach(row=>{
+    const id = row[0], name = row[1]||id;
+    stocks.push({type:'stock_close', id, name, chip:'收盤'});
+    stocks.push({type:'stock_foreign', id, name, chip:'外資買賣超'});
+  });
+  return market.concat(stocks);
+}
+
+function onOverlayFocus(){ onOverlayInput(); }
+function onOverlayInput(){
+  const q = document.getElementById('ov-q').value;
+  clearTimeout(ovTimer);
+  ovTimer = setTimeout(async ()=>{
+    ovActive = -1;
+    renderOverlayMenu(await fetchOverlayHits(q));
+  }, 160);
+}
+function onOverlayKey(ev){
+  const menu = document.getElementById('ov-menu');
+  if(ev.key==='Escape'){ hideOverlayMenu(); return; }
+  if(ev.key==='ArrowDown' || ev.key==='ArrowUp'){
+    ev.preventDefault();
+    if(menu.hidden){ onOverlayInput(); return; }
+    if(!ovHits.length) return;
+    const dir = ev.key==='ArrowDown' ? 1 : -1;
+    ovActive = (ovActive + dir + ovHits.length) % ovHits.length;
+    renderOverlayMenu(ovHits);
+    const el = menu.querySelector('button.active');
+    if(el) el.scrollIntoView({block:'nearest'});
+    return;
+  }
+  if(ev.key==='Enter'){
+    ev.preventDefault();
+    if(!menu.hidden && ovHits.length){
+      pickOverlay(ovHits[ovActive<0?0:ovActive]);
+    }
+  }
+}
+function pickOverlay(item){
+  ovChoice = item;
+  document.getElementById('ov-q').value = overlayLabel(item);
+  document.getElementById('ov-clear').hidden = false;
+  hideOverlayMenu();
+  loadTaiex();
+}
+function clearOverlay(){
+  ovChoice = null;
+  document.getElementById('ov-q').value = '';
+  document.getElementById('ov-clear').hidden = true;
+  hideOverlayMenu();
+  loadTaiex();
+}
+document.addEventListener('click', ev=>{
+  if(!ev.target.closest('.ov-search')) hideOverlayMenu();
+});
 
 // 疊圖資料都是日頻,指數走勢是小時頻 —— 用「當日值」對齊到當天每個小時點上,
 // 畫出來像階梯狀,一天內同一條水平線,換日才跳到新值,方便跟指數同框比較。
-async function buildOverlayMap(kind){
+async function buildOverlayMap(choice){
   const map = new Map();
-  if(kind==='taifex_ratio'){
+  if(!choice) return map;
+  if(choice.type==='market' && choice.kind==='taifex_ratio'){
     const r = await j('/api/taifex_oi?days='+days());
     r.dates.forEach((dt,i)=>{ if(r.ratio[i]!=null) map.set(dt, r.ratio[i]); });
-  } else if(kind==='foreign_net'){
+  } else if(choice.type==='market' && choice.kind==='foreign_net'){
     const r = await j('/api/foreign_total?days='+days());
     r.data.forEach(d=>map.set(d[0], zhang(d[1])));
-  } else if(kind==='margin_fin'){
+  } else if(choice.type==='market' && choice.kind==='margin_fin'){
     const r = await j('/api/margin_total?days='+days());
     r.fin.forEach(d=>map.set(d[0], Math.round(d[1]/100000)));
-  } else if(kind==='margin_short'){
+  } else if(choice.type==='market' && choice.kind==='margin_short'){
     const r = await j('/api/margin_total?days='+days());
     r.short.forEach(d=>map.set(d[0], Math.round(d[1]/1000)));
+  } else if(choice.type==='stock_close'){
+    const r = await j('/api/stock_ohlc?id='+encodeURIComponent(choice.id)+'&days='+days());
+    r.data.forEach(d=>map.set(d[0], d[1]));
+  } else if(choice.type==='stock_foreign'){
+    const r = await j('/api/stock?id='+encodeURIComponent(choice.id)+'&days='+days());
+    r.data.forEach(d=>map.set(d[0], zhang(d[4])));
   }
   return map;
 }
@@ -527,15 +757,14 @@ async function loadTaiex(){
   const datasets = [{label:'加權指數', data:r.data.map(d=>d[1]), borderColor:'#4C72B0',
     borderWidth:1.5, pointRadius:0, tension:.2}];
 
-  const ov = document.getElementById('overlay').value;
+  const ov = ovChoice;
   const scales = {x:{ticks:{maxTicksLimit:12}}, y:{grace:'2%'}};
-  if(ov !== 'none'){
+  if(ov){
     const map = await buildOverlayMap(ov);
     const vals = r.data.map(d => { const dt=d[0].slice(0,10); return map.has(dt) ? map.get(dt) : null; });
-    datasets.push({label:OVERLAY_LABELS[ov], data:vals, borderColor:'#c0392b',
+    datasets.push({label:overlayLabel(ov), data:vals, borderColor:'#c0392b',
       borderDash:[5,4], borderWidth:2, pointRadius:0, stepped:true, spanGaps:true, yAxisID:'y2'});
-    // 比值恆為負,鎖定右軸範圍避免自動刻度出現容易誤讀的 0 / 正值刻度
-    if(ov==='taifex_ratio'){
+    if(ov.type==='market' && ov.kind==='taifex_ratio'){
       const vv = vals.filter(v=>v!=null);
       if(vv.length){
         const lo=Math.min(...vv), hi=Math.max(...vv), pad=(hi-lo)*0.15||0.1;
@@ -547,7 +776,7 @@ async function loadTaiex(){
   }
 
   mk('c-taiex', {type:'line', data:{labels, datasets},
-    options:{animation:false, plugins:{legend:{display: ov!=='none'}, zoom:ZOOM},
+    options:{animation:false, plugins:{legend:{display: !!ov}, zoom:ZOOM},
       interaction:{mode:'index',intersect:false},
       scales}});
 }
@@ -602,17 +831,46 @@ async function loadTaifexOi(){
                   min: rMin-pad, max: rMax+pad}}}});
 }
 
+function topRangeParams(){
+  const preset = document.getElementById('top-preset').value;
+  if(preset==='custom'){
+    const s = document.getElementById('top-start').value;
+    const e = document.getElementById('top-end').value;
+    const q = [];
+    if(s) q.push('start='+s);
+    if(e) q.push('end='+e);
+    return q.length ? '?'+q.join('&') : '';
+  }
+  return '?days='+encodeURIComponent(preset);
+}
+function onTopPreset(){
+  if(document.getElementById('top-preset').value==='custom') return;
+  loadTop();
+}
+function onTopDates(){
+  document.getElementById('top-preset').value = 'custom';
+  loadTop();
+}
 async function loadTop(){
-  const r = await j('/api/top');
-  document.getElementById('t-buy').textContent = r.date+' 外資買超前 15(張)';
-  document.getElementById('t-sell').textContent = r.date+' 外資賣超前 15(張)';
+  const r = await j('/api/top'+topRangeParams());
+  if(r.start){
+    const preset = document.getElementById('top-preset').value;
+    if(preset!=='custom' || !document.getElementById('top-start').value){
+      document.getElementById('top-start').value = r.start;
+      document.getElementById('top-end').value = r.end;
+    }
+  }
+  const span = (!r.start) ? '' : (r.start===r.end ? r.start : r.start+'～'+r.end);
+  const daysHint = r.trading_days>1 ? '（'+r.trading_days+' 個交易日）' : '';
+  document.getElementById('t-buy').textContent = span+' 外資買超前 15(張)'+daysHint;
+  document.getElementById('t-sell').textContent = span+' 外資賣超前 15(張)'+daysHint;
   const cfg = (rows, color) => ({type:'bar',
     data:{labels:rows.map(d=>d[0]+' '+d[1]),
       datasets:[{data:rows.map(d=>Math.abs(zhang(d[2]))), backgroundColor:color}]},
     options:{indexAxis:'y', animation:false, plugins:{legend:{display:false}},
       scales:{y:{ticks:{font:{size:11}}}}}});
-  mk('c-buy', cfg(r.buy, '#c0392bcc'));
-  mk('c-sell', cfg(r.sell, '#27ae60cc'));
+  mk('c-buy', cfg(r.buy||[], '#c0392bcc'));
+  mk('c-sell', cfg(r.sell||[], '#27ae60cc'));
 }
 
 async function loadStock(){

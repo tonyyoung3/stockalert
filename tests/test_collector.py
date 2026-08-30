@@ -418,6 +418,62 @@ class TestDashboardAPI(DBTestCase):
         r = self.call("/api/top", days=90)
         self.assertEqual(r["buy"][0][0], "2330")
         self.assertEqual(r["sell"][0][0], "2317")
+        self.assertEqual(r["start"], "2026-07-31")
+        self.assertEqual(r["end"], "2026-07-31")
+        self.assertEqual(r["trading_days"], 1)
+
+    def _insert_foreign(self, rows):
+        con = sqlite3.connect(self.db)
+        with con:
+            con.executemany(
+                "INSERT OR REPLACE INTO foreign_daily VALUES (?,?,?,?,?,?)", rows)
+        con.close()
+
+    def test_top_defaults_to_latest_day(self):
+        r = self.call("/api/top")
+        self.assertEqual(r["date"], "2026-07-31")
+        self.assertEqual(r["start"], r["end"])
+        self.assertEqual(r["buy"][0][0], "2330")
+
+    def test_top_aggregates_custom_date_range(self):
+        self._insert_foreign([
+            ("2026-07-30", "2330", "台積電", 1000, 0, 1000),
+            ("2026-07-30", "2317", "鴻海", 0, 5_000_000, -5_000_000),
+            ("2026-07-30", "2454", "聯發科", 8_000_000, 0, 8_000_000),
+        ])
+        r = self.call("/api/top", start="2026-07-30", end="2026-07-31")
+        self.assertEqual(r["start"], "2026-07-30")
+        self.assertEqual(r["end"], "2026-07-31")
+        self.assertEqual(r["date"], "2026-07-30 ~ 2026-07-31")
+        self.assertEqual(r["trading_days"], 2)
+        self.assertEqual(r["buy"][0][0], "2330")
+        self.assertEqual(r["buy"][0][2], 13_780_099 + 1000)
+        self.assertEqual(r["buy"][1][0], "2454")
+        self.assertEqual(r["buy"][1][2], 8_000_000)
+        self.assertEqual(r["sell"][0][0], "2317")
+        self.assertEqual(r["sell"][0][2], -7_000_000)
+
+    def test_top_days_uses_last_n_trading_days(self):
+        self._insert_foreign([
+            ("2026-07-29", "2330", "台積電", 0, 1, -1),
+            ("2026-07-30", "2330", "台積電", 0, 1, -1),
+        ])
+        one = self.call("/api/top", days=1)
+        self.assertEqual(one["start"], "2026-07-31")
+        self.assertEqual(one["end"], "2026-07-31")
+        self.assertEqual(one["trading_days"], 1)
+        two = self.call("/api/top", days=2)
+        self.assertEqual(two["start"], "2026-07-30")
+        self.assertEqual(two["end"], "2026-07-31")
+        self.assertEqual(two["trading_days"], 2)
+
+    def test_top_swaps_inverted_range_and_ignores_bad_dates(self):
+        r = self.call("/api/top", start="2026-07-31", end="2026-07-01")
+        self.assertEqual(r["start"], "2026-07-01")
+        self.assertEqual(r["end"], "2026-07-31")
+        bad = self.call("/api/top", start="not-a-date")
+        self.assertEqual(bad["start"], "2026-07-31")
+        self.assertEqual(bad["end"], "2026-07-31")
 
     def test_ohlc_day_vs_hour(self):
         day = self.call("/api/ohlc", days=90, interval="day")["data"]
@@ -432,11 +488,32 @@ class TestDashboardAPI(DBTestCase):
     def test_unknown_path_returns_none(self):
         self.assertIsNone(self.call("/api/nope"))
 
+    def test_stock_search_by_id_and_name(self):
+        by_id = self.call("/api/stocks", q="2330")
+        self.assertEqual(by_id["data"][0][0], "2330")
+        by_name = self.call("/api/stocks", q="台積")
+        self.assertEqual(by_name["data"][0][0], "2330")
+        self.assertEqual(self.call("/api/stocks")["data"], [])
+
+    def test_stock_ohlc(self):
+        con = sqlite3.connect(self.db)
+        with con:
+            con.execute(
+                "INSERT INTO stock_daily VALUES (?,?,?,?,?,?,?,?,?)",
+                ("2026-07-31", "2330", "台積電", 1450.0, 1465.0, 1445.0, 1460.0,
+                 42318827, 61362300000),
+            )
+        con.close()
+        r = self.call("/api/stock_ohlc", id="2330", days=90)
+        self.assertEqual(r["name"], "台積電")
+        self.assertEqual(r["data"][0], ["2026-07-31", 1460.0])
+
     def test_all_endpoints_json_serialisable(self):
         for p, kw in [("/api/summary", {}), ("/api/taiex", {"days": 90}),
                       ("/api/ohlc", {"days": 90}), ("/api/foreign_total", {"days": 90}),
                       ("/api/margin_total", {"days": 90}), ("/api/top", {}),
-                      ("/api/stock", {"id": "2330"}), ("/api/stock_margin", {"id": "2330"})]:
+                      ("/api/stock", {"id": "2330"}), ("/api/stock_margin", {"id": "2330"}),
+                      ("/api/stocks", {"q": "2330"}), ("/api/stock_ohlc", {"id": "2330"})]:
             with self.subTest(path=p):
                 json.dumps(self.call(p, **kw))
 

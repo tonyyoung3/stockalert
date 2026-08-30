@@ -3,7 +3,7 @@ import unittest
 from datetime import date, timedelta
 from pathlib import Path
 
-import db
+from alertsdb import store as db
 
 
 class DbTests(unittest.TestCase):
@@ -78,6 +78,13 @@ class DbTests(unittest.TestCase):
         after = {(row["id"], horizon) for row, horizon in db.get_pending_horizon_jobs(horizons=(5, 20), today=today)}
         self.assertNotIn((old_id, 5), after)
         self.assertIn((old_id, 20), after)
+
+    def test_default_db_path_stays_at_repo_root(self):
+        db.set_db_path(None)
+        self.assertEqual(
+            db.get_db_path(),
+            Path(__file__).resolve().parents[1] / "screener.db",
+        )
 
 
 if __name__ == "__main__":

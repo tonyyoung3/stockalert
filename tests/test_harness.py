@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 
-import db
+from alertsdb import store as db
 from harness.agent import run_agent
 from harness.config import harness_enabled
 from harness.cli import main as harness_main

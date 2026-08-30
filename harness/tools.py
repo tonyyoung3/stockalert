@@ -7,7 +7,7 @@ from typing import Any, Callable
 
 import pandas as pd
 
-import db
+from alertsdb import store as db
 from signals.patterns import classify_pattern
 
 ALLOWED_PATTERNS = frozenset({"upper_shadow_reversal", "inside_day"})

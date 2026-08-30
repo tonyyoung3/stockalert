@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from db import get_pending_horizon_jobs, init_db, save_performance
+from alertsdb import get_pending_horizon_jobs, init_db, save_performance
 from prices import download_history, horizon_exit, parse_date, to_yahoo_symbol
 
 DEFAULT_HORIZONS = (5, 20, 60)

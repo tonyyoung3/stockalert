@@ -30,7 +30,28 @@ DEFAULT_SUBS = (
     "ValueInvesting",
     "investing",
     "stocks",
+    "wallstreetbets",
 )
+WSB_SUBS = {"wallstreetbets"}
+WSB_KEEP_FLAIRS = {
+    "dd",
+    "due diligence",
+    "research",
+    "thesis",
+    "fundamentals",
+    "fundamental",
+    "technical analysis",
+}
+WSB_SKIP_FLAIRS = {
+    "meme",
+    "gain",
+    "loss",
+    "shitpost",
+    "daily discussion",
+    "weekend discussion",
+    "news",
+    "chart",
+}
 SKIP_TITLE_RE = re.compile(
     r"(daily discussion|weekend discussion|daily advice|"
     r"what are your moves|rate my portfolio|megathread|"
@@ -170,10 +191,21 @@ def theme_key(post: Post) -> str:
     return compact[:18] or "other"
 
 
+def is_wsb(subreddit: str) -> bool:
+    return (subreddit or "").strip().lower() in WSB_SUBS
+
+
 def is_idea_post(post: Post, min_score: int) -> bool:
-    if post.score < min_score:
-        return False
     if is_daily_thread(post.title):
+        return False
+    flair = (post.flair or "").strip().lower()
+    if is_wsb(post.subreddit):
+        if flair in WSB_SKIP_FLAIRS:
+            return False
+        # WSB is noisy; only keep DD-style posts. Archive scores often
+        # sit at 1 for a day, so do not require min_score here.
+        return flair in WSB_KEEP_FLAIRS
+    if post.score < min_score:
         return False
     if idea_flair(post.flair):
         return True
@@ -353,7 +385,8 @@ def collect_posts(
 
     for sub_i, sub in enumerate(subs):
         cursor = None
-        for _page in range(max_pages):
+        pages = max_pages * 2 if is_wsb(sub) else max_pages
+        for _page in range(pages):
             if backend != "archive":
                 url = listing_url(sub, after=cursor)
                 try:
@@ -587,7 +620,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="整理 Reddit 近一週投資想法")
     parser.add_argument("--days", type=int, default=7)
     parser.add_argument("--min-score", type=int, default=40, help="分數須大於等於此值")
-    parser.add_argument("--subs", help="逗號分隔板名，預設 SecurityAnalysis,ValueInvesting,investing,stocks")
+    parser.add_argument(
+        "--subs",
+        help="逗號分隔板名，預設含 wallstreetbets（只收 DD）",
+    )
     parser.add_argument("--max-pages", type=int, default=3)
     parser.add_argument("--json", dest="json_path", help="順便寫出 JSON")
     parser.add_argument("--raw", action="store_true", help="只列原始清單，不做週報")

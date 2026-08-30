@@ -2,6 +2,7 @@ import unittest
 from datetime import date, datetime, timezone
 
 from reddit.ideas import (
+    DEFAULT_SUBS,
     Post,
     archive_posts_url,
     build_digest,
@@ -11,6 +12,7 @@ from reddit.ideas import (
     extract_tickers,
     format_digest,
     is_daily_thread,
+    is_idea_post,
     listing_url,
     parse_archive_posts,
     parse_comments,
@@ -259,10 +261,23 @@ class RedditIdeasTests(unittest.TestCase):
         self.assertEqual([p.post_id for p in posts], ["arc1"])
         self.assertIn("SecurityAnalysis", archive_posts_url("SecurityAnalysis", after="2026-08-23"))
 
+    def test_wsb_keeps_dd_drops_memes(self):
+        dd = Post(
+            "2026-08-29", 1, 20, "Why $NVDA still prints", "a",
+            "http://a", "/a", "wallstreetbets", "DD", "long thesis " * 20, "w1",
+        )
+        meme = Post(
+            "2026-08-29", 9000, 400, "stonks", "b",
+            "http://b", "/b", "wallstreetbets", "Meme", "", "w2",
+        )
+        self.assertTrue(is_idea_post(dd, min_score=40))
+        self.assertFalse(is_idea_post(meme, min_score=40))
+
     def test_parse_subs(self):
         self.assertEqual(parse_subs("r/investing, stocks"), ("investing", "stocks"))
         self.assertEqual(parse_subs("research"), ("research",))
-        self.assertGreaterEqual(len(parse_subs(None)), 3)
+        self.assertIn("wallstreetbets", DEFAULT_SUBS)
+        self.assertIn("wallstreetbets", parse_subs(None))
 
 
 if __name__ == "__main__":

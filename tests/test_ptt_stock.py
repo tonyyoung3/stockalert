@@ -144,6 +144,8 @@ class PttStockTests(unittest.TestCase):
             <span class="push-content">: 2330 再來</span></div>
           <div class="push"><span class="push-tag">推 </span><span class="push-userid">ee</span>
             <span class="push-content">: https://i.imgur.com/abc.gif</span></div>
+          <div class="push"><span class="push-tag">推 </span><span class="push-userid">gg</span>
+            <span class="push-content">: https://i.imgur.com/UE2rvN9.jpeg 1110 →110</span></div>
           <div class="push"><span class="push-tag">推 </span><span class="push-userid">ff</span>
             <span class="push-content">: 1100元太貴了吧還有1500萬</span></div>
         </div>
@@ -155,6 +157,8 @@ class PttStockTests(unittest.TestCase):
         self.assertTrue(any("3037" in p.content for p in chat.comments))
         self.assertFalse(any(p.user == "cc" for p in chat.comments))
         self.assertFalse(any(p.user == "ee" for p in chat.comments))
+        self.assertFalse(any(p.user == "gg" for p in chat.comments))
+        self.assertNotIn("1110", [code for code, _ in chat.tickers])
 
     def test_build_digest_uses_injected_chat_html(self):
         posts = [

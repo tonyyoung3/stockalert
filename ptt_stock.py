@@ -178,6 +178,8 @@ def _is_noise_comment(text: str) -> bool:
     stripped = (text or "").strip()
     if not stripped:
         return True
+    if stripped.startswith("http"):
+        return True
     without_url = re.sub(r"https?://\S+", "", stripped).strip()
     if re.search(r"https?://", stripped) and len(without_url) < 8:
         return True

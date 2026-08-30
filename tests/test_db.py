@@ -54,6 +54,31 @@ class DbTests(unittest.TestCase):
         self.assertNotIn(old_id, pending_after)
         self.assertIn(just_id, pending_after)
 
+    def test_pending_horizon_jobs_are_per_horizon(self):
+        today = date(2026, 8, 30)
+        old = str(today - timedelta(days=80))
+        mid = str(today - timedelta(days=20))
+        fresh = str(today - timedelta(days=3))
+        old_id = db.save_alert("2330", "upper_shadow_reversal", old, 100.0)
+        mid_id = db.save_alert("2317", "upper_shadow_reversal", mid, 50.0)
+        db.save_alert("1101", "inside_day", fresh, 10.0)
+
+        jobs = db.get_pending_horizon_jobs(horizons=(5, 20, 60), today=today)
+        pairs = {(row["id"], horizon) for row, horizon in jobs}
+        self.assertIn((old_id, 5), pairs)
+        self.assertIn((old_id, 20), pairs)
+        self.assertIn((mid_id, 5), pairs)
+        self.assertNotIn((mid_id, 20), pairs)
+        self.assertNotIn((mid_id, 60), pairs)
+        fresh_ids = {row["id"] for row, _ in jobs if row["ticker"] == "1101"}
+        self.assertEqual(fresh_ids, set())
+
+        self.assertTrue(db.save_performance(old_id, "2026-05-20", 110.0, 10.0, horizon_td=5))
+        self.assertFalse(db.save_performance(old_id, "2026-05-21", 111.0, 11.0, horizon_td=5))
+        after = {(row["id"], horizon) for row, horizon in db.get_pending_horizon_jobs(horizons=(5, 20), today=today)}
+        self.assertNotIn((old_id, 5), after)
+        self.assertIn((old_id, 20), after)
+
 
 if __name__ == "__main__":
     unittest.main()

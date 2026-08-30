@@ -1,7 +1,20 @@
 import unittest
 from datetime import date
 
-from ptt_stock import collect_posts, parse_index_html, parse_list_date, parse_push
+from ptt_stock import (
+    Post,
+    build_digest,
+    chat_kind,
+    cluster_themes,
+    collect_posts,
+    extract_tickers,
+    format_digest,
+    parse_index_html,
+    parse_list_date,
+    parse_push,
+    summarize_chat,
+    theme_key,
+)
 
 SAMPLE_INDEX = """
 <html><body>
@@ -20,6 +33,12 @@ SAMPLE_INDEX = """
   <div class="nrec"><span class="hl">99</span></div>
   <div class="title"><a href="/bbs/Stock/M.hot.html">[標的] 2330 多</a></div>
   <div class="author">foo</div>
+  <div class="date"> 8/29</div>
+</div>
+<div class="r-ent">
+  <div class="nrec"><span>8</span></div>
+  <div class="title"><a href="/bbs/Stock/M.chat.html">[閒聊] 2026/08/29 盤中閒聊</a></div>
+  <div class="author">laptic</div>
   <div class="date"> 8/29</div>
 </div>
 <div class="r-ent">
@@ -81,9 +100,79 @@ class PttStockTests(unittest.TestCase):
             fetch=pages.__getitem__,
             sleep_s=0,
         )
-        self.assertEqual(len(posts), 1)
-        self.assertEqual(posts[0].title, "[標的] 2330 多")
-        self.assertEqual(posts[0].push, 99)
+        titles = {p.title for p in posts}
+        self.assertEqual(titles, {"[標的] 2330 多", "[閒聊] 2026/08/29 盤中閒聊"})
+        self.assertEqual(next(p.push for p in posts if "2330" in p.title), 99)
+
+    def test_theme_key_merges_replies(self):
+        self.assertEqual(theme_key("Re: [新聞] 遭控陸製變MIT！欣興涉「洗產地」被搜索"), "欣興")
+        self.assertEqual(theme_key("[標的] 2330 多"), "2330")
+        self.assertEqual(chat_kind("[閒聊] 2026/08/28 盤後閒聊"), "盤後閒聊")
+        self.assertIsNone(chat_kind("[閒聊] 低推"))
+
+    def test_extract_tickers_skips_years(self):
+        self.assertEqual(extract_tickers("2026 年 2330 跟 0050"), ["2330", "0050"])
+        self.assertEqual(extract_tickers("看到 1100元 跟 1500萬 還有 8320元"), [])
+        self.assertEqual(extract_tickers("買 2330 到 1000"), ["2330"])
+
+    def test_cluster_skips_routine_and_chat(self):
+        posts = [
+            Post("2026-08-29", 100, "爆", "[新聞] 欣興涉洗產地", "a", "http://a"),
+            Post("2026-08-29", 99, "99", "Re: [新聞] 欣興搜索", "b", "http://b"),
+            Post("2026-08-28", 100, "爆", "[情報] 三大法人買賣金額統計表", "c", "http://c"),
+            Post("2026-08-28", 100, "爆", "[閒聊] 2026/08/28 盤後閒聊", "d", "http://d"),
+            Post("2026-08-27", 80, "80", "[標的] 2330 多", "e", "http://e"),
+        ]
+        themes = cluster_themes(posts)
+        keys = [t.key for t in themes]
+        self.assertIn("欣興", keys)
+        self.assertIn("2330", keys)
+        self.assertNotIn("三大法人", "".join(keys))
+        xin = next(t for t in themes if t.key == "欣興")
+        self.assertEqual(len(xin.posts), 2)
+
+    def test_summarize_chat_counts_tickers(self):
+        html = """
+        <div id="main-content">
+          <div class="push"><span class="push-tag">推 </span><span class="push-userid">aa</span>
+            <span class="push-content">: 2330 好強今天</span></div>
+          <div class="push"><span class="push-tag">推 </span><span class="push-userid">bb</span>
+            <span class="push-content">: 3037 洗產地</span></div>
+          <div class="push"><span class="push-tag">噓 </span><span class="push-userid">cc</span>
+            <span class="push-content">: 2330 看空</span></div>
+          <div class="push"><span class="push-tag">推 </span><span class="push-userid">dd</span>
+            <span class="push-content">: 2330 再來</span></div>
+          <div class="push"><span class="push-tag">推 </span><span class="push-userid">ee</span>
+            <span class="push-content">: https://i.imgur.com/abc.gif</span></div>
+          <div class="push"><span class="push-tag">推 </span><span class="push-userid">ff</span>
+            <span class="push-content">: 1100元太貴了吧還有1500萬</span></div>
+        </div>
+        """
+        post = Post("2026-08-28", 100, "爆", "[閒聊] 2026/08/28 盤後閒聊", "laptic", "http://chat")
+        chat = summarize_chat(post, html, comment_limit=5)
+        self.assertEqual(chat.tickers[0], ("2330", 2))
+        self.assertNotIn("1100", [code for code, _ in chat.tickers])
+        self.assertTrue(any("3037" in p.content for p in chat.comments))
+        self.assertFalse(any(p.user == "cc" for p in chat.comments))
+        self.assertFalse(any(p.user == "ee" for p in chat.comments))
+
+    def test_build_digest_uses_injected_chat_html(self):
+        posts = [
+            Post("2026-08-29", 99, "99", "[標的] 2330 多", "foo", "http://t"),
+            Post("2026-08-28", 100, "爆", "[閒聊] 2026/08/28 盤後閒聊", "laptic", "http://chat"),
+        ]
+        pages = {
+            "http://chat": """
+            <div class="push"><span class="push-tag">推 </span><span class="push-userid">zz</span>
+              <span class="push-content">: 今天 2330 還行</span></div>
+            """
+        }
+        digest = build_digest(posts, fetch=pages.__getitem__, sleep_s=0)
+        text = format_digest(digest, 7, 30)
+        self.assertIn("## 題材", text)
+        self.assertIn("## 標的文", text)
+        self.assertIn("盤後閒聊", text)
+        self.assertIn("2330", text)
 
 
 if __name__ == "__main__":

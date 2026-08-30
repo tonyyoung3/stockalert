@@ -1,27 +1,21 @@
 #!/usr/bin/env python3
-"""台股資料儀表板(本地網頁)
-  python -m web.dashboard        # 啟動後自動開瀏覽器 http://localhost:8765
-只用 Python 內建套件,直接讀 twse_data.db,資料永遠是最新的。
+"""台股資料儀表板。
+
+  python -m web.dashboard        # 本機 http://localhost:8765,讀 twse_data.db
+  PORT=8080 python -m web.dashboard   # Cloud Run / 任何 PaaS
+
+設了 TURSO_DATABASE_URL 跟 TURSO_AUTH_TOKEN 就讀雲端,否則讀本機 sqlite。
 """
 import json
-import sqlite3
-import sys
 import webbrowser
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
-from data.paths import repo_file
-
-DB = repo_file("twse_data.db")
-PORT = 8765
+from data import market_db
 
 
 def q(sql, params=()):
-    conn = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
-    try:
-        return conn.execute(sql, params).fetchall()
-    finally:
-        conn.close()
+    return market_db.fetchall(sql, params)
 
 
 def api(path, qs):
@@ -1011,7 +1005,11 @@ loadAll();
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         u = urlparse(self.path)
-        if u.path == "/" or u.path == "/index.html":
+        if u.path == "/health":
+            body = b"ok"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+        elif u.path == "/" or u.path == "/index.html":
             body = HTML.encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -1035,7 +1033,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             length = int(self.headers.get("Content-Length", 0))
             rule = json.loads(self.rfile.read(length) or b"{}")
-            conn = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
+            conn = market_db.connect_for_backtest()
             try:
                 from web import backtest_engine
                 result = backtest_engine.run_backtest(conn, rule)
@@ -1054,30 +1052,42 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
-if __name__ == "__main__":
-    if not DB.exists():
-        raise SystemExit(f"找不到 {DB},請先執行 python -m market.collector 或 python -m market.backfill")
+def main() -> int:
+    if not market_db.available():
+        raise SystemExit(
+            "找不到市場資料。本機請先跑 python -m market.update_market_data;"
+            " Cloud Run 請設 TURSO_DATABASE_URL 跟 TURSO_AUTH_TOKEN。"
+        )
 
+    host, port = market_db.listen_host_port()
+    try_ports = [port] if host == "0.0.0.0" else list(range(port, port + 10))
     server = None
-    port = PORT
-    for attempt in range(10):
+    bound = port
+    for candidate in try_ports:
         try:
-            server = HTTPServer(("127.0.0.1", port), Handler)
+            server = HTTPServer((host, candidate), Handler)
+            bound = candidate
             break
         except OSError as e:
-            if e.errno == 48 or "Address already in use" in str(e):
-                port += 1
-                continue
-            raise
+            if host == "0.0.0.0" or not (
+                e.errno == 48 or "Address already in use" in str(e)
+            ):
+                raise
     if server is None:
         raise SystemExit(
-            f"連續 10 個埠({PORT}~{port-1})都被占用。多半是之前開的 dashboard.py 沒關掉——"
-            f"可以在終端機執行 `lsof -ti:{PORT} | xargs kill -9` 把舊的殺掉,再重新啟動這支程式。"
+            f"連續 {len(try_ports)} 個埠({try_ports[0]}~{try_ports[-1]})都被占用。"
+            f"本機可執行 `lsof -ti:{port} | xargs kill -9`。"
         )
-    if port != PORT:
-        print(f"預設埠 {PORT} 已被占用(通常是還有一個舊的 dashboard.py 在跑),改用 {port}。")
+    if bound != port:
+        print(f"預設埠 {port} 已被占用,改用 {bound}。")
 
-    url = f"http://localhost:{port}"
-    print(f"儀表板啟動:{url}(Ctrl+C 結束)")
-    webbrowser.open(url)
+    url = f"http://{host}:{bound}"
+    print(f"儀表板啟動:{url} source={'turso' if market_db.using_turso() else 'sqlite'}")
+    if market_db.should_open_browser():
+        webbrowser.open(f"http://localhost:{bound}")
     server.serve_forever()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

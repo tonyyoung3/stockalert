@@ -396,9 +396,15 @@ class TestDashboardAPI(DBTestCase):
             con.execute("INSERT INTO taiex_hourly_ohlc VALUES "
                         "('2026-07-31T13:00:00','2026-07-31',43000.,43200.,42900.,43119.75)")
         con.close()
+        from data import market_db
         from web import dashboard
         self.dash = dashboard
-        dashboard.DB = self.db
+        market_db.set_db_path(self.db)
+
+    def tearDown(self):
+        from data import market_db
+        market_db.set_db_path(None)
+        super().tearDown()
 
     def call(self, path, **qs):
         return self.dash.api(path, {k: [str(v)] for k, v in qs.items()})

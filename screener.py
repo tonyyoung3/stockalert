@@ -7,6 +7,7 @@ import mplfinance as mpf
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 from db import init_db, save_alert, has_alert
+from prices import AUTO_ADJUST, extract_ohlcv, last_close
 
 # -----------------------------
 # 使用者設定 (可透過環境變數覆蓋)
@@ -209,7 +210,14 @@ def main():
 
     # 批次抓取（S&P 500 股票不多，可以一次抓）
     # 期間設為 "2mo" 確保有足夠資料計算月線和繪圖
-    data = yf.download(taiwan_stocks, period="2mo", interval="1d", group_by='ticker', threads=True)
+    data = yf.download(
+        taiwan_stocks,
+        period="2mo",
+        interval="1d",
+        group_by="ticker",
+        threads=True,
+        auto_adjust=AUTO_ADJUST,
+    )
     upper_shadow_results = []
     inside_day_results = []
     
@@ -220,7 +228,7 @@ def main():
     for ticker in taiwan_stocks:
         try:
             # yfinance 在多股票下載時，會將 ticker 作為列名
-            df = data[ticker] if len(taiwan_stocks) > 1 else data
+            df = extract_ohlcv(data, ticker)
             if df.empty or len(df) < 22:
                 # print(f"Skipping {ticker} due to insufficient data ({len(df)} days)")
                 continue
@@ -237,7 +245,10 @@ def main():
                 print(f"  -> Skip duplicate {pattern} for {ticker_clean} on {signal_date}")
                 continue
 
-            price = float(df["Close"].iloc[-1])
+            price = last_close(df, ticker)
+            if price is None:
+                print(f"  -> Skip {ticker_clean}: could not read close")
+                continue
             if pattern == "inside_day":
                 print(f"  -> Inside day match: {ticker_clean} ({signal_date})")
                 chart_path = charts_dir / f"{ticker_clean}_inside_day.png"

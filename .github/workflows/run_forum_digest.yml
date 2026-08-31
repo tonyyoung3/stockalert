@@ -2,8 +2,9 @@ name: Daily PTT and Reddit digest
 
 on:
   schedule:
-    # 22:00 Taiwan (UTC+8) so 盤後閒聊已經累積
+    # 22:00 Taiwan; backup 01:00 if GitHub skips the first slot
     - cron: '0 14 * * *'
+    - cron: '0 17 * * *'
   workflow_dispatch: {}
 
 jobs:

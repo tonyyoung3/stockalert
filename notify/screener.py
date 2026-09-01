@@ -180,6 +180,8 @@ def main():
     )
     upper_shadow_results = []
     inside_day_results = []
+    skipped_short = 0
+    last_bar_dates: set[str] = set()
     
     # 建立儲存圖表的資料夾
     charts_dir = Path("charts")
@@ -190,8 +192,9 @@ def main():
             # yfinance 在多股票下載時，會將 ticker 作為列名
             df = extract_ohlcv(data, ticker)
             if df.empty or len(df) < 22:
-                # print(f"Skipping {ticker} due to insufficient data ({len(df)} days)")
+                skipped_short += 1
                 continue
+            last_bar_dates.add(str(last_bar_date(df)))
 
             ticker_clean = ticker.split('.')[0]  # 去除 .TW/.TWO
             pattern = classify_pattern(df)
@@ -224,6 +227,14 @@ def main():
 
         except Exception as e:
             print(f"Error processing {ticker}: {e}")
+
+    print(
+        f"\nScan complete: {len(taiwan_stocks)} tickers, "
+        f"{skipped_short} insufficient data, "
+        f"{len(upper_shadow_results)} upper-shadow, "
+        f"{len(inside_day_results)} inside-day"
+        + (f"; last complete bar {', '.join(sorted(last_bar_dates))}" if last_bar_dates else "")
+    )
 
     # 顯示結果 + 發 Slack
     slack_token = os.environ.get("SLACK_BOT_TOKEN")

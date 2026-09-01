@@ -6,6 +6,7 @@ import pandas as pd
 from notify.performance_checker import evaluate_row
 from data.prices import (
     calendar_buffer_days,
+    drop_incomplete_ohlc,
     extract_ohlcv,
     horizon_exit,
     last_close,
@@ -37,6 +38,30 @@ class PricesTests(unittest.TestCase):
         )
         self.assertEqual(last_close(df, "2330.TW"), 12.5)
         self.assertFalse(extract_ohlcv(df, "2330.TW").empty)
+
+    def test_extract_ohlcv_drops_incomplete_last_bar(self):
+        idx = pd.bdate_range("2026-06-01", periods=4)
+        df = pd.DataFrame(
+            {
+                ("2330.TW", "Open"): [10.0, 11.0, 12.0, 13.0],
+                ("2330.TW", "High"): [10.5, 11.5, 12.5, 13.5],
+                ("2330.TW", "Low"): [9.5, 10.5, 11.5, 12.5],
+                ("2330.TW", "Close"): [10.0, 11.0, 12.5, float("nan")],
+                ("2330.TW", "Volume"): [1_000.0, 1_000.0, 1_000.0, 1_000.0],
+            },
+            index=idx,
+        )
+        frame = extract_ohlcv(df, "2330.TW")
+        self.assertEqual(len(frame), 3)
+        self.assertEqual(float(frame["Close"].iloc[-1]), 12.5)
+        self.assertEqual(frame.index[-1].date(), date(2026, 6, 3))
+
+    def test_drop_incomplete_ohlc_keeps_complete_bars(self):
+        df = _bars(n=3)
+        df.loc[df.index[-1], "Close"] = float("nan")
+        cleaned = drop_incomplete_ohlc(df)
+        self.assertEqual(len(cleaned), 2)
+        self.assertEqual(float(cleaned["Close"].iloc[-1]), 101.0)
 
     def test_horizon_exit_is_trading_days_after_signal(self):
         df = _bars()

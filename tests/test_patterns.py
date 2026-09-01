@@ -3,6 +3,7 @@ from datetime import date
 
 import pandas as pd
 
+from data.prices import drop_incomplete_ohlc
 from signals.patterns import (
     check_inside_day,
     check_upper_shadow_reversal,
@@ -71,6 +72,19 @@ class PatternTests(unittest.TestCase):
 
     def test_classify_none_on_quiet_tape(self):
         self.assertIsNone(classify_pattern(_base_df()))
+
+    def test_incomplete_last_bar_does_not_hide_match(self):
+        df = _upper_shadow_only()
+        self.assertEqual(classify_pattern(df), "upper_shadow_reversal")
+        incomplete = df.copy()
+        extra = incomplete.iloc[[-1]].copy()
+        extra.index = extra.index + pd.Timedelta(days=1)
+        extra["Close"] = float("nan")
+        incomplete = pd.concat([incomplete, extra])
+        self.assertIsNone(classify_pattern(incomplete))
+        cleaned = drop_incomplete_ohlc(incomplete)
+        self.assertEqual(classify_pattern(cleaned), "upper_shadow_reversal")
+        self.assertEqual(last_bar_date(cleaned), last_bar_date(df))
 
     def test_last_bar_date_uses_index_not_today(self):
         df = _base_df()

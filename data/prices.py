@@ -98,27 +98,42 @@ def last_close(df: pd.DataFrame | None, symbol: str | None = None) -> float | No
     return _as_float(series.iloc[-1])
 
 
+def drop_incomplete_ohlc(df: pd.DataFrame | None) -> pd.DataFrame:
+    """Drop bars missing Open/High/Low/Close.
+
+    Yahoo often appends the current TW session with Close=NaN. Scoring that
+    unfinished candle makes every pattern miss; use the last complete bar.
+    """
+    if df is None or getattr(df, "empty", True):
+        return pd.DataFrame() if df is None else df
+    needed = [c for c in ("Open", "High", "Low", "Close") if c in df.columns]
+    if not needed:
+        return df
+    return df.loc[df[needed].notna().all(axis=1)].copy()
+
+
 def extract_ohlcv(data: pd.DataFrame | None, symbol: str) -> pd.DataFrame:
     if data is None or getattr(data, "empty", True):
         return pd.DataFrame()
 
+    frame = pd.DataFrame()
     if isinstance(data.columns, pd.MultiIndex):
         level0 = data.columns.get_level_values(0)
         if symbol in level0:
-            frame = data[symbol]
-            return frame.copy() if isinstance(frame, pd.DataFrame) else pd.DataFrame()
-        last_level = data.columns.nlevels - 1
-        if symbol in data.columns.get_level_values(last_level):
-            try:
-                return data.xs(symbol, axis=1, level=last_level).copy()
-            except (KeyError, ValueError):
-                return pd.DataFrame()
-        return pd.DataFrame()
-
-    needed = {"Open", "High", "Low", "Close"}
-    if needed.issubset(set(data.columns)):
-        return data.copy()
-    return pd.DataFrame()
+            extracted = data[symbol]
+            frame = extracted.copy() if isinstance(extracted, pd.DataFrame) else pd.DataFrame()
+        else:
+            last_level = data.columns.nlevels - 1
+            if symbol in data.columns.get_level_values(last_level):
+                try:
+                    frame = data.xs(symbol, axis=1, level=last_level).copy()
+                except (KeyError, ValueError):
+                    frame = pd.DataFrame()
+    else:
+        needed = {"Open", "High", "Low", "Close"}
+        if needed.issubset(set(data.columns)):
+            frame = data.copy()
+    return drop_incomplete_ohlc(frame)
 
 
 def bar_dates(df: pd.DataFrame) -> list[date]:

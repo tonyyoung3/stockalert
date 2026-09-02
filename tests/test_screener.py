@@ -63,10 +63,13 @@ class EmptyScreenerNotifyTests(unittest.TestCase):
 
     def test_post_screener_results_does_not_send_empty_when_hits_exist(self):
         client = FakeClient()
-        with patch(
-            "notify.screener.post_alert_charts",
-            return_value=[(Mock(), "上影線反轉")],
-        ) as charts, patch(
+
+        def fake_charts(_client, _channel, _heading, hits, _profiles, pattern_title):
+            if not hits:
+                return []
+            return [(Mock(), pattern_title)]
+
+        with patch("notify.screener.post_alert_charts", side_effect=fake_charts) as charts, patch(
             "notify.screener.format_digest",
             return_value="今日訊號 1 檔",
         ):

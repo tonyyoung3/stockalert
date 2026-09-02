@@ -1,13 +1,14 @@
 import yfinance as yf
 import pandas as pd
 import os
+from collections import Counter
 from pathlib import Path
 import mplfinance as mpf
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 from alertsdb import init_db, save_alert, has_alert
 from data.paths import repo_file
-from data.prices import AUTO_ADJUST, extract_ohlcv, last_close
+from data.prices import AUTO_ADJUST, extract_ohlcv, last_close, drop_incomplete_ohlc, patch_incomplete_closes
 from notify.company_info import (
     CompanyProfile,
     fetch_profiles,
@@ -158,6 +159,13 @@ def post_alert_charts(
     return posted
 
 
+def pick_scan_date(dates: list[str]) -> str | None:
+    """Most common last-complete-bar date so Slack names the session actually scored."""
+    if not dates:
+        return None
+    return Counter(dates).most_common(1)[0][0]
+
+
 def format_empty_screener_message(
     signal_date: str | None = None,
     skipped_duplicates: int = 0,
@@ -230,25 +238,29 @@ def main():
     )
     upper_shadow_results = []
     inside_day_results = []
-    scan_date = None
+    last_bar_dates: list[str] = []
     skipped_duplicates = 0
+    skipped_short = 0
 
     # 建立儲存圖表的資料夾
     charts_dir = Path("charts")
     charts_dir.mkdir(exist_ok=True)
 
+    raw_frames: dict[str, pd.DataFrame] = {}
+    for ticker in taiwan_stocks:
+        raw_frames[ticker] = extract_ohlcv(data, ticker, complete_only=False)
+    raw_frames = patch_incomplete_closes(raw_frames)
+
     for ticker in taiwan_stocks:
         try:
-            # yfinance 在多股票下載時，會將 ticker 作為列名
-            df = extract_ohlcv(data, ticker)
+            df = drop_incomplete_ohlc(raw_frames.get(ticker))
             if df.empty or len(df) < 22:
-                # print(f"Skipping {ticker} due to insufficient data ({len(df)} days)")
+                skipped_short += 1
                 continue
 
             ticker_clean = ticker.split('.')[0]  # 去除 .TW/.TWO
             signal_date = str(last_bar_date(df))
-            if scan_date is None:
-                scan_date = signal_date
+            last_bar_dates.append(signal_date)
             pattern = classify_pattern(df)
             if not pattern:
                 continue
@@ -279,6 +291,17 @@ def main():
 
         except Exception as e:
             print(f"Error processing {ticker}: {e}")
+
+    scan_date = pick_scan_date(last_bar_dates)
+    unique_dates = ", ".join(sorted(set(last_bar_dates)))
+    print(
+        f"\nScan complete: {len(taiwan_stocks)} tickers, "
+        f"{skipped_short} insufficient data, "
+        f"{skipped_duplicates} already notified, "
+        f"{len(upper_shadow_results)} upper-shadow, "
+        f"{len(inside_day_results)} inside-day"
+        + (f"; last complete bar {unique_dates}" if unique_dates else "")
+    )
 
     # 顯示結果 + 發 Slack
     slack_token = os.environ.get("SLACK_BOT_TOKEN")

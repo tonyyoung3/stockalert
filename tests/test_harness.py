@@ -54,6 +54,16 @@ class HarnessTests(unittest.TestCase):
         self.assertNotIsInstance(flat.columns, pd.MultiIndex)
         self.assertEqual(float(flat["Close"].iloc[-1]), 3.0)
 
+    def test_flatten_drops_incomplete_last_bar(self):
+        df = _upper_shadow_only()
+        extra = df.iloc[[-1]].copy()
+        extra.index = extra.index + pd.Timedelta(days=1)
+        extra["Close"] = float("nan")
+        incomplete = pd.concat([df, extra])
+        flat = flatten_ohlcv(incomplete)
+        self.assertEqual(len(flat), len(df))
+        self.assertEqual(float(flat["Close"].iloc[-1]), float(df["Close"].iloc[-1]))
+
     def test_list_and_summary_tools(self):
         self._seed()
         tools = default_tools()

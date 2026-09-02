@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import Mock, patch
 
-from notify.screener import format_empty_screener_message, post_screener_results
+from notify.screener import format_empty_screener_message, pick_scan_date, post_screener_results
 
 
 class FakeClient:
@@ -29,6 +29,13 @@ class EmptyScreenerNotifyTests(unittest.TestCase):
         self.assertEqual(
             format_empty_screener_message("2026-09-01", skipped_duplicates=3),
             "今日台股篩選（2026-09-01）沒有新的符合標的（先前已通知）。",
+        )
+
+    def test_pick_scan_date_uses_most_common_complete_bar(self):
+        self.assertIsNone(pick_scan_date([]))
+        self.assertEqual(
+            pick_scan_date(["2026-09-01", "2026-09-02", "2026-09-02"]),
+            "2026-09-02",
         )
 
     def test_post_screener_results_sends_empty_notice(self):

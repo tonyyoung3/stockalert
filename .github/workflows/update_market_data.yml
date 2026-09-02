@@ -73,7 +73,7 @@ jobs:
           retention-days: 90
 
       - name: Notify Slack on failure
-        if: failure()
+        if: failure() || cancelled()
         env:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}

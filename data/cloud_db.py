@@ -29,7 +29,10 @@ from data.paths import REPO_ROOT
 log = logging.getLogger(__name__)
 
 IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+# libSQL HTTP treats executemany as one request per row. Multi-value INSERT
+# keeps each round-trip to one chunk. Turso/SQLite default max is 999 vars.
 CHUNK = 400
+MAX_VARS = 900
 DEFAULT_FILES = (REPO_ROOT / "twse_data.db", REPO_ROOT / "us_data.db")
 ALERT_FILES = (REPO_ROOT / "screener.db",)
 SINCE_COLUMNS = ("trade_date", "alert_date", "check_date")
@@ -93,13 +96,67 @@ def _since_column(local: sqlite3.Connection, table: str) -> str | None:
     return None
 
 
+def _remote_date_counts(remote, table: str, date_col: str, since: str | None) -> dict:
+    table = _ident(table)
+    date_col = _ident(date_col)
+    sql = f"SELECT {date_col}, COUNT(*) FROM {table}"
+    params: tuple = ()
+    if since:
+        sql += f" WHERE {date_col} >= ?"
+        params = (since,)
+    sql += f" GROUP BY 1"
+    try:
+        return {row[0]: int(row[1]) for row in remote.execute(sql, params).fetchall()}
+    except Exception:
+        return {}
+
+
+def _skip_complete_dates(
+    rows: list,
+    date_idx: int,
+    remote_counts: dict,
+) -> tuple[list, int]:
+    """Drop dates Turso already has in full, but always re-upsert the latest day."""
+    if not rows or not remote_counts:
+        return rows, 0
+    local_counts: dict = {}
+    for row in rows:
+        local_counts[row[date_idx]] = local_counts.get(row[date_idx], 0) + 1
+    latest = max(d for d in local_counts if d is not None)
+    skip = {
+        day for day, n in local_counts.items()
+        if day != latest and remote_counts.get(day, 0) >= n
+    }
+    if not skip:
+        return rows, 0
+    return [row for row in rows if row[date_idx] not in skip], len(skip)
+
+
+def _insert_chunks(remote, table: str, cols: list[str], rows: list) -> None:
+    if not rows:
+        return
+    table = _ident(table)
+    col_sql = ",".join(_ident(c) for c in cols)
+    n_cols = len(cols)
+    row_ph = "(" + ",".join("?" * n_cols) + ")"
+    chunk_rows = max(1, min(CHUNK, MAX_VARS // max(n_cols, 1)))
+    for i in range(0, len(rows), chunk_rows):
+        chunk = rows[i:i + chunk_rows]
+        flat = [value for row in chunk for value in row]
+        remote.execute(
+            f"INSERT OR REPLACE INTO {table} ({col_sql}) VALUES "
+            + ",".join(row_ph for _ in chunk),
+            flat,
+        )
+        remote.commit()
+
+
 def copy_table(local: sqlite3.Connection, remote, table: str, since: str | None) -> int:
     table = _ident(table)
     cols = _columns(local, table)
     if not cols:
         return 0
     col_sql = ",".join(cols)
-    placeholders = ",".join("?" * len(cols))
     sql = f"SELECT {col_sql} FROM {table}"
     params: tuple = ()
     date_col = _since_column(local, table) if since else None
@@ -107,10 +164,16 @@ def copy_table(local: sqlite3.Connection, remote, table: str, since: str | None)
         sql += f" WHERE {_ident(date_col)} >= ?"
         params = (since,)
     rows = local.execute(sql, params).fetchall()
-    insert = f"INSERT OR REPLACE INTO {table} ({col_sql}) VALUES ({placeholders})"
-    for i in range(0, len(rows), CHUNK):
-        remote.executemany(insert, rows[i:i + CHUNK])
-        remote.commit()
+    if since and date_col:
+        skipped, n_dates = _skip_complete_dates(
+            rows, cols.index(date_col),
+            _remote_date_counts(remote, table, date_col, since),
+        )
+        if n_dates:
+            log.info("%s: skip %s already-synced dates (%s -> %s rows)",
+                     table, n_dates, len(rows), len(skipped))
+        rows = skipped
+    _insert_chunks(remote, table, cols, rows)
     return len(rows)
 
 

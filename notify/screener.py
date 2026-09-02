@@ -157,6 +157,56 @@ def post_alert_charts(
         posted.append((profile, pattern_title))
     return posted
 
+
+def format_empty_screener_message(
+    signal_date: str | None = None,
+    skipped_duplicates: int = 0,
+) -> str:
+    when = f"（{signal_date}）" if signal_date else ""
+    if skipped_duplicates:
+        return f"今日台股篩選{when}沒有新的符合標的（先前已通知）。"
+    return f"今日台股篩選{when}沒有符合的標的。"
+
+
+def post_screener_results(
+    client,
+    channel: str,
+    upper_shadow_results: list[tuple[str, Path]],
+    inside_day_results: list[tuple[str, Path]],
+    profiles: dict[str, CompanyProfile],
+    signal_date: str | None = None,
+    skipped_duplicates: int = 0,
+) -> list[tuple[CompanyProfile, str]]:
+    """Post charts + digest, or a no-hit notice so a quiet day is not silent."""
+    if not upper_shadow_results and not inside_day_results:
+        send_to_slack(
+            client,
+            channel,
+            format_empty_screener_message(signal_date, skipped_duplicates),
+        )
+        return []
+
+    posted: list[tuple[CompanyProfile, str]] = []
+    posted += post_alert_charts(
+        client,
+        channel,
+        "--- 🔺 台股篩選結果：上影線反轉 (Upper Shadow Reversal) ---",
+        upper_shadow_results,
+        profiles,
+        "上影線反轉",
+    )
+    posted += post_alert_charts(
+        client,
+        channel,
+        "--- 📦 台股篩選結果：Inside Day ---",
+        inside_day_results,
+        profiles,
+        "Inside Day",
+    )
+    if posted:
+        send_to_slack(client, channel, format_digest(posted))
+    return posted
+
 # -----------------------------
 # 主要執行邏輯
 # -----------------------------
@@ -180,7 +230,9 @@ def main():
     )
     upper_shadow_results = []
     inside_day_results = []
-    
+    scan_date = None
+    skipped_duplicates = 0
+
     # 建立儲存圖表的資料夾
     charts_dir = Path("charts")
     charts_dir.mkdir(exist_ok=True)
@@ -194,15 +246,18 @@ def main():
                 continue
 
             ticker_clean = ticker.split('.')[0]  # 去除 .TW/.TWO
+            signal_date = str(last_bar_date(df))
+            if scan_date is None:
+                scan_date = signal_date
             pattern = classify_pattern(df)
             if not pattern:
                 continue
 
             # Use the last candle date, not the runner's calendar date, so
             # weekend/holiday reruns do not create a second alert for the same bar.
-            signal_date = str(last_bar_date(df))
             if has_alert(ticker_clean, pattern, signal_date):
                 print(f"  -> Skip duplicate {pattern} for {ticker_clean} on {signal_date}")
+                skipped_duplicates += 1
                 continue
 
             price = last_close(df, ticker)
@@ -236,30 +291,21 @@ def main():
         hit_tickers = [t for t, _ in upper_shadow_results] + [t for t, _ in inside_day_results]
         profiles = fetch_profiles(hit_tickers)
         maybe_enrich_themes(list(profiles.values()))
-
-        posted: list[tuple[CompanyProfile, str]] = []
-        posted += post_alert_charts(
+        post_screener_results(
             client,
             slack_channel,
-            "--- 🔺 台股篩選結果：上影線反轉 (Upper Shadow Reversal) ---",
             upper_shadow_results,
-            profiles,
-            "上影線反轉",
-        )
-        posted += post_alert_charts(
-            client,
-            slack_channel,
-            "--- 📦 台股篩選結果：Inside Day ---",
             inside_day_results,
             profiles,
-            "Inside Day",
+            signal_date=scan_date,
+            skipped_duplicates=skipped_duplicates,
         )
-        if posted:
-            send_to_slack(client, slack_channel, format_digest(posted))
     else:
         print("\nSLACK_BOT_TOKEN or SLACK_CHANNEL not set; skipping Slack notification.")
         print("上影線反轉篩選結果:", [item[0] for item in upper_shadow_results])
         print("Inside Day篩選結果:", [item[0] for item in inside_day_results])
+        if not upper_shadow_results and not inside_day_results:
+            print(format_empty_screener_message(scan_date, skipped_duplicates))
 
 if __name__ == "__main__":
     main()

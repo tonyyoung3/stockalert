@@ -10,11 +10,14 @@ from data import cloud_db
 class FakeRemote:
     def __init__(self):
         self.db = sqlite3.connect(":memory:")
+        self.sqls: list[str] = []
 
     def execute(self, sql, params=()):
+        self.sqls.append(sql)
         return self.db.execute(sql, params)
 
     def executemany(self, sql, seq):
+        self.sqls.append(sql)
         return self.db.executemany(sql, seq)
 
     def commit(self):
@@ -83,6 +86,43 @@ class PushTests(unittest.TestCase):
         cloud_db.push_file(self.path, self.remote, since="2026-08-15")
         n = self.remote.execute("SELECT COUNT(*) FROM taiex_daily").fetchone()[0]
         self.assertEqual(n, 2)
+
+    def test_second_push_skips_complete_older_dates(self):
+        first = cloud_db.push_file(self.path, self.remote, since="2026-08-15")
+        self.assertEqual(first["taiex_daily"], 2)
+        second = cloud_db.push_file(self.path, self.remote, since="2026-08-15")
+        # latest day is always re-upserted; 2026-08-20 is already complete
+        self.assertEqual(second["taiex_daily"], 1)
+        days = [r[0] for r in self.remote.execute(
+            "SELECT trade_date FROM taiex_daily ORDER BY 1")]
+        self.assertEqual(days, ["2026-08-20", "2026-08-29"])
+
+    def test_incomplete_older_date_is_reuploaded(self):
+        cloud_db.push_file(self.path, self.remote, since="2026-08-15")
+        self.remote.execute("DELETE FROM taiex_daily WHERE trade_date='2026-08-20'")
+        self.remote.commit()
+        counts = cloud_db.push_file(self.path, self.remote, since="2026-08-15")
+        self.assertEqual(counts["taiex_daily"], 2)
+        days = [r[0] for r in self.remote.execute(
+            "SELECT trade_date FROM taiex_daily ORDER BY 1")]
+        self.assertEqual(days, ["2026-08-20", "2026-08-29"])
+
+    def test_insert_uses_one_statement_per_chunk(self):
+        conn = sqlite3.connect(self.path)
+        conn.executemany(
+            "INSERT INTO taiex_daily VALUES (?,?,?,?,?)",
+            [(f"2026-08-{i:02d}", 1, 1, 1, 1) for i in range(2, 12)],
+        )
+        conn.commit()
+        conn.close()
+        remote = FakeRemote()
+        cloud_db.push_file(self.path, remote, since="2026-08-01")
+        inserts = [
+            sql for sql in remote.sqls
+            if sql.lstrip().upper().startswith("INSERT") and "taiex_daily" in sql
+        ]
+        self.assertEqual(len(inserts), 1)
+        self.assertGreater(inserts[0].count("(?"), 1)
 
     def test_missing_file_returns_empty(self):
         self.assertEqual(

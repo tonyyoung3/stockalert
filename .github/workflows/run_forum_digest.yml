@@ -9,6 +9,9 @@ on:
 
 jobs:
   digest:
+    # Cron only runs on the default branch. Keep the guard so a dispatch from
+    # this PR's branch cannot post to Slack until the workflow is on main.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     concurrency:

@@ -1,6 +1,6 @@
 # stockalert
 
-台股型態篩選、固定持有期績效、PTT 週報，以及指數／外資收集。
+台股型態篩選、固定持有期績效、PTT / Reddit 週報，以及指數／外資收集。
 
 對外兩張臉是 **Slack 通知** 跟 **本地網站**。共用層是行情、規則、績效；SQLite 檔仍在 repo 根目錄。
 
@@ -12,6 +12,7 @@ data/       價格解析、Turso 同步、repo 路徑
 signals/    型態規則（上影線 / Inside Day）
 alertsdb/   screener.db
 ptt/        股板週報
+reddit/     Reddit 投資想法週報
 harness/    唯讀查詢迴圈
 ```
 
@@ -27,6 +28,8 @@ cp .env.example .env
 python -m notify.screener
 python -m notify.performance_checker
 python -m ptt.ptt_stock
+python -m reddit.ideas             # Reddit 投資想法週報
+python -m notify.daily_digest      # PTT + Reddit 今日重點打 Slack（--dry-run 只印）
 python -m notify.interactive_bot   # 需要長期主機
 python -m web.dashboard            # 本地 http://localhost:8765；Cloud Run 見下方
 ```
@@ -45,6 +48,8 @@ Slack bot 預設只認 ticker / help。設 `HARNESS_ENABLED=1` 且有 API key，
 ```bash
 python -m unittest discover -s tests -v
 ```
+
+PTT 股板週報跟 Reddit 投資想法週報都是本機整理、印到 stdout（可加 `--json`）。`python -m notify.daily_digest` 抓近 1 天重點（PTT 題材／標的／盤後閒聊，Reddit DD）打到同一個 Slack channel。GitHub Actions 每天 **22:00 台灣時間** 跑（排程只在 `main`；沒 merge 不會送）。Reddit 預設看 r/SecurityAnalysis、r/ValueInvesting、r/investing、r/stocks、r/wallstreetbets；WSB 只收 DD / 研究類 flair。雲端 IP 常被 Reddit 擋（403），會改走 [Arctic Shift](https://arctic-shift.photon-reddit.com) 封存。分點買賣超資料源記在 `TODO.md`，還沒做。
 
 ## 台股資料收集器
 

@@ -2,8 +2,9 @@ name: Run screener on schedule
 
 on:
   schedule:
-    # Runs daily at 9 PM Taiwan time (UTC+8) = 1 PM UTC
+    # 21:00 Taiwan (UTC+8). GitHub often delays cron by hours; keep a backup.
     - cron: '0 13 * * *'
+    - cron: '0 16 * * *'
   workflow_dispatch: {}
 
 jobs:

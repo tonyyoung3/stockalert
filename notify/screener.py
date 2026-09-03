@@ -80,40 +80,31 @@ def create_stock_chart(df, ticker, filename, pattern_name, pattern_indices):
 # -----------------------------
 # Slack 通知
 # -----------------------------
-def upload_file_and_get_public_url(client, channel, file_path, title):
-    """上傳檔案到 Slack 並取得公開分享的 URL"""
+def upload_chart(client, channel: str, file_path: str, title: str, comment: str) -> bool:
+    """Post a chart into the channel. Bot tokens cannot call files.sharedPublicURL."""
     try:
-        # 1. 上傳檔案
-        result = client.files_upload_v2(
+        client.files_upload_v2(
             channel=channel,
             file=file_path,
             title=title,
+            initial_comment=comment,
         )
-        file_id = result["file"]["id"]
-
-        # 2. 公開分享檔案以取得 URL
-        # 注意：這會讓任何擁有連結的人都能看到圖片。
-        # 如果你的 Slack Workspace 有限制，這一步可能需要管理員權限或調整設定。
-        share_result = client.files_sharedPublicURL(file=file_id)
-        if share_result.get("ok"):
-            # URL 在 share_result['file']['permalink_public']
-            # 我們需要從中提取直接的圖片 URL
-            # 格式通常是： https://files.slack.com/files-pri/T...-F.../download/filename.png
-            return share_result['file']['permalink_public']
-        else:
-            print(f"Error making file public: {share_result.get('error')}")
-            return None
-
+        return True
     except SlackApiError as e:
-        print(f"Error uploading or sharing file: {e.response['error']}")
-        return None
+        err = e.response.get("error") if getattr(e, "response", None) else str(e)
+        print(f"Error uploading file: {err}")
+        return False
+
 
 def send_to_slack(client, channel, text=None, blocks=None):
-    """傳送訊息和檔案到 Slack"""
+    """傳送訊息到 Slack。失敗只記 log，不中斷篩選。"""
     try:
         client.chat_postMessage(channel=channel, text=text, blocks=blocks)
+        return True
     except SlackApiError as e:
-        print(f"Error sending to Slack: {e.response['error']}")
+        err = e.response.get("error") if getattr(e, "response", None) else str(e)
+        print(f"Error sending to Slack: {err}")
+        return False
 
 
 def chart_blocks(caption: str, image_url: str, title: str) -> list[dict]:
@@ -145,16 +136,12 @@ def post_alert_charts(
     send_to_slack(client, channel, heading)
     for ticker, chart_path in hits:
         profile = profiles.get(ticker) or CompanyProfile(ticker=ticker, symbol=ticker)
-        public_url = upload_file_and_get_public_url(client, channel, str(chart_path), f"{ticker} Chart")
-        if not public_url:
-            continue
         caption = format_slack_caption(profile)
-        send_to_slack(
-            client,
-            channel,
-            text=caption,
-            blocks=chart_blocks(caption, public_url, f"{ticker} - {pattern_title}"),
+        uploaded = upload_chart(
+            client, channel, str(chart_path), f"{ticker} Chart", caption
         )
+        if not uploaded:
+            send_to_slack(client, channel, text=caption)
         posted.append((profile, pattern_title))
     return posted
 

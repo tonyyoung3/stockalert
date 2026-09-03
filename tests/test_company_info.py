@@ -56,16 +56,15 @@ class CompanyInfoTests(unittest.TestCase):
 
     def test_post_alert_charts_includes_theme(self):
         posted_messages = []
+        uploads = []
 
         class FakeClient:
             def chat_postMessage(self, **kwargs):
                 posted_messages.append(kwargs)
 
             def files_upload_v2(self, **kwargs):
+                uploads.append(kwargs)
                 return {"file": {"id": "F1"}}
-
-            def files_sharedPublicURL(self, **kwargs):
-                return {"ok": True, "file": {"permalink_public": "https://example.com/chart.png"}}
 
         profile = CompanyProfile(ticker="2330", symbol="2330.TW", name="TSMC", industry="Semiconductors", theme="先進封裝")
         posted = post_alert_charts(
@@ -77,8 +76,33 @@ class CompanyInfoTests(unittest.TestCase):
             "上影線反轉",
         )
         self.assertEqual(len(posted), 1)
-        captions = [m.get("text") for m in posted_messages]
-        self.assertTrue(any(c and "TSMC" in c and "先進封裝" in c for c in captions))
+        self.assertTrue(any("先進封裝" in (u.get("initial_comment") or "") for u in uploads))
+        self.assertEqual(posted_messages[0]["text"], "heading")
+
+    def test_post_alert_charts_falls_back_to_text(self):
+        from slack_sdk.errors import SlackApiError
+
+        posted_messages = []
+
+        class FakeClient:
+            def chat_postMessage(self, **kwargs):
+                posted_messages.append(kwargs)
+
+            def files_upload_v2(self, **kwargs):
+                raise SlackApiError("fail", {"error": "not_allowed_token_type"})
+
+        profile = CompanyProfile(ticker="2308", symbol="2308.TW", name="Delta", theme="電源")
+        posted = post_alert_charts(
+            FakeClient(),
+            "C123",
+            "heading",
+            [("2308", "unused.png")],
+            {"2308": profile},
+            "上影線反轉",
+        )
+        self.assertEqual(len(posted), 1)
+        texts = [m.get("text") for m in posted_messages]
+        self.assertTrue(any(t and "2308" in t and "電源" in t for t in texts))
 
     def test_chart_blocks_use_caption(self):
         blocks = chart_blocks("標的: *2330*  TSMC", "https://example.com/x.png", "2330 - 上影線反轉")

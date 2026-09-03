@@ -2,7 +2,9 @@ name: Daily PTT and Reddit digest
 
 on:
   schedule:
-    # 22:00 Taiwan; backup 01:00 if GitHub skips the first slot
+    # 22:00 Taiwan; backup 01:00 if GitHub skips the first slot.
+    # Both slots usually fire (cron is delayed, not skipped). daily_digest
+    # no-ops the second post by reading Slack history for this Taiwan digest.
     - cron: '0 14 * * *'
     - cron: '0 17 * * *'
   workflow_dispatch: {}

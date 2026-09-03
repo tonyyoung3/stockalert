@@ -12,13 +12,20 @@ from __future__ import annotations
 import argparse
 import os
 import traceback
+from datetime import date, datetime, timedelta, timezone
 from typing import Callable
+from zoneinfo import ZoneInfo
 
 from notify import notify_job
 from ptt import ptt_stock
 from reddit import ideas as reddit_ideas
 
 SLACK_LIMIT = 3500
+TAIPEI = ZoneInfo("Asia/Taipei")
+# 22:00 Taiwan is the primary slot; 01:00 is the next calendar morning.
+# Hours before noon still belong to last night's digest so the backup no-ops.
+DIGEST_MORNING_CUTOFF_HOUR = 12
+DIGEST_HEADERS = ("*PTT 股板今日重點*", "*Reddit 投資想法今日重點*")
 
 
 def slack_link(url: str, title: str) -> str:
@@ -177,6 +184,86 @@ def collect_reddit_digest(
     return digest, used, subs
 
 
+def taiwan_now(now: datetime | None = None) -> datetime:
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    return now.astimezone(TAIPEI)
+
+
+def digest_date(now: datetime | None = None) -> date:
+    """Taiwan date this nightly digest belongs to.
+
+    Primary cron is 22:00 Taiwan; backup is 01:00 the next morning. GitHub
+    Actions date.today() is UTC; 01:00 Taiwan is 17:00 UTC of the previous
+    UTC date. Hours before noon still map to last night's Taipei date so
+    the two slots share one digest day.
+    """
+    current = taiwan_now(now)
+    if current.hour < DIGEST_MORNING_CUTOFF_HOUR:
+        return (current - timedelta(days=1)).date()
+    return current.date()
+
+
+def digest_window(now: datetime | None = None) -> tuple[datetime, datetime]:
+    """Slack history window for this digest date: Taipei midnight → now."""
+    current = taiwan_now(now)
+    day = digest_date(current)
+    start = datetime(day.year, day.month, day.day, tzinfo=TAIPEI)
+    return start, current
+
+
+def is_digest_message(text: str | None) -> bool:
+    body = text or ""
+    return any(header in body for header in DIGEST_HEADERS)
+
+
+def _slack_client(env: dict[str, str], client=None):
+    if client is not None:
+        return client
+    from slack_sdk import WebClient
+
+    return WebClient(token=(env.get("SLACK_BOT_TOKEN") or "").strip())
+
+
+def already_sent_digest(
+    client,
+    channel: str,
+    now: datetime | None = None,
+) -> bool:
+    """True only when Slack history shows today's Taiwan digest.
+
+    API errors, missing_scope, and empty history return False so a failed
+    check cannot hide a real miss. Callers must not run this on dry-run or
+    when Slack secrets are missing (those paths should not hit the network).
+    """
+    start, end = digest_window(now)
+    cursor = None
+    try:
+        for _ in range(5):
+            kwargs = {
+                "channel": channel,
+                "oldest": f"{start.timestamp():.0f}",
+                "latest": f"{end.timestamp():.0f}",
+                "inclusive": True,
+                "limit": 200,
+            }
+            if cursor:
+                kwargs["cursor"] = cursor
+            resp = client.conversations_history(**kwargs)
+            for msg in resp.get("messages") or []:
+                text = msg.get("text") if hasattr(msg, "get") else None
+                if is_digest_message(text if isinstance(text, str) else None):
+                    return True
+            cursor = (resp.get("response_metadata") or {}).get("next_cursor")
+            if not cursor:
+                break
+    except Exception as exc:
+        print(f"  [warn] digest already-sent check failed ({exc}); will post")
+        return False
+    return False
+
+
 def post_messages(
     texts: list[str],
     *,
@@ -186,12 +273,8 @@ def post_messages(
     env = env if env is not None else os.environ
     if not notify_job.configured(env):
         return "skipped"
-    token = (env.get("SLACK_BOT_TOKEN") or "").strip()
     channel = (env.get("SLACK_CHANNEL") or "").strip()
-    if client is None:
-        from slack_sdk import WebClient
-
-        client = WebClient(token=token)
+    client = _slack_client(env, client)
     for text in texts:
         if text:
             client.chat_postMessage(channel=channel, text=text)
@@ -210,7 +293,21 @@ def run(
     collect_reddit: Callable | None = None,
     env: dict[str, str] | None = None,
     client=None,
+    now: datetime | None = None,
 ) -> list[str]:
+    env = env if env is not None else os.environ
+    slack = client
+    if dry_run:
+        print("dry-run: not contacting Slack (no already-sent check, no post)")
+    elif notify_job.configured(env):
+        channel = (env.get("SLACK_CHANNEL") or "").strip()
+        slack = _slack_client(env, client)
+        if already_sent_digest(slack, channel, now=now):
+            print("slack: already-sent")
+            return []
+    else:
+        print("slack: skipped (missing secrets; not treated as already-sent)")
+
     messages: list[str] = []
     if not skip_ptt:
         try:
@@ -235,9 +332,10 @@ def run(
         print(text)
         print()
     if dry_run:
-        print("dry-run: not posting to Slack")
         return messages
-    status = post_messages(messages, env=env, client=client)
+    if not notify_job.configured(env):
+        return messages
+    status = post_messages(messages, env=env, client=slack)
     print(f"slack: {status}")
     return messages
 

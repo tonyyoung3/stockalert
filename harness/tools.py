@@ -8,6 +8,7 @@ from typing import Any, Callable
 import pandas as pd
 
 from alertsdb import store as db
+from data.prices import drop_incomplete_ohlc
 from signals.patterns import classify_pattern
 
 ALLOWED_PATTERNS = frozenset({"upper_shadow_reversal", "inside_day"})
@@ -41,7 +42,7 @@ def flatten_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     if isinstance(out.columns, pd.MultiIndex):
         out.columns = [col[0] if isinstance(col, tuple) else col for col in out.columns]
-    return out
+    return drop_incomplete_ohlc(out)
 
 
 def _clamp_limit(value: Any, default: int = 20) -> int:

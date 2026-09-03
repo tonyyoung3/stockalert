@@ -98,27 +98,124 @@ def last_close(df: pd.DataFrame | None, symbol: str | None = None) -> float | No
     return _as_float(series.iloc[-1])
 
 
-def extract_ohlcv(data: pd.DataFrame | None, symbol: str) -> pd.DataFrame:
+def drop_incomplete_ohlc(df: pd.DataFrame | None) -> pd.DataFrame:
+    """Drop bars missing Open/High/Low/Close.
+
+    After market close Yahoo often keeps the TW daily bar but sets Close=NaN
+    until the official print lands. Callers should fill that Close from hourly
+    bars first; this drop is the fallback so a leftover NaN candle is not scored.
+    """
+    if df is None or getattr(df, "empty", True):
+        return pd.DataFrame() if df is None else df
+    needed = [c for c in ("Open", "High", "Low", "Close") if c in df.columns]
+    if not needed:
+        return df
+    return df.loc[df[needed].notna().all(axis=1)].copy()
+
+
+def extract_ohlcv(
+    data: pd.DataFrame | None,
+    symbol: str,
+    *,
+    complete_only: bool = True,
+) -> pd.DataFrame:
     if data is None or getattr(data, "empty", True):
         return pd.DataFrame()
 
+    frame = pd.DataFrame()
     if isinstance(data.columns, pd.MultiIndex):
         level0 = data.columns.get_level_values(0)
         if symbol in level0:
-            frame = data[symbol]
-            return frame.copy() if isinstance(frame, pd.DataFrame) else pd.DataFrame()
-        last_level = data.columns.nlevels - 1
-        if symbol in data.columns.get_level_values(last_level):
-            try:
-                return data.xs(symbol, axis=1, level=last_level).copy()
-            except (KeyError, ValueError):
-                return pd.DataFrame()
-        return pd.DataFrame()
+            extracted = data[symbol]
+            frame = extracted.copy() if isinstance(extracted, pd.DataFrame) else pd.DataFrame()
+        else:
+            last_level = data.columns.nlevels - 1
+            if symbol in data.columns.get_level_values(last_level):
+                try:
+                    frame = data.xs(symbol, axis=1, level=last_level).copy()
+                except (KeyError, ValueError):
+                    frame = pd.DataFrame()
+    else:
+        needed = {"Open", "High", "Low", "Close"}
+        if needed.issubset(set(data.columns)):
+            frame = data.copy()
+    return drop_incomplete_ohlc(frame) if complete_only else frame
 
-    needed = {"Open", "High", "Low", "Close"}
-    if needed.issubset(set(data.columns)):
-        return data.copy()
-    return pd.DataFrame()
+
+def taiwan_session_date(ts) -> date:
+    """Trading date in Taiwan. Naive timestamps are treated as UTC."""
+    stamp = pd.Timestamp(ts)
+    if stamp.tz is None:
+        stamp = stamp.tz_localize("UTC")
+    return stamp.tz_convert("Asia/Taipei").date()
+
+
+def last_hourly_close_by_session(hourly: pd.DataFrame | None) -> dict[date, float]:
+    """Last 1h close for each Taiwan session (13:00 UTC+8 bar includes 13:30 close)."""
+    series = close_series(hourly)
+    if series is None and hourly is not None and "Close" in getattr(hourly, "columns", []):
+        series = hourly["Close"]
+    if series is None:
+        return {}
+    out: dict[date, float] = {}
+    for ts, val in series.items():
+        px = _as_float(val)
+        if px is None:
+            continue
+        out[taiwan_session_date(ts)] = px
+    return out
+
+
+def fill_missing_closes(daily: pd.DataFrame | None, hourly: pd.DataFrame | None) -> pd.DataFrame:
+    """Fill NaN daily Close from the last hourly bar of the same Taiwan session."""
+    if daily is None or getattr(daily, "empty", True) or "Close" not in daily.columns:
+        return pd.DataFrame() if daily is None else daily
+    session_closes = last_hourly_close_by_session(hourly)
+    if not session_closes:
+        return daily
+    filled = daily.copy()
+    close_col = filled.columns.get_loc("Close")
+    for i, day in enumerate(bar_dates(filled)):
+        if _as_float(filled.iloc[i, close_col]) is not None:
+            continue
+        px = session_closes.get(day)
+        if px is None:
+            continue
+        filled.iat[i, close_col] = px
+    return filled
+
+
+def patch_incomplete_closes(
+    frames: dict[str, pd.DataFrame],
+    *,
+    chunk_size: int = 50,
+    download=None,
+) -> dict[str, pd.DataFrame]:
+    """Re-fetch 1h bars for tickers whose last daily Close is NaN and fill it in."""
+    need = [
+        ticker
+        for ticker, df in frames.items()
+        if df is not None
+        and not getattr(df, "empty", True)
+        and "Close" in df.columns
+        and _as_float(df["Close"].iloc[-1]) is None
+    ]
+    if not need:
+        return frames
+    fetch = download if download is not None else download_history
+    hourly_map = fetch(need, period="5d", interval="1h", chunk_size=chunk_size)
+    out = dict(frames)
+    filled_n = 0
+    for ticker in need:
+        hourly = hourly_map.get(ticker)
+        if hourly is None or getattr(hourly, "empty", True):
+            continue
+        patched = fill_missing_closes(out[ticker], hourly)
+        if _as_float(patched["Close"].iloc[-1]) is not None:
+            filled_n += 1
+        out[ticker] = patched
+    print(f"Filled {filled_n}/{len(need)} daily Close=NaN bars from hourly Yahoo data")
+    return out
 
 
 def bar_dates(df: pd.DataFrame) -> list[date]:
@@ -179,9 +276,10 @@ def _download(
     start: str | date | None = None,
     end: str | date | None = None,
     group_by: str | None = None,
+    interval: str = "1d",
 ):
     kwargs: dict = {
-        "interval": "1d",
+        "interval": interval,
         "threads": True,
         "progress": False,
         "auto_adjust": AUTO_ADJUST,
@@ -239,6 +337,7 @@ def download_history(
     start: str | date | None = None,
     end: str | date | None = None,
     period: str | None = None,
+    interval: str = "1d",
     chunk_size: int = 50,
 ) -> dict[str, pd.DataFrame]:
     frames: dict[str, pd.DataFrame] = {}
@@ -248,12 +347,25 @@ def download_history(
         symbols = [to_yahoo_symbol(t) for t in chunk]
         symbol_to_ticker = dict(zip(symbols, chunk))
         try:
-            data = _download(symbols, period=period, start=start, end=end, group_by="ticker")
+            data = _download(
+                symbols,
+                period=period,
+                start=start,
+                end=end,
+                group_by="ticker",
+                interval=interval,
+            )
         except Exception as exc:
             print(f"  [warn] History download failed ({chunk[0]}…): {exc}")
             for ticker, symbol in zip(chunk, symbols):
                 try:
-                    one = _download(symbol, period=period, start=start, end=end)
+                    one = _download(
+                        symbol,
+                        period=period,
+                        start=start,
+                        end=end,
+                        interval=interval,
+                    )
                     frame = extract_ohlcv(one, symbol)
                     if not frame.empty:
                         frames[ticker] = frame

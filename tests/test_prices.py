@@ -6,10 +6,14 @@ import pandas as pd
 from notify.performance_checker import evaluate_row
 from data.prices import (
     calendar_buffer_days,
+    drop_incomplete_ohlc,
     extract_ohlcv,
+    fill_missing_closes,
     horizon_exit,
     last_close,
+    patch_incomplete_closes,
     signal_index,
+    taiwan_session_date,
 )
 
 
@@ -37,6 +41,78 @@ class PricesTests(unittest.TestCase):
         )
         self.assertEqual(last_close(df, "2330.TW"), 12.5)
         self.assertFalse(extract_ohlcv(df, "2330.TW").empty)
+
+    def test_extract_ohlcv_drops_incomplete_last_bar(self):
+        idx = pd.bdate_range("2026-06-01", periods=4)
+        df = pd.DataFrame(
+            {
+                ("2330.TW", "Open"): [10.0, 11.0, 12.0, 13.0],
+                ("2330.TW", "High"): [10.5, 11.5, 12.5, 13.5],
+                ("2330.TW", "Low"): [9.5, 10.5, 11.5, 12.5],
+                ("2330.TW", "Close"): [10.0, 11.0, 12.5, float("nan")],
+                ("2330.TW", "Volume"): [1_000.0, 1_000.0, 1_000.0, 1_000.0],
+            },
+            index=idx,
+        )
+        frame = extract_ohlcv(df, "2330.TW")
+        self.assertEqual(len(frame), 3)
+        self.assertEqual(float(frame["Close"].iloc[-1]), 12.5)
+        self.assertEqual(frame.index[-1].date(), date(2026, 6, 3))
+
+    def test_drop_incomplete_ohlc_keeps_complete_bars(self):
+        df = _bars(n=3)
+        df.loc[df.index[-1], "Close"] = float("nan")
+        cleaned = drop_incomplete_ohlc(df)
+        self.assertEqual(len(cleaned), 2)
+        self.assertEqual(float(cleaned["Close"].iloc[-1]), 101.0)
+
+    def test_taiwan_session_date_from_utc_hourly(self):
+        self.assertEqual(
+            taiwan_session_date(pd.Timestamp("2026-09-02 05:00:00", tz="UTC")),
+            date(2026, 9, 2),
+        )
+
+    def test_fill_missing_closes_from_hourly_session(self):
+        daily = _bars(n=3)
+        daily.loc[daily.index[-1], "Close"] = float("nan")
+        session = daily.index[-1].date()
+        hourly = pd.DataFrame(
+            {
+                "Open": [102.0, 106.0],
+                "High": [104.0, 108.0],
+                "Low": [101.0, 105.0],
+                "Close": [103.0, 107.5],
+                "Volume": [1_000.0, 1_000.0],
+            },
+            index=pd.to_datetime(
+                [f"{session} 01:00:00", f"{session} 05:00:00"], utc=True
+            ),
+        )
+        filled = fill_missing_closes(daily, hourly)
+        self.assertEqual(float(filled["Close"].iloc[-1]), 107.5)
+        self.assertEqual(filled.index[-1].date(), session)
+
+    def test_patch_incomplete_closes_uses_hourly_download(self):
+        daily = _bars(n=3)
+        daily.loc[daily.index[-1], "Close"] = float("nan")
+        session = daily.index[-1].date()
+        hourly = pd.DataFrame(
+            {
+                "Open": [102.0],
+                "High": [108.0],
+                "Low": [101.0],
+                "Close": [107.5],
+                "Volume": [1_000.0],
+            },
+            index=pd.to_datetime([f"{session} 05:00:00"], utc=True),
+        )
+
+        def fake_download(tickers, **kwargs):
+            self.assertEqual(kwargs["interval"], "1h")
+            return {tickers[0]: hourly}
+
+        patched = patch_incomplete_closes({"2330.TW": daily}, download=fake_download)
+        self.assertEqual(float(patched["2330.TW"]["Close"].iloc[-1]), 107.5)
 
     def test_horizon_exit_is_trading_days_after_signal(self):
         df = _bars()

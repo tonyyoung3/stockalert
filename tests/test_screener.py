@@ -1,7 +1,15 @@
 import unittest
+from datetime import datetime, timezone
 from unittest.mock import Mock, patch
+from zoneinfo import ZoneInfo
 
-from notify.screener import format_empty_screener_message, pick_scan_date, post_screener_results
+from notify.screener import (
+    already_sent_screener,
+    format_empty_screener_message,
+    is_screener_message,
+    pick_scan_date,
+    post_screener_results,
+)
 
 
 class FakeClient:
@@ -93,6 +101,37 @@ class EmptyScreenerNotifyTests(unittest.TestCase):
         texts = [m.get("text") for m in client.messages]
         self.assertTrue(any(t == "今日訊號 1 檔" for t in texts))
         self.assertFalse(any(t and "沒有符合的標的" in t for t in texts))
+
+
+class ScreenerAlreadySentTests(unittest.TestCase):
+    def test_empty_notice_matches_scan_date(self):
+        self.assertTrue(
+            is_screener_message("今日台股篩選（2026-09-03）沒有符合的標的。", "2026-09-03")
+        )
+        self.assertFalse(
+            is_screener_message("今日台股篩選（2026-09-02）沒有符合的標的。", "2026-09-03")
+        )
+        self.assertTrue(is_screener_message("--- 🔺 台股篩選結果：上影線反轉 (Upper Shadow Reversal) ---"))
+
+    def test_already_sent_reads_slack_history(self):
+        client = Mock()
+        client.conversations_history.return_value = {
+            "ok": True,
+            "messages": [{"text": "今日台股篩選（2026-09-03）沒有符合的標的。"}],
+        }
+        now = datetime(2026, 9, 3, 17, 0, tzinfo=timezone.utc)
+        self.assertTrue(already_sent_screener(client, "C123", "2026-09-03", now=now))
+        kwargs = client.conversations_history.call_args.kwargs
+        oldest = datetime.fromtimestamp(float(kwargs["oldest"]), tz=timezone.utc)
+        self.assertEqual(
+            oldest.astimezone(ZoneInfo("Asia/Taipei")).isoformat(),
+            "2026-09-03T00:00:00+08:00",
+        )
+
+    def test_already_sent_false_on_history_error(self):
+        client = Mock()
+        client.conversations_history.side_effect = RuntimeError("missing_scope")
+        self.assertFalse(already_sent_screener(client, "C123", "2026-09-03"))
 
 
 if __name__ == "__main__":

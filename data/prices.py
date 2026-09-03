@@ -150,6 +150,57 @@ def taiwan_session_date(ts) -> date:
     return stamp.tz_convert("Asia/Taipei").date()
 
 
+def ticker_id(ticker: str) -> str:
+    return (ticker or "").split(".")[0].strip()
+
+
+def last_bar_needs_close(df: pd.DataFrame | None) -> bool:
+    return (
+        df is not None
+        and not getattr(df, "empty", True)
+        and "Close" in df.columns
+        and _as_float(df["Close"].iloc[-1]) is None
+    )
+
+
+def apply_official_bars(
+    frames: dict[str, pd.DataFrame],
+    official: dict[str, tuple] | None,
+) -> dict[str, pd.DataFrame]:
+    """Replace a last daily bar whose Close is NaN with TWSE/TPEX official OHLCV."""
+    if not official:
+        return frames
+    out = dict(frames)
+    filled_n = 0
+    need_n = 0
+    for ticker, df in frames.items():
+        if not last_bar_needs_close(df):
+            continue
+        need_n += 1
+        row = official.get(ticker_id(ticker))
+        if not row or row[6] is None:
+            continue
+        day = bar_dates(df)[-1]
+        if str(row[0]) != day.isoformat():
+            continue
+        patched = df.copy()
+        last = patched.index[-1]
+        open_, high, low, close, volume = row[3], row[4], row[5], row[6], row[7]
+        if "Open" in patched.columns and open_ is not None:
+            patched.at[last, "Open"] = open_
+        if "High" in patched.columns and high is not None:
+            patched.at[last, "High"] = high
+        if "Low" in patched.columns and low is not None:
+            patched.at[last, "Low"] = low
+        patched.at[last, "Close"] = close
+        if "Volume" in patched.columns and volume is not None:
+            patched.at[last, "Volume"] = volume
+        out[ticker] = patched
+        filled_n += 1
+    print(f"Filled {filled_n}/{need_n} daily Close=NaN bars from official TWSE/TPEX")
+    return out
+
+
 def last_hourly_close_by_session(hourly: pd.DataFrame | None) -> dict[date, float]:
     """Last 1h close for each Taiwan session (13:00 UTC+8 bar includes 13:30 close)."""
     series = close_series(hourly)
@@ -185,24 +236,48 @@ def fill_missing_closes(daily: pd.DataFrame | None, hourly: pd.DataFrame | None)
     return filled
 
 
+def _official_bars_for(frames: dict[str, pd.DataFrame], fetch_official=None) -> dict[str, tuple]:
+    days = {
+        bar_dates(df)[-1]
+        for df in frames.values()
+        if last_bar_needs_close(df)
+    }
+    if not days:
+        return {}
+    if fetch_official is None:
+        from market.collector import official_session_bars
+
+        fetch_official = official_session_bars
+    merged: dict[str, tuple] = {}
+    for day in sorted(days):
+        try:
+            merged.update(fetch_official(day) or {})
+        except Exception as exc:
+            print(f"  [warn] official bars {day} failed: {exc}")
+    return merged
+
+
 def patch_incomplete_closes(
     frames: dict[str, pd.DataFrame],
     *,
     chunk_size: int = 50,
     download=None,
+    official=None,
+    fetch_official=None,
 ) -> dict[str, pd.DataFrame]:
-    """Re-fetch 1h bars for tickers whose last daily Close is NaN and fill it in."""
-    need = [
-        ticker
-        for ticker, df in frames.items()
-        if df is not None
-        and not getattr(df, "empty", True)
-        and "Close" in df.columns
-        and _as_float(df["Close"].iloc[-1]) is None
-    ]
+    """Fill NaN daily Close from official TWSE/TPEX prints, then Yahoo 1h bars."""
+    if official is None:
+        official = _official_bars_for(frames, fetch_official=fetch_official)
+    frames = apply_official_bars(frames, official)
+    need = [ticker for ticker, df in frames.items() if last_bar_needs_close(df)]
     if not need:
         return frames
-    fetch = download if download is not None else download_history
+
+    def hourly_download(tickers, **kwargs):
+        kwargs.setdefault("complete_only", False)
+        return download_history(tickers, **kwargs)
+
+    fetch = download if download is not None else hourly_download
     hourly_map = fetch(need, period="5d", interval="1h", chunk_size=chunk_size)
     out = dict(frames)
     filled_n = 0
@@ -339,6 +414,7 @@ def download_history(
     period: str | None = None,
     interval: str = "1d",
     chunk_size: int = 50,
+    complete_only: bool = True,
 ) -> dict[str, pd.DataFrame]:
     frames: dict[str, pd.DataFrame] = {}
     unique = list(dict.fromkeys(tickers))
@@ -366,14 +442,14 @@ def download_history(
                         end=end,
                         interval=interval,
                     )
-                    frame = extract_ohlcv(one, symbol)
+                    frame = extract_ohlcv(one, symbol, complete_only=complete_only)
                     if not frame.empty:
                         frames[ticker] = frame
                 except Exception as exc2:
                     print(f"  [warn] Could not download {ticker}: {exc2}")
             continue
         for symbol, ticker in symbol_to_ticker.items():
-            frame = extract_ohlcv(data, symbol)
+            frame = extract_ohlcv(data, symbol, complete_only=complete_only)
             if frame.empty:
                 print(f"  [warn] No OHLCV for {ticker}")
                 continue

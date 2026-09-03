@@ -52,6 +52,14 @@ FAKE_MI_INDEX = {"stat": "OK", "tables": [
                "1,450.00", "1,465.00", "1,445.00", "1,460.00", "<p>+</p>", "10.00"],
               ["9999", "無成交股", "0", "0", "0", "--", "--", "--", "--", "<p> </p>", "0.00"]]}]}
 
+FAKE_TPEX_QUOTES = {"tables": [{
+    "title": "上櫃股票每日收盤行情(不含定價)",
+    "fields": ["代號", "名稱", "收盤 ", "漲跌", "開盤 ", "最高 ", "最低",
+               "成交股數  ", " 成交金額(元)"],
+    "data": [["6488", "環球晶", "500.00", "+10.00", "490.00", "505.00", "488.00",
+              "1,234,000", "600,000,000"]],
+}]}
+
 FAKE_STOCK_DAY = {"stat": "OK", "title": "115年07月 2330 台積電 各日成交資訊",
                   "fields": ["日期", "成交股數", "成交金額", "開盤價", "最高價",
                              "最低價", "收盤價", "漲跌價差", "成交筆數"],
@@ -179,6 +187,24 @@ class TestParseStockDaily(unittest.TestCase):
             rows = collector.fetch_stock_day_all(date(2026, 7, 31))
         self.assertIsNone(rows[1][3])
         self.assertEqual(rows[1][7], 0)
+
+    def test_tpex_daily_quotes(self):
+        with mock_get(FAKE_TPEX_QUOTES):
+            rows = collector.fetch_tpex_stock_day_all(date(2026, 9, 3))
+        self.assertEqual(
+            rows[0],
+            ("2026-09-03", "6488", "環球晶", 490.0, 505.0, 488.0, 500.0, 1234000, 600000000),
+        )
+        self.assertEqual(collector.roc_date(date(2026, 9, 3)), "115/09/03")
+
+    def test_official_session_bars_merges_twse_and_tpex(self):
+        bars = collector.official_session_bars(
+            date(2026, 9, 3),
+            fetch_twse=lambda _day: [("2026-09-03", "2330", "台積電", 1.0, 2.0, 1.0, 1.5, 1, 1)],
+            fetch_tpex=lambda _day: [("2026-09-03", "6488", "環球晶", 4.0, 5.0, 3.0, 4.5, 2, 2)],
+        )
+        self.assertEqual(bars["2330"][6], 1.5)
+        self.assertEqual(bars["6488"][6], 4.5)
 
     def test_stock_day_single(self):
         with mock_get(FAKE_STOCK_DAY):

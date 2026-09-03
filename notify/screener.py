@@ -2,7 +2,9 @@ import yfinance as yf
 import pandas as pd
 import os
 from collections import Counter
+from datetime import date, datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 import mplfinance as mpf
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
@@ -17,6 +19,13 @@ from notify.company_info import (
     maybe_enrich_themes,
 )
 from signals.patterns import classify_pattern, last_bar_date
+
+TAIPEI = ZoneInfo("Asia/Taipei")
+SCREENER_HIT_MARKERS = (
+    "台股篩選結果：上影線反轉",
+    "台股篩選結果：Inside Day",
+)
+SCREENER_EMPTY_MARKERS = ("沒有符合的標的", "沒有新的符合標的")
 
 def load_tickers_from_file(filename="taiwan_stocks.txt"):
     """從檔案讀取股票代碼列表"""
@@ -163,6 +172,58 @@ def format_empty_screener_message(
     return f"今日台股篩選{when}沒有符合的標的。"
 
 
+def is_screener_message(text: str | None, signal_date: str | None = None) -> bool:
+    body = text or ""
+    if any(marker in body for marker in SCREENER_HIT_MARKERS):
+        return True
+    if not signal_date:
+        return False
+    return signal_date in body and any(marker in body for marker in SCREENER_EMPTY_MARKERS)
+
+
+def already_sent_screener(
+    client,
+    channel: str,
+    signal_date: str | None,
+    now: datetime | None = None,
+) -> bool:
+    """True when Slack already has this session's screener post.
+
+    API errors return False so a failed check cannot hide a real miss.
+    """
+    if not signal_date:
+        return False
+    day = date.fromisoformat(signal_date)
+    start = datetime(day.year, day.month, day.day, tzinfo=TAIPEI)
+    end = now or datetime.now(timezone.utc)
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=timezone.utc)
+    cursor = None
+    try:
+        for _ in range(5):
+            kwargs = {
+                "channel": channel,
+                "oldest": f"{start.timestamp():.0f}",
+                "latest": f"{end.timestamp():.0f}",
+                "inclusive": True,
+                "limit": 200,
+            }
+            if cursor:
+                kwargs["cursor"] = cursor
+            resp = client.conversations_history(**kwargs)
+            for msg in resp.get("messages") or []:
+                text = msg.get("text") if hasattr(msg, "get") else None
+                if is_screener_message(text if isinstance(text, str) else None, signal_date):
+                    return True
+            cursor = (resp.get("response_metadata") or {}).get("next_cursor")
+            if not cursor:
+                break
+    except Exception as exc:
+        print(f"  [warn] screener already-sent check failed ({exc}); will post")
+        return False
+    return False
+
+
 def post_screener_results(
     client,
     channel: str,
@@ -296,20 +357,26 @@ def main():
 
     if slack_token and slack_channel:
         client = WebClient(token=slack_token)
-        print("\nSending results to Slack...")
-        
-        hit_tickers = [t for t, _ in upper_shadow_results] + [t for t, _ in inside_day_results]
-        profiles = fetch_profiles(hit_tickers)
-        maybe_enrich_themes(list(profiles.values()))
-        post_screener_results(
-            client,
-            slack_channel,
-            upper_shadow_results,
-            inside_day_results,
-            profiles,
-            signal_date=scan_date,
-            skipped_duplicates=skipped_duplicates,
-        )
+        if (
+            not upper_shadow_results
+            and not inside_day_results
+            and already_sent_screener(client, slack_channel, scan_date)
+        ):
+            print(f"Already posted screener notice for {scan_date}; skipping Slack")
+        else:
+            print("\nSending results to Slack...")
+            hit_tickers = [t for t, _ in upper_shadow_results] + [t for t, _ in inside_day_results]
+            profiles = fetch_profiles(hit_tickers)
+            maybe_enrich_themes(list(profiles.values()))
+            post_screener_results(
+                client,
+                slack_channel,
+                upper_shadow_results,
+                inside_day_results,
+                profiles,
+                signal_date=scan_date,
+                skipped_duplicates=skipped_duplicates,
+            )
     else:
         print("\nSLACK_BOT_TOKEN or SLACK_CHANNEL not set; skipping Slack notification.")
         print("上影線反轉篩選結果:", [item[0] for item in upper_shadow_results])

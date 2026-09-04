@@ -459,11 +459,13 @@ HTML = """<!DOCTYPE html>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.2.0"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
+html,body{max-width:100%;}
 body{font-family:-apple-system,"PingFang TC","Microsoft JhengHei",sans-serif;background:#f8f9fa;color:#212529;line-height:1.5}
-.wrap{max-width:1400px;margin:0 auto;padding:16px}
+.wrap{max-width:1400px;margin:0 auto;padding:16px;min-width:0}
 .sticky-top{position:sticky;top:0;z-index:50;background:#f8f9fa;padding-top:16px;margin-bottom:16px}
 header{background:#1a1a2e;color:#fff;padding:18px 24px;border-radius:8px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px}
 header h1{font-size:19px;font-weight:600}
+select,input,button{max-width:100%}
 select,input{padding:6px 10px;border:1px solid #ccc;border-radius:4px;font-size:13px}
 header select{background:rgba(255,255,255,.1);color:#fff;border-color:rgba(255,255,255,.25)}
 header select option{background:#1a1a2e}
@@ -473,11 +475,12 @@ header .days-hint{color:rgba(255,255,255,.72);max-width:340px;text-align:right;l
 .page-nav a{flex:1;min-width:72px;text-align:center;padding:10px 12px;border-radius:6px;text-decoration:none;color:#495057;font-size:14px;font-weight:600}
 .page-nav a.is-active{background:#1a1a2e;color:#fff}
 .page-nav a:focus-visible{outline:2px solid #4C72B0;outline-offset:2px}
+.page-section{min-width:0}
 .page-section[hidden]{display:none!important}
-.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:16px}
-.card{background:#fff;border-radius:8px;padding:18px 22px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,200px),1fr));gap:16px;margin-bottom:16px}
+.card{background:#fff;border-radius:8px;padding:18px 22px;box-shadow:0 1px 3px rgba(0,0,0,.08);min-width:0}
 .kpi-label{font-size:12px;color:#6c757d;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
-.kpi-value{font-size:26px;font-weight:700}
+.kpi-value{font-size:26px;font-weight:700;overflow-wrap:anywhere}
 .kpi-sub{font-size:13px;color:#6c757d}
 .kpi-warn{background:#fff8e8;box-shadow:0 0 0 2px #e0a800}
 .kpi-warn .kpi-value{color:#c0392b}
@@ -486,23 +489,26 @@ header .days-hint{color:rgba(255,255,255,.72);max-width:340px;text-align:right;l
 .fresh-banner.is-empty{background:#fdecea;border:2px solid #c0392b;color:#7b241c}
 .chart-empty{margin-top:8px;padding:20px 14px;background:#fdecea;border:1px solid #f5c2c0;border-radius:6px;color:#922b21;font-size:14px;font-weight:600;text-align:center}
 .pos{color:#c0392b}.neg{color:#27ae60} /* 台股習慣:紅漲綠跌 */
-.charts{display:grid;grid-template-columns:1fr;gap:16px;margin-bottom:16px}
-.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:16px;margin-bottom:16px}
+.charts{display:grid;grid-template-columns:1fr;gap:16px;margin-bottom:16px;min-width:0}
+.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:16px;margin-bottom:16px;min-width:0}
+.two>div{min-width:0}
 .card h3{font-size:14px;font-weight:600;margin-bottom:14px}
-.chart-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+.chart-head{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:14px;overflow:visible}
 .chart-head h3{margin:0}
 .hint{font-size:12px;color:#adb5bd}
 .reset-btn{padding:3px 10px;font-size:12px;border:1px solid #dee2e6;border-radius:4px;background:#fff;color:#6c757d;cursor:pointer}
 .reset-btn:hover{background:#f0f0f0}
-.top-range{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
-.ov-wrap{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
-.ov-search{position:relative}
-.ov-search input{width:260px}
-.ov-menu{position:absolute;z-index:30;left:0;right:0;top:calc(100% + 2px);background:#fff;border:1px solid #dee2e6;border-radius:4px;max-height:260px;overflow:auto;box-shadow:0 6px 16px rgba(0,0,0,.12)}
-.ov-menu button{display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%;text-align:left;padding:8px 10px;border:none;background:#fff;cursor:pointer;font-size:13px}
+.top-range{display:flex;align-items:center;flex-wrap:wrap;gap:8px;overflow:visible;min-width:0}
+.top-range input[type="date"]{min-width:9.5em;min-height:44px;flex:1 1 9.5em;font-size:16px}
+.ov-wrap{display:flex;align-items:center;flex-wrap:wrap;gap:8px;flex:1 1 220px;min-width:0}
+.ov-search{position:relative;flex:1 1 220px;min-width:0;max-width:100%}
+.ov-search input{width:100%;min-width:0}
+.ov-menu{position:absolute;z-index:60;left:0;right:0;top:calc(100% + 2px);background:#fff;border:1px solid #dee2e6;border-radius:4px;max-height:260px;overflow:auto;box-shadow:0 6px 16px rgba(0,0,0,.12);-webkit-overflow-scrolling:touch}
+.ov-menu button{display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%;text-align:left;padding:12px 10px;min-height:44px;border:none;background:#fff;cursor:pointer;font-size:13px;touch-action:manipulation}
 .ov-menu button:hover,.ov-menu button.active{background:#eef3fa}
 .ov-chip{font-size:11px;color:#6c757d;white-space:nowrap}
-canvas{max-height:320px}
+canvas{display:block;max-width:100%;max-height:320px}
+.table-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;max-width:100%}
 table{width:100%;border-collapse:collapse;font-size:13px}
 th{text-align:left;padding:8px 10px;border-bottom:2px solid #dee2e6;color:#6c757d;font-size:12px;white-space:nowrap}
 td{padding:8px 10px;border-bottom:1px solid #f0f0f0}
@@ -510,7 +516,7 @@ tr:hover td{background:#f8f9fa}
 .num{text-align:right;font-variant-numeric:tabular-nums}
 .search{display:flex;gap:8px;margin-bottom:14px;align-items:flex-start}
 .search button{padding:6px 16px;border:none;border-radius:4px;background:#4C72B0;color:#fff;cursor:pointer}
-.sid-search{position:relative;flex:1;max-width:360px}
+.sid-search{position:relative;flex:1;max-width:360px;min-width:0}
 .sid-search input{width:100%}
 .empty{color:#6c757d;font-size:13px;padding:8px 0}
 .ticker-link{color:#4C72B0;text-decoration:none;font-weight:600;cursor:pointer;background:none;border:none;padding:0;font:inherit}
@@ -518,20 +524,47 @@ tr:hover td{background:#f8f9fa}
 .assumptions{font-size:12px;color:#6c757d;margin-top:10px;line-height:1.45}
 .pat{font-size:12px;color:#495057}
 footer{text-align:center;color:#adb5bd;font-size:12px;padding:12px}
-@media(max-width:768px){.two{grid-template-columns:1fr}}
 .bt-grid{display:grid;grid-template-columns:1fr;gap:14px}
 .bt-box{border:1px solid #eee;border-radius:6px;padding:12px 14px}
 .bt-label{font-size:12px;font-weight:600;color:#6c757d;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px}
+details.bt-box>summary.bt-label{cursor:pointer;list-style:none;display:flex;justify-content:space-between;align-items:center;gap:8px;user-select:none}
+details.bt-box>summary.bt-label::-webkit-details-marker{display:none}
+details.bt-box>summary.bt-label::after{content:"▾";font-size:12px;color:#adb5bd;flex-shrink:0}
+details.bt-box:not([open])>summary.bt-label{margin-bottom:0}
+details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
 .bt-row{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px}
 .bt-row:last-child{margin-bottom:0}
 .bt-sub{font-size:12px;color:#6c757d;margin-right:2px}
 .bt-warn{margin-top:8px;padding:8px 10px;background:#fff3cd;border:1px solid #ffe08a;border-radius:4px;font-size:12.5px;color:#7a5c00}
-.bt-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:14px}
-.bt-kpi{background:#f8f9fa;border-radius:6px;padding:10px 14px}
+.bt-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,150px),1fr));gap:12px;margin-bottom:14px}
+.bt-kpi{background:#f8f9fa;border-radius:6px;padding:10px 14px;min-width:0}
 .bt-kpi .l{font-size:11px;color:#6c757d;text-transform:uppercase}
 .bt-kpi .v{font-size:20px;font-weight:700}
 .bt-section-title{font-size:13px;font-weight:600;margin:16px 0 8px}
 .bt-error{padding:12px;background:#fdecea;border:1px solid #f5c2c0;border-radius:4px;color:#a94442}
+@media(max-width:768px){
+  .wrap{padding:12px}
+  header{flex-direction:column;align-items:stretch;padding:14px 16px}
+  header h1{font-size:17px}
+  .days-ctl{align-items:stretch}
+  header .days-hint{text-align:left;max-width:none}
+  .page-nav a{min-width:0;padding:12px 8px}
+  .kpis,.two,.bt-kpis{grid-template-columns:1fr}
+  .card{padding:14px 14px}
+  .chart-head{flex-direction:column;align-items:stretch}
+  .ov-wrap,.top-range,.search{flex-direction:column;align-items:stretch;flex:none;width:100%}
+  .ov-search,.sid-search{max-width:none;width:100%;flex:none}
+  .ov-search input,.sid-search input,.search button,.top-range select,.top-range input[type="date"]{width:100%;min-width:0}
+  .top-range input[type="date"]{min-height:44px;font-size:16px}
+  select,input:not([type="checkbox"]):not([type="radio"]){font-size:16px}
+  .reset-btn,.search button,.page-nav a{min-height:44px}
+  .bt-row{flex-direction:column;align-items:stretch}
+  .bt-row select,.bt-row input[type="number"],.bt-row input:not([type="checkbox"]):not([type="radio"]){width:100%!important}
+  .bt-box label{display:block;margin:4px 0}
+  .bt-box label[style]{margin-left:0!important}
+  #bt-form button{width:100%;margin-left:0!important;min-height:44px}
+  .kpi-value{font-size:22px}
+}
 </style>
 </head>
 <body>
@@ -585,7 +618,7 @@ footer{text-align:center;color:#adb5bd;font-size:12px;padding:12px}
           <option value="day" selected>日 K</option>
           <option value="hour">小時 K</option>
         </select>
-        <span class="hint">拖曳平移 · 滾輪縮放　</span><button class="reset-btn" onclick="resetZoom('c-kline')">重置</button></span></div>
+        <span class="hint">拖曳／雙指縮放　</span><button class="reset-btn" onclick="resetZoom('c-kline')">重置</button></span></div>
     <canvas id="c-kline"></canvas></div>
   <div class="card">
     <div class="chart-head"><h3>加權指數走勢(每小時)</h3>
@@ -596,19 +629,19 @@ footer{text-align:center;color:#adb5bd;font-size:12px;padding:12px}
           <div id="ov-menu" class="ov-menu" hidden></div>
         </div>
         <button type="button" id="ov-clear" class="reset-btn" onclick="clearOverlay()" hidden>清除疊圖</button>
-        <span class="hint">拖曳平移 · 滾輪縮放　</span><button class="reset-btn" onclick="resetZoom('c-taiex')">重置</button></span></div>
+        <span class="hint">拖曳／雙指縮放　</span><button class="reset-btn" onclick="resetZoom('c-taiex')">重置</button></span></div>
     <canvas id="c-taiex"></canvas></div>
   <div class="card">
     <div class="chart-head"><h3>台指期未平倉:外資 / 投信 淨額口數 與比值</h3>
-      <span><span class="hint">虛線為外資÷投信比值(右軸,恆為負)　拖曳平移 · 滾輪縮放　</span><button class="reset-btn" onclick="resetZoom('c-taifex')">重置</button></span></div>
+      <span><span class="hint">虛線為外資÷投信比值(右軸,恆為負)　拖曳／雙指縮放　</span><button class="reset-btn" onclick="resetZoom('c-taifex')">重置</button></span></div>
     <canvas id="c-taifex"></canvas></div>
   <div class="card">
     <div class="chart-head"><h3>整體融資融券餘額</h3>
-      <span><span class="hint">拖曳平移 · 滾輪縮放　</span><button class="reset-btn" onclick="resetZoom('c-margin')">重置</button></span></div>
+      <span><span class="hint">拖曳／雙指縮放　</span><button class="reset-btn" onclick="resetZoom('c-margin')">重置</button></span></div>
     <canvas id="c-margin"></canvas></div>
   <div class="card">
     <div class="chart-head"><h3>外資每日合計買賣超(張)</h3>
-      <span><span class="hint">拖曳平移 · 滾輪縮放　</span><button class="reset-btn" onclick="resetZoom('c-net')">重置</button></span></div>
+      <span><span class="hint">拖曳／雙指縮放　</span><button class="reset-btn" onclick="resetZoom('c-net')">重置</button></span></div>
     <canvas id="c-net"></canvas></div>
 </section>
 
@@ -639,7 +672,7 @@ footer{text-align:center;color:#adb5bd;font-size:12px;padding:12px}
 <div id="section-stock" class="page-section" role="tabpanel" aria-labelledby="tab-stock" hidden>
 <section class="card" style="margin-bottom:16px" id="stock-lookup">
   <div class="chart-head"><h3>個股外資買賣超查詢</h3>
-    <span><span class="hint">拖曳平移 · 滾輪縮放　</span><button class="reset-btn" onclick="resetZoom('c-stock')">重置</button></span></div>
+    <span><span class="hint">拖曳／雙指縮放　</span><button class="reset-btn" onclick="resetZoom('c-stock')">重置</button></span></div>
   <div class="search">
     <div class="sid-search" id="sid-search">
       <input id="sid" placeholder="代號或名稱,例如 2330、台積電" autocomplete="off"
@@ -650,7 +683,7 @@ footer{text-align:center;color:#adb5bd;font-size:12px;padding:12px}
   </div>
   <canvas id="c-stock" style="display:none"></canvas>
   <canvas id="c-stock-margin" style="display:none;margin-top:16px"></canvas>
-  <div id="stock-table"></div>
+  <div id="stock-table" class="table-scroll"></div>
 </section>
 </div>
 
@@ -665,11 +698,11 @@ footer{text-align:center;color:#adb5bd;font-size:12px;padding:12px}
         <option value="90">近 90 天</option>
       </select>
     </div>
-    <div id="alerts-box"><p class="empty">尚無告警</p></div>
+    <div id="alerts-box" class="table-scroll"><p class="empty">尚無告警</p></div>
   </div>
   <div class="card">
     <div class="chart-head"><h3>績效摘要</h3></div>
-    <div id="perf-box"><p class="empty">尚未結算</p></div>
+    <div id="perf-box" class="table-scroll"><p class="empty">尚未結算</p></div>
   </div>
 </section>
 </div>
@@ -677,11 +710,11 @@ footer{text-align:center;color:#adb5bd;font-size:12px;padding:12px}
 <div id="section-backtest" class="page-section" role="tabpanel" aria-labelledby="tab-backtest" hidden>
 <section class="card" style="margin-bottom:16px">
   <h3 style="margin-bottom:8px">策略回測</h3>
-  <p class="hint" style="margin-bottom:14px">此區與市場圖表分開；首次進入不會自動執行。表單依資料集／篩選／進場分組，之後可在小螢幕折疊。</p>
+  <p class="hint" style="margin-bottom:14px">此區與市場圖表分開；首次進入不會自動執行。篩選／進場／出場可折疊（手機預設收合，避免首屏被表單佔滿）。</p>
 
   <div class="bt-grid" id="bt-form">
-    <div class="bt-box" data-bt-fold="dataset">
-      <div class="bt-label">資料集</div>
+    <details class="bt-box" data-bt-fold="dataset" open>
+      <summary class="bt-label">資料集</summary>
       <select id="bt-dataset" onchange="btOnDatasetChange()">
         <option value="2y_hourly" selected>2年小時K(支援日內事件)</option>
         <option value="15y_daily">15年日K(只能整天賭注,見下方警告)</option>
@@ -690,10 +723,10 @@ footer{text-align:center;color:#adb5bd;font-size:12px;padding:12px}
         ⚠️ 官方日K開盤價 99.7% 等於前一天收盤價(陳舊開盤價陷阱),用它模擬「日內事件觸發」是幻覺。
         這個資料集只開放「隔夜模式」(前一天收盤進場、隔日出場),日內模式已停用。
       </div>
-    </div>
+    </details>
 
-    <div class="bt-box" data-bt-fold="filters">
-      <div class="bt-label">篩選條件(用「前一交易日已知」的資訊,不含未來資訊)</div>
+    <details class="bt-box" data-bt-fold="filters" open>
+      <summary class="bt-label">篩選條件(用「前一交易日已知」的資訊,不含未來資訊)</summary>
       <div class="bt-row">
         <span class="bt-sub">星期</span>
         <label><input type="checkbox" class="bt-dow" value="0" checked>一</label>
@@ -771,17 +804,17 @@ footer{text-align:center;color:#adb5bd;font-size:12px;padding:12px}
         <input type="number" id="bt-oiwindow" value="60" step="5" min="10" style="width:60px">
       </div>
       <p class="hint" id="bt-close-decided-hint" style="display:none">⚠️ 均線交叉 / N日新高新低突破 / 當日漲跌 / 今日均線 這幾種濾網要等收盤才能確定,不能用在「日內模式」(會偷看未來資訊)。切到隔夜或波段模式才能套用。</p>
-    </div>
+    </details>
 
-    <div class="bt-box" data-bt-fold="entry">
-      <div class="bt-label">模式</div>
+    <details class="bt-box" data-bt-fold="entry" open>
+      <summary class="bt-label">模式</summary>
       <label><input type="radio" name="bt-mode" value="intraday" checked onchange="btOnModeChange()"> 日內(當天進出)</label>
       <label style="margin-left:14px"><input type="radio" name="bt-mode" value="overnight" onchange="btOnModeChange()"> 隔夜(收盤進、隔日出)</label>
       <label style="margin-left:14px"><input type="radio" name="bt-mode" value="swing" onchange="btOnModeChange()"> 波段(收盤進、固定%停損、可多日持有)</label>
-    </div>
+    </details>
 
-    <div class="bt-box" id="bt-intraday-box" data-bt-fold="entry">
-      <div class="bt-label">日內規則</div>
+    <details class="bt-box" id="bt-intraday-box" data-bt-fold="entry" open>
+      <summary class="bt-label">日內進場／出場</summary>
       <div class="bt-row">
         <span class="bt-sub">進場參考價</span>
         <select id="bt-ref">
@@ -835,10 +868,10 @@ footer{text-align:center;color:#adb5bd;font-size:12px;padding:12px}
         <span class="bt-sub">偏移 %</span>
         <input type="number" id="bt-stopoffset" value="0" step="0.1" style="width:80px">
       </div>
-    </div>
+    </details>
 
-    <div class="bt-box" id="bt-overnight-box" data-bt-fold="entry" style="display:none">
-      <div class="bt-label">隔夜規則</div>
+    <details class="bt-box" id="bt-overnight-box" data-bt-fold="exit" style="display:none" open>
+      <summary class="bt-label">隔夜出場</summary>
       <div class="bt-row">
         <span class="bt-sub">方向</span>
         <select id="bt-on-direction">
@@ -861,10 +894,10 @@ footer{text-align:center;color:#adb5bd;font-size:12px;padding:12px}
       <div class="bt-row">
         <label><input type="checkbox" id="bt-skipweekend" checked> 跳過週末(週五收盤不留倉)</label>
       </div>
-    </div>
+    </details>
 
-    <div class="bt-box" id="bt-swing-box" data-bt-fold="entry" style="display:none">
-      <div class="bt-label">波段規則(收盤進場,固定 % 停損,兩個資料集都可用)</div>
+    <details class="bt-box" id="bt-swing-box" data-bt-fold="exit" style="display:none" open>
+      <summary class="bt-label">波段進場／出場(收盤進場,固定 % 停損)</summary>
       <div class="bt-row">
         <span class="bt-sub">方向</span>
         <select id="bt-swing-direction">
@@ -882,7 +915,7 @@ footer{text-align:center;color:#adb5bd;font-size:12px;padding:12px}
         <input type="number" id="bt-swing-tppct" value="5" step="0.1" min="0.1" style="width:70px; display:none">
       </div>
       <p class="hint">同一天停損停利都可能觸發時,保守假設先停損。訊號出現在資料尾端、還沒等到出場資料就用完的交易會被排除(不計入統計),不會用未知結果硬猜。</p>
-    </div>
+    </details>
 
     <div class="bt-box" data-bt-fold="cost">
       <div class="bt-row">
@@ -893,7 +926,7 @@ footer{text-align:center;color:#adb5bd;font-size:12px;padding:12px}
     </div>
   </div>
 
-  <div id="bt-results" style="margin-top:20px"></div>
+  <div id="bt-results" class="table-scroll" style="margin-top:20px"></div>
 </section>
 </div>
 
@@ -1063,6 +1096,15 @@ function selectStock(id, name, opts){
 }
 function showStock(id, name){ selectStock(id, name); }
 
+function bindSuggestPick(menu, items, pick){
+  menu.querySelectorAll('button').forEach(btn=>{
+    btn.addEventListener('mousedown', ev=> ev.preventDefault());
+    btn.addEventListener('click', ev=>{
+      ev.preventDefault();
+      pick(items[+btn.dataset.i]);
+    });
+  });
+}
 function hideStockMenu(){
   const menu = document.getElementById('sid-menu');
   if(menu) menu.hidden = true;
@@ -1089,9 +1131,7 @@ function renderStockMenu(items){
     +'<span>'+esc(it.id+' '+(it.name||''))+'</span></button>'
   ).join('');
   menu.hidden = false;
-  menu.querySelectorAll('button').forEach(btn=>{
-    btn.addEventListener('mousedown', ev=>{ ev.preventDefault(); pickStock(items[+btn.dataset.i]); });
-  });
+  bindSuggestPick(menu, items, pickStock);
 }
 function pickStock(item){
   if(!item) return;
@@ -1311,9 +1351,7 @@ function renderOverlayMenu(items){
     +'<span>'+esc(overlayLabel(it))+'</span><span class="ov-chip">'+esc(it.chip||'')+'</span></button>'
   ).join('');
   menu.hidden = false;
-  menu.querySelectorAll('button').forEach(btn=>{
-    btn.addEventListener('mousedown', ev=>{ ev.preventDefault(); pickOverlay(items[+btn.dataset.i]); });
-  });
+  bindSuggestPick(menu, items, pickOverlay);
 }
 
 function marketOverlayHits(q){
@@ -1962,9 +2000,19 @@ btOnModeChange();
 function loadAll(){ loadSummary(); loadKline(); loadTaiex(); loadMargin(); loadNet(); loadTaifexOi(); loadTop();
   loadAlerts(); loadPerformance();
   if(stockId) loadStock(); }
+function initBtFolds(){
+  const mobile = window.matchMedia('(max-width:768px)').matches;
+  document.querySelectorAll('details[data-bt-fold]').forEach(el=>{
+    const key = el.dataset.btFold;
+    if(key==='dataset'){ el.open = true; return; }
+    if(key==='filters' || key==='entry' || key==='exit') el.open = !mobile;
+  });
+}
+window.addEventListener('resize', resizeCharts);
 (function(){
   const id = parseStockQuery(location.search);
   if(id) selectStock(id, null, {load:false, scroll:false, section:false});
+  initBtFolds();
   loadAll();
   showSection(resolveSection(), {updateHash:false});
 })();

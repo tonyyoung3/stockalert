@@ -122,6 +122,18 @@ gcloud run deploy stockalert \
 
 會給一個 `*.run.app` 網址。設了那兩個 Turso 變數就讀雲端，不帶本機 `twse_data.db`。回測會把需要的表快照進暫存 sqlite，pandas 不用改。
 
+### 資料新鮮度與 `/health`
+
+儀表板載入後會顯示 `foreign_daily`、`stock_daily`、`taifex`（`taifex_fut_oi`）、`alerts` 的最後日期與距今天數。最新日若早於「上一個台股交易日」，header 下方會有醒目警告（不是灰色 hint）；圖表空陣列則顯示「請跑 `python -m market.update_market_data`」，不會留空白 canvas。
+
+交易日假設是**平日、未內建國定假日**；平日 **16:00 台灣時間**之後才把當日視為應有資料（與 `market.update_market_data` 的收盤後判斷同一截止）。
+
+| 路徑 | 內容 |
+| --- | --- |
+| `GET /api/freshness` | 各表 `{table, last_date, days_ago, stale, empty}`，以及整體 `stale` / `empty` |
+| `GET /api/summary` | 原有 KPI，另含同一個 `freshness` 物件 |
+| `GET /health` | JSON：`status`/`ok` 表示**行程活著**（HTTP **一律 200**）。資料過期是 payload 的 `freshness.stale`／`empty`，**不會因此回 503**，方便之後 Cloud Run 探活依欄位延伸。 |
+
 ### 告警與績效區塊
 
 儀表板「今日／近期告警」與「績效摘要」讀 `alerts`、`performance`（T+5／T+20／T+60 結算列）：

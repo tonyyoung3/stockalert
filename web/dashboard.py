@@ -9,6 +9,7 @@
 """
 import json
 import re
+import sqlite3
 import webbrowser
 from contextvars import ContextVar
 from datetime import date, timedelta
@@ -24,6 +25,7 @@ from alertsdb.store import (
     performance_by_horizon,
 )
 from data import market_db
+from web import freshness as freshness_mod
 
 _YMD = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 # One sqlite/Turso connection per HTTP API request (Cloud Run round-trips are expensive).
@@ -182,6 +184,111 @@ def api_performance() -> dict:
                 pass
 
 
+def _max_date(sql, params=()):
+    try:
+        rows = q(sql, params)
+    except Exception:
+        return None
+    if not rows:
+        return None
+    val = rows[0][0]
+    return val or None
+
+
+def _alerts_last_date():
+    if market_db.using_turso():
+        conn, owns = None, False
+        try:
+            conn, owns = _open_alerts_conn()
+            if conn is None:
+                return None
+            row = conn.execute("SELECT MAX(alert_date) FROM alerts").fetchone()
+        except Exception:
+            return None
+        finally:
+            if owns and conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+        if not row:
+            return None
+        return row[0] or None
+    path = get_db_path()
+    if not path.exists():
+        return None
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            row = conn.execute("SELECT MAX(alert_date) FROM alerts").fetchone()
+        finally:
+            conn.close()
+    except Exception:
+        return None
+    if not row:
+        return None
+    return row[0] or None
+
+
+def build_freshness(now=None) -> dict:
+    """Per-key-table last date, days-ago, stale/empty. Same connection as market APIs."""
+    tw = freshness_mod.taiwan_now(now)
+    today = tw.date()
+    expected = freshness_mod.expected_tw_trade_date(now)
+    specs = (
+        ("foreign_daily", "SELECT MAX(trade_date) FROM foreign_daily"),
+        ("stock_daily", "SELECT MAX(trade_date) FROM stock_daily"),
+        ("taifex", "SELECT MAX(trade_date) FROM taifex_fut_oi"),
+    )
+    tables = [
+        freshness_mod.table_status(name, _max_date(sql), today, expected)
+        for name, sql in specs
+    ]
+    tables.append(
+        freshness_mod.table_status("alerts", _alerts_last_date(), today, expected)
+    )
+    return {
+        "as_of": today.isoformat(),
+        "expected_trade_date": expected.isoformat(),
+        "calendar": freshness_mod.CALENDAR,
+        "calendar_note": freshness_mod.CALENDAR_NOTE,
+        "stale": any(t["stale"] for t in tables),
+        "empty": any(t["empty"] for t in tables),
+        "tables": tables,
+    }
+
+
+def health_payload() -> dict:
+    """Process liveness. Always HTTP 200; staleness lives in the payload."""
+    body = {
+        "status": "ok",
+        "ok": True,
+        "note": freshness_mod.HEALTH_NOTE,
+    }
+    try:
+        if not market_db.available():
+            body["freshness"] = {
+                "stale": True,
+                "empty": True,
+                "tables": [],
+                "error": "db_unavailable",
+                "calendar": freshness_mod.CALENDAR,
+                "calendar_note": freshness_mod.CALENDAR_NOTE,
+            }
+            return body
+        body["freshness"] = api("/api/freshness", {})
+    except Exception as e:
+        body["freshness"] = {
+            "stale": True,
+            "empty": True,
+            "tables": [],
+            "error": str(e),
+            "calendar": freshness_mod.CALENDAR,
+            "calendar_note": freshness_mod.CALENDAR_NOTE,
+        }
+    return body
+
+
 def api(path, qs):
     conn = market_db.connect()
     token = _request_conn.set(conn)
@@ -204,7 +311,9 @@ def _api(path, qs):
         span = q("SELECT MIN(trade_date), MAX(trade_date) FROM foreign_daily")
         return {"index": idx[0] if idx else None, "latest_date": latest,
                 "foreign_net_total": tot[0][0], "stock_count": tot[0][1],
-                "date_range": span[0]}
+                "date_range": span[0], "freshness": build_freshness()}
+    if path == "/api/freshness":
+        return build_freshness()
     if path == "/api/ohlc":
         if qs.get("interval", ["day"])[0] == "hour":
             rows = q("SELECT ts, open, high, low, close FROM taiex_hourly_ohlc "
@@ -337,6 +446,12 @@ header select option{background:#1a1a2e}
 .kpi-label{font-size:12px;color:#6c757d;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
 .kpi-value{font-size:26px;font-weight:700}
 .kpi-sub{font-size:13px;color:#6c757d}
+.kpi-warn{background:#fff8e8;box-shadow:0 0 0 2px #e0a800}
+.kpi-warn .kpi-value{color:#c0392b}
+.fresh-banner{padding:12px 16px;border-radius:8px;margin-bottom:16px;font-size:14px;font-weight:600;line-height:1.55}
+.fresh-banner.is-stale{background:#fff3cd;border:2px solid #d39e00;color:#6b4f00}
+.fresh-banner.is-empty{background:#fdecea;border:2px solid #c0392b;color:#7b241c}
+.chart-empty{margin-top:8px;padding:20px 14px;background:#fdecea;border:1px solid #f5c2c0;border-radius:6px;color:#922b21;font-size:14px;font-weight:600;text-align:center}
 .pos{color:#c0392b}.neg{color:#27ae60} /* 台股習慣:紅漲綠跌 */
 .charts{display:grid;grid-template-columns:1fr;gap:16px;margin-bottom:16px}
 .two{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:16px;margin-bottom:16px}
@@ -397,6 +512,15 @@ footer{text-align:center;color:#adb5bd;font-size:12px;padding:12px}
     </select>
   </div>
 </header>
+
+<div id="fresh-banner" class="fresh-banner" hidden role="alert"></div>
+
+<section class="kpis" id="fresh-kpis">
+  <div class="card" id="fk-foreign_daily"><div class="kpi-label">外資最後交易日</div><div class="kpi-value">–</div><div class="kpi-sub">foreign_daily</div></div>
+  <div class="card" id="fk-stock_daily"><div class="kpi-label">個股日K最後交易日</div><div class="kpi-value">–</div><div class="kpi-sub">stock_daily</div></div>
+  <div class="card" id="fk-taifex"><div class="kpi-label">台指期最後交易日</div><div class="kpi-value">–</div><div class="kpi-sub">taifex_fut_oi</div></div>
+  <div class="card" id="fk-alerts"><div class="kpi-label">告警最後日期</div><div class="kpi-value">–</div><div class="kpi-sub">alerts</div></div>
+</section>
 
 <section class="kpis">
   <div class="card"><div class="kpi-label">加權指數(最新)</div><div class="kpi-value" id="k-idx">–</div><div class="kpi-sub" id="k-chg"></div></div>
@@ -727,8 +851,70 @@ const zhang = n => Math.round(n/1000);  // 股 -> 張
 function mk(id, cfg){ if(charts[id]) charts[id].destroy();
   charts[id] = new Chart(document.getElementById(id), cfg); return charts[id]; }
 
-async function j(u){ return (await fetch(u)).json(); }
+async function j(u){
+  const resp = await fetch(u);
+  if(!resp.ok) throw new Error('HTTP '+resp.status);
+  return resp.json();
+}
 const days = () => document.getElementById('days').value;
+const EMPTY_MARKET = '尚無資料。請跑 python -m market.update_market_data';
+
+function setChartEmpty(id, msg){
+  if(charts[id]){ charts[id].destroy(); delete charts[id]; }
+  const canvas = document.getElementById(id);
+  if(!canvas) return;
+  canvas.style.display = 'none';
+  let el = canvas.parentElement.querySelector(':scope > .chart-empty');
+  if(!el){
+    el = document.createElement('div');
+    el.className = 'chart-empty';
+    canvas.insertAdjacentElement('afterend', el);
+  }
+  el.hidden = false;
+  el.textContent = msg || EMPTY_MARKET;
+}
+function setChartReady(id){
+  const canvas = document.getElementById(id);
+  if(!canvas) return;
+  canvas.style.display = '';
+  const el = canvas.parentElement.querySelector(':scope > .chart-empty');
+  if(el) el.hidden = true;
+}
+
+function renderFreshness(f){
+  if(!f) return;
+  (f.tables||[]).forEach(t=>{
+    const card = document.getElementById('fk-'+t.table);
+    if(!card) return;
+    const val = card.querySelector('.kpi-value');
+    const sub = card.querySelector('.kpi-sub');
+    val.textContent = t.last_date || '無資料';
+    if(t.empty){
+      sub.textContent = t.table+' · 空白表';
+    } else if(t.days_ago==0){
+      sub.textContent = t.table+' · 今天';
+    } else {
+      sub.textContent = t.table+' · 距今 '+t.days_ago+' 天';
+    }
+    card.classList.toggle('kpi-warn', !!(t.stale || t.empty));
+  });
+  const banner = document.getElementById('fresh-banner');
+  if(!banner) return;
+  if(f.empty || f.stale){
+    const bad = (f.tables||[]).filter(t=>t.empty||t.stale);
+    const parts = bad.map(t=> t.empty ? (t.table+' 空白') : (t.table+' 最後日 '+t.last_date+'（距今 '+t.days_ago+' 天）'));
+    const marketBad = bad.some(t=>t.table!=='alerts');
+    const action = marketBad ? '請跑 python -m market.update_market_data' : '請確認篩選排程 python -m notify.screener';
+    banner.hidden = false;
+    banner.className = 'fresh-banner ' + (f.empty ? 'is-empty' : 'is-stale');
+    banner.textContent = '⚠️ 資料'+(f.empty?'空白':'過期（早於上一個台股交易日）')+'：'
+      +parts.join('；')+'。'+action+'（'+ (f.calendar_note||'週末／未內建國定假日')+'）。';
+  } else {
+    banner.hidden = true;
+    banner.className = 'fresh-banner';
+    banner.textContent = '';
+  }
+}
 const PAT = {upper_shadow_reversal:'上影線反轉', inside_day:'Inside Day'};
 function patName(p){ return PAT[p] || p || '–'; }
 function pct(n){ return n==null ? '–' : ((n>=0?'+':'')+Number(n).toFixed(2)+'%'); }
@@ -810,7 +996,12 @@ async function loadPerformance(){
 }
 
 async function loadSummary(){
-  const s = await j('/api/summary');
+  let s;
+  try { s = await j('/api/summary'); }
+  catch(e){
+    renderFreshness({stale:true, empty:true, tables:[], calendar_note:'載入失敗'});
+    return;
+  }
   if(s.index){
     document.getElementById('k-idx').textContent = fmt(s.index[1]);
     const c = s.index[2];
@@ -819,35 +1010,48 @@ async function loadSummary(){
   }
   const net = s.foreign_net_total;
   const kn = document.getElementById('k-net');
-  kn.textContent = (net>=0?'+':'')+fmt(zhang(net))+' 張';
-  kn.className = 'kpi-value '+(net>=0?'pos':'neg');
-  document.getElementById('k-netdate').textContent = s.latest_date;
+  if(net==null){
+    kn.textContent = '–';
+    kn.className = 'kpi-value';
+  } else {
+    kn.textContent = (net>=0?'+':'')+fmt(zhang(net))+' 張';
+    kn.className = 'kpi-value '+(net>=0?'pos':'neg');
+  }
+  document.getElementById('k-netdate').textContent = s.latest_date || '無資料';
   document.getElementById('k-cnt').textContent = fmt(s.stock_count);
-  document.getElementById('k-span').textContent = s.date_range[0]+' ~ '+s.date_range[1];
-  if(s.date_range){
+  if(s.date_range && s.date_range[0] && s.date_range[1]){
+    document.getElementById('k-span').textContent = s.date_range[0]+' ~ '+s.date_range[1];
     ['top-start','top-end'].forEach(id=>{
       const el = document.getElementById(id);
       el.min = s.date_range[0]; el.max = s.date_range[1];
     });
+  } else {
+    document.getElementById('k-span').textContent = '無資料';
   }
+  renderFreshness(s.freshness);
 }
 
 async function loadKline(){
   const itv = document.getElementById('kint').value;
-  const r = await j('/api/ohlc?days='+days()+'&interval='+itv);
-  if(!r.data.length){
-    if(itv==='hour') document.getElementById('c-kline').parentElement.querySelector('h3')
-      .textContent = '加權指數 K 線(尚無小時K資料,請先執行 backfill.py index)';
-    return;
-  }
-  mk('c-kline', {type:'candlestick',
-    data:{datasets:[{data:r.data.map(d=>({x:new Date(d[0]).getTime(), o:d[1], h:d[2], l:d[3], c:d[4]})),
-      color:{up:'#c0392b', down:'#27ae60', unchanged:'#6c757d'},
-      borderColor:{up:'#c0392b', down:'#27ae60', unchanged:'#6c757d'}}]},
-    options:{animation:false, plugins:{legend:{display:false}, zoom:ZOOM},
-      scales:{x:{type:'timeseries', time:{unit: itv==='hour' ? 'day' : 'month'},
-                 ticks:{maxTicksLimit:14}},
-              y:{grace:'2%'}}}});
+  try {
+    const r = await j('/api/ohlc?days='+days()+'&interval='+itv);
+    if(!(r.data||[]).length){
+      const msg = itv==='hour'
+        ? '尚無小時K資料。請跑 python -m market.update_market_data'
+        : EMPTY_MARKET;
+      setChartEmpty('c-kline', msg);
+      return;
+    }
+    setChartReady('c-kline');
+    mk('c-kline', {type:'candlestick',
+      data:{datasets:[{data:r.data.map(d=>({x:new Date(d[0]).getTime(), o:d[1], h:d[2], l:d[3], c:d[4]})),
+        color:{up:'#c0392b', down:'#27ae60', unchanged:'#6c757d'},
+        borderColor:{up:'#c0392b', down:'#27ae60', unchanged:'#6c757d'}}]},
+      options:{animation:false, plugins:{legend:{display:false}, zoom:ZOOM},
+        scales:{x:{type:'timeseries', time:{unit: itv==='hour' ? 'day' : 'month'},
+                   ticks:{maxTicksLimit:14}},
+                y:{grace:'2%'}}}});
+  } catch(e){ setChartEmpty('c-kline', EMPTY_MARKET); }
 }
 
 const MARKET_OVERLAYS = [
@@ -994,83 +1198,99 @@ async function buildOverlayMap(choice){
 }
 
 async function loadTaiex(){
-  const r = await j('/api/taiex?days='+days());
-  const labels = r.data.map(d=>d[0].slice(0,16).replace('T',' '));
-  const datasets = [{label:'加權指數', data:r.data.map(d=>d[1]), borderColor:'#4C72B0',
-    borderWidth:1.5, pointRadius:0, tension:.2}];
+  try {
+    const r = await j('/api/taiex?days='+days());
+    if(!(r.data||[]).length){ setChartEmpty('c-taiex', EMPTY_MARKET); return; }
+    setChartReady('c-taiex');
+    const labels = r.data.map(d=>d[0].slice(0,16).replace('T',' '));
+    const datasets = [{label:'加權指數', data:r.data.map(d=>d[1]), borderColor:'#4C72B0',
+      borderWidth:1.5, pointRadius:0, tension:.2}];
 
-  const ov = ovChoice;
-  const scales = {x:{ticks:{maxTicksLimit:12}}, y:{grace:'2%'}};
-  if(ov){
-    const map = await buildOverlayMap(ov);
-    const vals = r.data.map(d => { const dt=d[0].slice(0,10); return map.has(dt) ? map.get(dt) : null; });
-    datasets.push({label:overlayLabel(ov), data:vals, borderColor:'#c0392b',
-      borderDash:[5,4], borderWidth:2, pointRadius:0, stepped:true, spanGaps:true, yAxisID:'y2'});
-    if(ov.type==='market' && ov.kind==='taifex_ratio'){
-      const vv = vals.filter(v=>v!=null);
-      if(vv.length){
-        const lo=Math.min(...vv), hi=Math.max(...vv), pad=(hi-lo)*0.15||0.1;
-        scales.y2 = {position:'right', grid:{display:false}, min:lo-pad, max:hi+pad};
+    const ov = ovChoice;
+    const scales = {x:{ticks:{maxTicksLimit:12}}, y:{grace:'2%'}};
+    if(ov){
+      const map = await buildOverlayMap(ov);
+      const vals = r.data.map(d => { const dt=d[0].slice(0,10); return map.has(dt) ? map.get(dt) : null; });
+      datasets.push({label:overlayLabel(ov), data:vals, borderColor:'#c0392b',
+        borderDash:[5,4], borderWidth:2, pointRadius:0, stepped:true, spanGaps:true, yAxisID:'y2'});
+      if(ov.type==='market' && ov.kind==='taifex_ratio'){
+        const vv = vals.filter(v=>v!=null);
+        if(vv.length){
+          const lo=Math.min(...vv), hi=Math.max(...vv), pad=(hi-lo)*0.15||0.1;
+          scales.y2 = {position:'right', grid:{display:false}, min:lo-pad, max:hi+pad};
+        }
+      } else {
+        scales.y2 = {position:'right', grid:{display:false}};
       }
-    } else {
-      scales.y2 = {position:'right', grid:{display:false}};
     }
-  }
 
-  mk('c-taiex', {type:'line', data:{labels, datasets},
-    options:{animation:false, plugins:{legend:{display: !!ov}, zoom:ZOOM},
-      interaction:{mode:'index',intersect:false},
-      scales}});
+    mk('c-taiex', {type:'line', data:{labels, datasets},
+      options:{animation:false, plugins:{legend:{display: !!ov}, zoom:ZOOM},
+        interaction:{mode:'index',intersect:false},
+        scales}});
+  } catch(e){ setChartEmpty('c-taiex', EMPTY_MARKET); }
 }
 
 async function loadNet(){
-  const r = await j('/api/foreign_total?days='+days());
-  mk('c-net', {type:'bar', data:{labels:r.data.map(d=>d[0]),
-    datasets:[{data:r.data.map(d=>zhang(d[1])),
-      backgroundColor:r.data.map(d=>d[1]>=0?'#c0392bcc':'#27ae60cc')}]},
-    options:{animation:false, plugins:{legend:{display:false}, zoom:ZOOM},
-      scales:{x:{ticks:{maxTicksLimit:15}}}}});
+  try {
+    const r = await j('/api/foreign_total?days='+days());
+    if(!(r.data||[]).length){ setChartEmpty('c-net', EMPTY_MARKET); return; }
+    setChartReady('c-net');
+    mk('c-net', {type:'bar', data:{labels:r.data.map(d=>d[0]),
+      datasets:[{data:r.data.map(d=>zhang(d[1])),
+        backgroundColor:r.data.map(d=>d[1]>=0?'#c0392bcc':'#27ae60cc')}]},
+      options:{animation:false, plugins:{legend:{display:false}, zoom:ZOOM},
+        scales:{x:{ticks:{maxTicksLimit:15}}}}});
+  } catch(e){ setChartEmpty('c-net', EMPTY_MARKET); }
 }
 
 async function loadMargin(){
-  const r = await j('/api/margin_total?days='+days());
-  if(!r.fin.length && !r.short.length) return;
-  mk('c-margin', {type:'line', data:{labels:(r.fin.length?r.fin:r.short).map(d=>d[0]),
-    datasets:[
-      {label:'融資餘額(億元)', data:r.fin.map(d=>Math.round(d[1]/100000)),
-       borderColor:'#DD8452', backgroundColor:'#DD845220', borderWidth:2, pointRadius:0, tension:.2, fill:true},
-      {label:'融券餘額(千張)', data:r.short.map(d=>Math.round(d[1]/1000)),
-       borderColor:'#8172B3', borderWidth:2, pointRadius:0, tension:.2, yAxisID:'y2'}]},
-    options:{animation:false, interaction:{mode:'index',intersect:false},
-      plugins:{zoom:ZOOM},
-      scales:{x:{ticks:{maxTicksLimit:12}},
-              y2:{position:'right', grid:{display:false}}}}});
+  try {
+    const r = await j('/api/margin_total?days='+days());
+    if(!(r.fin||[]).length && !(r.short||[]).length){
+      setChartEmpty('c-margin', EMPTY_MARKET);
+      return;
+    }
+    setChartReady('c-margin');
+    mk('c-margin', {type:'line', data:{labels:(r.fin.length?r.fin:r.short).map(d=>d[0]),
+      datasets:[
+        {label:'融資餘額(億元)', data:r.fin.map(d=>Math.round(d[1]/100000)),
+         borderColor:'#DD8452', backgroundColor:'#DD845220', borderWidth:2, pointRadius:0, tension:.2, fill:true},
+        {label:'融券餘額(千張)', data:r.short.map(d=>Math.round(d[1]/1000)),
+         borderColor:'#8172B3', borderWidth:2, pointRadius:0, tension:.2, yAxisID:'y2'}]},
+      options:{animation:false, interaction:{mode:'index',intersect:false},
+        plugins:{zoom:ZOOM},
+        scales:{x:{ticks:{maxTicksLimit:12}},
+                y2:{position:'right', grid:{display:false}}}}});
+  } catch(e){ setChartEmpty('c-margin', EMPTY_MARKET); }
 }
 
 async function loadTaifexOi(){
-  const r = await j('/api/taifex_oi?days='+days());
-  const card = document.getElementById('c-taifex').closest('.card');
-  if(!r.dates.length){
-    card.querySelector('h3').textContent = '台指期未平倉(尚無資料,請先執行 taifex_collector.py recent)';
-    return;
-  }
-  // 比值恆為負;顯式鎖定右軸範圍,避免自動刻度把 0 / 正值也畫進刻度列表造成誤讀
-  const rv = r.ratio.filter(v=>v!=null);
-  const rMin = Math.min(...rv), rMax = Math.max(...rv);
-  const pad = (rMax-rMin)*0.15 || 0.1;
-  mk('c-taifex', {type:'line', data:{labels:r.dates,
-    datasets:[
-      {label:'外資淨額(口)', data:r.foreign, borderColor:'#c0392b',
-       borderWidth:1.5, pointRadius:0, tension:.2},
-      {label:'投信淨額(口)', data:r.trust, borderColor:'#27ae60',
-       borderWidth:1.5, pointRadius:0, tension:.2},
-      {label:'外資÷投信比(恆為負)', data:r.ratio, borderColor:'#4C72B0', borderDash:[5,4],
-       borderWidth:2, pointRadius:0, tension:.2, yAxisID:'y2'}]},
-    options:{animation:false, interaction:{mode:'index',intersect:false},
-      plugins:{zoom:ZOOM},
-      scales:{x:{ticks:{maxTicksLimit:12}},
-              y2:{position:'right', grid:{display:false},
-                  min: rMin-pad, max: rMax+pad}}}});
+  try {
+    const r = await j('/api/taifex_oi?days='+days());
+    if(!(r.dates||[]).length){
+      setChartEmpty('c-taifex', EMPTY_MARKET);
+      return;
+    }
+    setChartReady('c-taifex');
+    // 比值恆為負;顯式鎖定右軸範圍,避免自動刻度把 0 / 正值也畫進刻度列表造成誤讀
+    const rv = r.ratio.filter(v=>v!=null);
+    const rMin = Math.min(...rv), rMax = Math.max(...rv);
+    const pad = (rMax-rMin)*0.15 || 0.1;
+    mk('c-taifex', {type:'line', data:{labels:r.dates,
+      datasets:[
+        {label:'外資淨額(口)', data:r.foreign, borderColor:'#c0392b',
+         borderWidth:1.5, pointRadius:0, tension:.2},
+        {label:'投信淨額(口)', data:r.trust, borderColor:'#27ae60',
+         borderWidth:1.5, pointRadius:0, tension:.2},
+        {label:'外資÷投信比(恆為負)', data:r.ratio, borderColor:'#4C72B0', borderDash:[5,4],
+         borderWidth:2, pointRadius:0, tension:.2, yAxisID:'y2'}]},
+      options:{animation:false, interaction:{mode:'index',intersect:false},
+        plugins:{zoom:ZOOM},
+        scales:{x:{ticks:{maxTicksLimit:12}},
+                y2:{position:'right', grid:{display:false},
+                    min: rMin-pad, max: rMax+pad}}}});
+  } catch(e){ setChartEmpty('c-taifex', EMPTY_MARKET); }
 }
 
 function topRangeParams(){
@@ -1094,25 +1314,37 @@ function onTopDates(){
   loadTop();
 }
 async function loadTop(){
-  const r = await j('/api/top'+topRangeParams());
-  if(r.start){
-    const preset = document.getElementById('top-preset').value;
-    if(preset!=='custom' || !document.getElementById('top-start').value){
-      document.getElementById('top-start').value = r.start;
-      document.getElementById('top-end').value = r.end;
+  try {
+    const r = await j('/api/top'+topRangeParams());
+    if(r.start){
+      const preset = document.getElementById('top-preset').value;
+      if(preset!=='custom' || !document.getElementById('top-start').value){
+        document.getElementById('top-start').value = r.start;
+        document.getElementById('top-end').value = r.end;
+      }
     }
+    const span = (!r.start) ? '' : (r.start===r.end ? r.start : r.start+'～'+r.end);
+    const daysHint = r.trading_days>1 ? '（'+r.trading_days+' 個交易日）' : '';
+    document.getElementById('t-buy').textContent = span+' 外資買超前 15(張)'+daysHint;
+    document.getElementById('t-sell').textContent = span+' 外資賣超前 15(張)'+daysHint;
+    if(!(r.buy||[]).length && !(r.sell||[]).length){
+      setChartEmpty('c-buy', EMPTY_MARKET);
+      setChartEmpty('c-sell', EMPTY_MARKET);
+      return;
+    }
+    setChartReady('c-buy');
+    setChartReady('c-sell');
+    const cfg = (rows, color) => ({type:'bar',
+      data:{labels:rows.map(d=>d[0]+' '+d[1]),
+        datasets:[{data:rows.map(d=>Math.abs(zhang(d[2]))), backgroundColor:color}]},
+      options:{indexAxis:'y', animation:false, plugins:{legend:{display:false}},
+        scales:{y:{ticks:{font:{size:11}}}}}});
+    mk('c-buy', cfg(r.buy||[], '#c0392bcc'));
+    mk('c-sell', cfg(r.sell||[], '#27ae60cc'));
+  } catch(e){
+    setChartEmpty('c-buy', EMPTY_MARKET);
+    setChartEmpty('c-sell', EMPTY_MARKET);
   }
-  const span = (!r.start) ? '' : (r.start===r.end ? r.start : r.start+'～'+r.end);
-  const daysHint = r.trading_days>1 ? '（'+r.trading_days+' 個交易日）' : '';
-  document.getElementById('t-buy').textContent = span+' 外資買超前 15(張)'+daysHint;
-  document.getElementById('t-sell').textContent = span+' 外資賣超前 15(張)'+daysHint;
-  const cfg = (rows, color) => ({type:'bar',
-    data:{labels:rows.map(d=>d[0]+' '+d[1]),
-      datasets:[{data:rows.map(d=>Math.abs(zhang(d[2]))), backgroundColor:color}]},
-    options:{indexAxis:'y', animation:false, plugins:{legend:{display:false}},
-      scales:{y:{ticks:{font:{size:11}}}}}});
-  mk('c-buy', cfg(r.buy||[], '#c0392bcc'));
-  mk('c-sell', cfg(r.sell||[], '#27ae60cc'));
 }
 
 async function loadStock(){
@@ -1121,7 +1353,11 @@ async function loadStock(){
   const r = await j('/api/stock?id='+encodeURIComponent(sid)+'&days='+days());
   const cv = document.getElementById('c-stock');
   const tb = document.getElementById('stock-table');
-  if(!r.data.length){ cv.style.display='none'; tb.innerHTML='<p style="color:#6c757d">查無 '+sid+' 的資料</p>'; return; }
+  if(!r.data.length){
+    cv.style.display='none';
+    tb.innerHTML='<div class="chart-empty">查無 '+esc(sid)+' 的資料。請跑 python -m market.update_market_data</div>';
+    return;
+  }
   cv.style.display='block';
   let cum = 0; const cumData = r.data.map(d=>cum += zhang(d[4]));
   mk('c-stock', {type:'bar', data:{labels:r.data.map(d=>d[0]),
@@ -1507,9 +1743,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         u = urlparse(self.path)
         if u.path == "/health":
-            body = b"ok"
+            body = json.dumps(health_payload()).encode("utf-8")
             self.send_response(200)
-            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Type", "application/json; charset=utf-8")
         elif u.path == "/" or u.path == "/index.html":
             body = HTML.encode("utf-8")
             self.send_response(200)

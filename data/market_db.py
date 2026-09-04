@@ -12,6 +12,7 @@ import tempfile
 from pathlib import Path
 
 from data.paths import repo_file
+from data.sqlite_util import configure_local
 
 BACKTEST_TABLES = ("taiex_hourly_ohlc", "taiex_daily", "taifex_fut_oi")
 
@@ -48,12 +49,17 @@ def available(env: dict[str, str] | None = None) -> bool:
     return local_path().exists()
 
 
+def _readonly_file(path: Path) -> sqlite3.Connection:
+    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    configure_local(conn, wal=False)
+    return conn
+
+
 def connect(env: dict[str, str] | None = None):
     if using_turso(env):
         from data import cloud_db
         return cloud_db.connect_remote(env)
-    path = local_path()
-    return sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    return _readonly_file(local_path())
 
 
 def fetchall(sql: str, params: tuple = (), env: dict[str, str] | None = None) -> list:
@@ -97,10 +103,10 @@ def connect_for_backtest(env: dict[str, str] | None = None) -> sqlite3.Connectio
     """sqlite3 connection pandas.read_sql can use."""
     global _snapshot_path
     if not using_turso(env):
-        return sqlite3.connect(f"file:{local_path()}?mode=ro", uri=True)
+        return _readonly_file(local_path())
 
     if _snapshot_path is not None and _snapshot_path.exists():
-        return sqlite3.connect(f"file:{_snapshot_path}?mode=ro", uri=True)
+        return _readonly_file(_snapshot_path)
 
     from data import cloud_db
     remote = cloud_db.connect_remote(env)
@@ -117,7 +123,7 @@ def connect_for_backtest(env: dict[str, str] | None = None) -> sqlite3.Connectio
         _snapshot_path = Path(name)
     finally:
         remote.close()
-    return sqlite3.connect(f"file:{_snapshot_path}?mode=ro", uri=True)
+    return _readonly_file(_snapshot_path)
 
 
 def listen_host_port(env: dict[str, str] | None = None) -> tuple[str, int]:

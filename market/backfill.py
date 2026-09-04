@@ -34,6 +34,17 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 
 SLEEP = 4  # 秒,請求間隔
 HOURS = ["09:00:00", "10:00:00", "11:00:00", "12:00:00", "13:00:00"]
+# Catch-up only needs dates inside the window; scanning the full table grows with history.
+_DATE_TABLES = frozenset({
+    "stock_daily",
+    "taiex_hourly",
+    "taiex_hourly_ohlc",
+    "taiex_5sec_open",
+    "foreign_daily",
+    "margin_stock",
+    "margin_total",
+    "taiex_daily",
+})
 
 
 def sample_hours(day: date, rows: list[tuple]) -> list[tuple]:
@@ -51,8 +62,16 @@ def sample_hours(day: date, rows: list[tuple]) -> list[tuple]:
     return out
 
 
-def existing_dates(conn, table) -> set:
-    return {r[0] for r in conn.execute(f"SELECT DISTINCT trade_date FROM {table}")}
+def existing_dates(conn, table, since: str | None = None) -> set:
+    """Distinct trade_date values, optionally only dates on/after `since` (YYYY-MM-DD)."""
+    if table not in _DATE_TABLES:
+        raise ValueError(f"unknown date table: {table!r}")
+    sql = f"SELECT DISTINCT trade_date FROM {table}"
+    params: tuple = ()
+    if since:
+        sql += " WHERE trade_date >= ?"
+        params = (since,)
+    return {r[0] for r in conn.execute(sql, params)}
 
 
 def backfill_ohlc(days: int):
@@ -131,8 +150,8 @@ def backfill_stock_daily(days: int, today: date | None = None, include_today: bo
     """全市場個股日K(MI_INDEX,每天一次請求)。已有日期跳過,適合正式環境追平。"""
     conn = get_conn()
     today = today or date.today()
-    have = existing_dates(conn, "stock_daily")
     start = today - timedelta(days=days)
+    have = existing_dates(conn, "stock_daily", since=start.isoformat())
     end = window_end(today, include_today)
     n = 0
     day = start
@@ -162,12 +181,13 @@ def backfill(days: int, do_index=True, do_foreign=True, do_margin=True,
              today: date | None = None, include_today: bool = False):
     conn = get_conn()
     today = today or date.today()
-    have_idx = (existing_dates(conn, "taiex_hourly")
-                & existing_dates(conn, "taiex_hourly_ohlc")
-                & existing_dates(conn, "taiex_5sec_open")) if do_index else set()
-    have_for = existing_dates(conn, "foreign_daily") if do_foreign else set()
-    have_mar = existing_dates(conn, "margin_stock") if do_margin else set()
     start = today - timedelta(days=days)
+    since = start.isoformat()
+    have_idx = (existing_dates(conn, "taiex_hourly", since=since)
+                & existing_dates(conn, "taiex_hourly_ohlc", since=since)
+                & existing_dates(conn, "taiex_5sec_open", since=since)) if do_index else set()
+    have_for = existing_dates(conn, "foreign_daily", since=since) if do_foreign else set()
+    have_mar = existing_dates(conn, "margin_stock", since=since) if do_margin else set()
     end = window_end(today, include_today)
     day = start
     n_idx = n_for = n_mar = 0

@@ -174,6 +174,12 @@ class ParseStockQueryTests(unittest.TestCase):
         )
         self.assertEqual(dashboard.parse_stock_query("?stock=00631L"), "00631L")
         self.assertEqual(dashboard.parse_stock_query("stock=2330 台積電"), "2330")
+        self.assertEqual(
+            dashboard.parse_stock_query("?stock=2330#backtest"), "2330"
+        )
+        self.assertEqual(
+            dashboard.parse_stock_query("/?stock=2330#stock"), "2330"
+        )
 
     def test_rejects_missing_or_unsafe_values(self):
         self.assertIsNone(dashboard.parse_stock_query(""))
@@ -183,6 +189,75 @@ class ParseStockQueryTests(unittest.TestCase):
         self.assertIsNone(dashboard.parse_stock_query("?stock=<script>"))
         self.assertIsNone(dashboard.parse_stock_query("?stock=a"))
         self.assertIsNone(dashboard.parse_stock_query("?stock=" + "1" * 11))
+
+
+class DashboardNavTests(unittest.TestCase):
+    def test_html_has_section_tabs_defaulting_to_market(self):
+        html = dashboard.HTML
+        self.assertIn("role=\"tablist\"", html)
+        self.assertIn(">市場</a>", html)
+        self.assertIn(">個股</a>", html)
+        self.assertIn(">告警</a>", html)
+        self.assertIn(">回測</a>", html)
+        self.assertIn("id=\"section-market\"", html)
+        self.assertIn("id=\"section-stock\"", html)
+        self.assertIn("id=\"section-alerts\"", html)
+        self.assertIn("id=\"section-backtest\"", html)
+        self.assertIn("id=\"stock-lookup\"", html)
+        self.assertIn("href=\"#market\"", html)
+        self.assertIn("href=\"#stock\"", html)
+        self.assertIn("href=\"#alerts\"", html)
+        self.assertIn("href=\"#backtest\"", html)
+        self.assertIn(
+            "id=\"section-backtest\" class=\"page-section\" role=\"tabpanel\" "
+            "aria-labelledby=\"tab-backtest\" hidden>",
+            html,
+        )
+        self.assertIn(
+            "id=\"section-stock\" class=\"page-section\" role=\"tabpanel\" "
+            "aria-labelledby=\"tab-stock\" hidden>",
+            html,
+        )
+        self.assertIn(
+            "id=\"section-alerts\" class=\"page-section\" role=\"tabpanel\" "
+            "aria-labelledby=\"tab-alerts\" hidden>",
+            html,
+        )
+        self.assertNotIn(
+            "id=\"section-market\" class=\"page-section\" role=\"tabpanel\" "
+            "aria-labelledby=\"tab-market\" hidden>",
+            html,
+        )
+        self.assertLess(html.index('id="section-market"'), html.index('id="section-backtest"'))
+
+    def test_html_clarifies_global_days_vs_foreign_ranking(self):
+        html = dashboard.HTML
+        self.assertIn("全域天數影響指數／籌碼／個股圖；外資排行用自己的日期區間。", html)
+        self.assertIn("此區間只控制排行，與上方全域天數無關", html)
+        self.assertIn("id=\"days\"", html)
+        self.assertIn("id=\"top-preset\"", html)
+
+    def test_js_hash_and_selectstock_switch_sections(self):
+        html = dashboard.HTML
+        self.assertIn("const PAGE_SECTIONS", html)
+        self.assertIn("function parseSectionHash(", html)
+        self.assertIn("function resolveSection(", html)
+        self.assertIn("function showSection(", html)
+        self.assertIn("addEventListener('hashchange'", html)
+        self.assertIn("parseStockQuery(location.search) ? 'stock' : 'market'", html)
+        self.assertIn("if(opts.section !== false) showSection('stock')", html)
+        self.assertIn("showSection(resolveSection(), {updateHash:false})", html)
+        self.assertIn("id=\"bt-form\"", html)
+        self.assertIn("data-bt-fold=\"filters\"", html)
+        self.assertIn("data-bt-fold=\"entry\"", html)
+        self.assertIn("scrollIntoView", html)
+
+    def test_readme_documents_nav_and_days_scope(self):
+        text = Path(__file__).resolve().parents[1].joinpath("README.md").read_text(encoding="utf-8")
+        self.assertIn("### 儀表板分區", text)
+        self.assertIn("#backtest", text)
+        self.assertIn("不受全域天數控制", text)
+        self.assertIn("?stock=", text)
 
 
 if __name__ == "__main__":

@@ -461,11 +461,19 @@ HTML = """<!DOCTYPE html>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:-apple-system,"PingFang TC","Microsoft JhengHei",sans-serif;background:#f8f9fa;color:#212529;line-height:1.5}
 .wrap{max-width:1400px;margin:0 auto;padding:16px}
-header{background:#1a1a2e;color:#fff;padding:18px 24px;border-radius:8px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px}
+.sticky-top{position:sticky;top:0;z-index:50;background:#f8f9fa;padding-top:16px;margin-bottom:16px}
+header{background:#1a1a2e;color:#fff;padding:18px 24px;border-radius:8px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px}
 header h1{font-size:19px;font-weight:600}
 select,input{padding:6px 10px;border:1px solid #ccc;border-radius:4px;font-size:13px}
 header select{background:rgba(255,255,255,.1);color:#fff;border-color:rgba(255,255,255,.25)}
 header select option{background:#1a1a2e}
+.days-ctl{display:flex;flex-direction:column;align-items:flex-end;gap:4px}
+header .days-hint{color:rgba(255,255,255,.72);max-width:340px;text-align:right;line-height:1.4}
+.page-nav{display:flex;flex-wrap:wrap;gap:4px;background:#fff;border-radius:8px;padding:4px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.page-nav a{flex:1;min-width:72px;text-align:center;padding:10px 12px;border-radius:6px;text-decoration:none;color:#495057;font-size:14px;font-weight:600}
+.page-nav a.is-active{background:#1a1a2e;color:#fff}
+.page-nav a:focus-visible{outline:2px solid #4C72B0;outline-offset:2px}
+.page-section[hidden]{display:none!important}
 .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:16px}
 .card{background:#fff;border-radius:8px;padding:18px 22px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
 .kpi-label{font-size:12px;color:#6c757d;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
@@ -528,17 +536,29 @@ footer{text-align:center;color:#adb5bd;font-size:12px;padding:12px}
 </head>
 <body>
 <div class="wrap">
+<div class="sticky-top">
 <header>
   <h1>台股資料儀表板</h1>
-  <div>顯示範圍
-    <select id="days" onchange="loadAll()">
-      <option value="30">近 30 天</option>
-      <option value="90" selected>近 90 天</option>
-      <option value="365">近 1 年</option>
-      <option value="730">近 2 年</option>
-    </select>
+  <div class="days-ctl">
+    <div>
+      <label for="days">顯示範圍</label>
+      <select id="days" onchange="loadAll()">
+        <option value="30">近 30 天</option>
+        <option value="90" selected>近 90 天</option>
+        <option value="365">近 1 年</option>
+        <option value="730">近 2 年</option>
+      </select>
+    </div>
+    <p class="hint days-hint">全域天數影響指數／籌碼／個股圖；外資排行用自己的日期區間。</p>
   </div>
 </header>
+<nav class="page-nav" role="tablist" aria-label="儀表板分區">
+  <a href="#market" id="tab-market" class="is-active" role="tab" data-section="market" aria-controls="section-market" aria-selected="true">市場</a>
+  <a href="#stock" id="tab-stock" role="tab" data-section="stock" aria-controls="section-stock" aria-selected="false">個股</a>
+  <a href="#alerts" id="tab-alerts" role="tab" data-section="alerts" aria-controls="section-alerts" aria-selected="false">告警</a>
+  <a href="#backtest" id="tab-backtest" role="tab" data-section="backtest" aria-controls="section-backtest" aria-selected="false">回測</a>
+</nav>
+</div>
 
 <div id="fresh-banner" class="fresh-banner" hidden role="alert"></div>
 
@@ -549,29 +569,12 @@ footer{text-align:center;color:#adb5bd;font-size:12px;padding:12px}
   <div class="card" id="fk-alerts"><div class="kpi-label">告警最後日期</div><div class="kpi-value">–</div><div class="kpi-sub">alerts</div></div>
 </section>
 
+<div id="section-market" class="page-section" role="tabpanel" aria-labelledby="tab-market">
 <section class="kpis">
   <div class="card"><div class="kpi-label">加權指數(最新)</div><div class="kpi-value" id="k-idx">–</div><div class="kpi-sub" id="k-chg"></div></div>
   <div class="card"><div class="kpi-label">外資合計買賣超</div><div class="kpi-value" id="k-net">–</div><div class="kpi-sub" id="k-netdate"></div></div>
   <div class="card"><div class="kpi-label">收錄個股數</div><div class="kpi-value" id="k-cnt">–</div><div class="kpi-sub">最新交易日</div></div>
   <div class="card"><div class="kpi-label">資料期間</div><div class="kpi-value" id="k-span" style="font-size:16px">–</div><div class="kpi-sub">foreign_daily</div></div>
-</section>
-
-<section class="two" style="margin-bottom:16px">
-  <div class="card">
-    <div class="chart-head">
-      <h3>今日／近期告警</h3>
-      <select id="alert-days" onchange="loadAlerts()">
-        <option value="7">近 7 天</option>
-        <option value="30" selected>近 30 天</option>
-        <option value="90">近 90 天</option>
-      </select>
-    </div>
-    <div id="alerts-box"><p class="empty">尚無告警</p></div>
-  </div>
-  <div class="card">
-    <div class="chart-head"><h3>績效摘要</h3></div>
-    <div id="perf-box"><p class="empty">尚未結算</p></div>
-  </div>
 </section>
 
 <section class="charts">
@@ -623,7 +626,7 @@ footer{text-align:center;color:#adb5bd;font-size:12px;padding:12px}
       <input type="date" id="top-start" onchange="onTopDates()" aria-label="起始日期">
       <span class="hint">～</span>
       <input type="date" id="top-end" onchange="onTopDates()" aria-label="結束日期">
-      <span class="hint">點長條可開啟下方個股</span>
+      <span class="hint">此區間只控制排行，與上方全域天數無關。點長條可開啟「個股」分頁</span>
     </span>
   </div>
   <div class="two" style="margin-bottom:0">
@@ -631,7 +634,9 @@ footer{text-align:center;color:#adb5bd;font-size:12px;padding:12px}
     <div><h3 id="t-sell">外資賣超前 15</h3><canvas id="c-sell"></canvas></div>
   </div>
 </section>
+</div>
 
+<div id="section-stock" class="page-section" role="tabpanel" aria-labelledby="tab-stock" hidden>
 <section class="card" style="margin-bottom:16px" id="stock-lookup">
   <div class="chart-head"><h3>個股外資買賣超查詢</h3>
     <span><span class="hint">拖曳平移 · 滾輪縮放　</span><button class="reset-btn" onclick="resetZoom('c-stock')">重置</button></span></div>
@@ -647,12 +652,35 @@ footer{text-align:center;color:#adb5bd;font-size:12px;padding:12px}
   <canvas id="c-stock-margin" style="display:none;margin-top:16px"></canvas>
   <div id="stock-table"></div>
 </section>
+</div>
 
+<div id="section-alerts" class="page-section" role="tabpanel" aria-labelledby="tab-alerts" hidden>
+<section class="two" style="margin-bottom:16px">
+  <div class="card">
+    <div class="chart-head">
+      <h3>今日／近期告警</h3>
+      <select id="alert-days" onchange="loadAlerts()">
+        <option value="7">近 7 天</option>
+        <option value="30" selected>近 30 天</option>
+        <option value="90">近 90 天</option>
+      </select>
+    </div>
+    <div id="alerts-box"><p class="empty">尚無告警</p></div>
+  </div>
+  <div class="card">
+    <div class="chart-head"><h3>績效摘要</h3></div>
+    <div id="perf-box"><p class="empty">尚未結算</p></div>
+  </div>
+</section>
+</div>
+
+<div id="section-backtest" class="page-section" role="tabpanel" aria-labelledby="tab-backtest" hidden>
 <section class="card" style="margin-bottom:16px">
-  <h3 style="margin-bottom:14px">策略回測</h3>
+  <h3 style="margin-bottom:8px">策略回測</h3>
+  <p class="hint" style="margin-bottom:14px">此區與市場圖表分開；首次進入不會自動執行。表單依資料集／篩選／進場分組，之後可在小螢幕折疊。</p>
 
-  <div class="bt-grid">
-    <div class="bt-box">
+  <div class="bt-grid" id="bt-form">
+    <div class="bt-box" data-bt-fold="dataset">
       <div class="bt-label">資料集</div>
       <select id="bt-dataset" onchange="btOnDatasetChange()">
         <option value="2y_hourly" selected>2年小時K(支援日內事件)</option>
@@ -664,7 +692,7 @@ footer{text-align:center;color:#adb5bd;font-size:12px;padding:12px}
       </div>
     </div>
 
-    <div class="bt-box">
+    <div class="bt-box" data-bt-fold="filters">
       <div class="bt-label">篩選條件(用「前一交易日已知」的資訊,不含未來資訊)</div>
       <div class="bt-row">
         <span class="bt-sub">星期</span>
@@ -745,14 +773,14 @@ footer{text-align:center;color:#adb5bd;font-size:12px;padding:12px}
       <p class="hint" id="bt-close-decided-hint" style="display:none">⚠️ 均線交叉 / N日新高新低突破 / 當日漲跌 / 今日均線 這幾種濾網要等收盤才能確定,不能用在「日內模式」(會偷看未來資訊)。切到隔夜或波段模式才能套用。</p>
     </div>
 
-    <div class="bt-box">
+    <div class="bt-box" data-bt-fold="entry">
       <div class="bt-label">模式</div>
       <label><input type="radio" name="bt-mode" value="intraday" checked onchange="btOnModeChange()"> 日內(當天進出)</label>
       <label style="margin-left:14px"><input type="radio" name="bt-mode" value="overnight" onchange="btOnModeChange()"> 隔夜(收盤進、隔日出)</label>
       <label style="margin-left:14px"><input type="radio" name="bt-mode" value="swing" onchange="btOnModeChange()"> 波段(收盤進、固定%停損、可多日持有)</label>
     </div>
 
-    <div class="bt-box" id="bt-intraday-box">
+    <div class="bt-box" id="bt-intraday-box" data-bt-fold="entry">
       <div class="bt-label">日內規則</div>
       <div class="bt-row">
         <span class="bt-sub">進場參考價</span>
@@ -809,7 +837,7 @@ footer{text-align:center;color:#adb5bd;font-size:12px;padding:12px}
       </div>
     </div>
 
-    <div class="bt-box" id="bt-overnight-box" style="display:none">
+    <div class="bt-box" id="bt-overnight-box" data-bt-fold="entry" style="display:none">
       <div class="bt-label">隔夜規則</div>
       <div class="bt-row">
         <span class="bt-sub">方向</span>
@@ -835,7 +863,7 @@ footer{text-align:center;color:#adb5bd;font-size:12px;padding:12px}
       </div>
     </div>
 
-    <div class="bt-box" id="bt-swing-box" style="display:none">
+    <div class="bt-box" id="bt-swing-box" data-bt-fold="entry" style="display:none">
       <div class="bt-label">波段規則(收盤進場,固定 % 停損,兩個資料集都可用)</div>
       <div class="bt-row">
         <span class="bt-sub">方向</span>
@@ -856,7 +884,7 @@ footer{text-align:center;color:#adb5bd;font-size:12px;padding:12px}
       <p class="hint">同一天停損停利都可能觸發時,保守假設先停損。訊號出現在資料尾端、還沒等到出場資料就用完的交易會被排除(不計入統計),不會用未知結果硬猜。</p>
     </div>
 
-    <div class="bt-box">
+    <div class="bt-box" data-bt-fold="cost">
       <div class="bt-row">
         <span class="bt-sub">來回成本 %</span>
         <input type="number" id="bt-cost" value="0.03" step="0.01" style="width:80px">
@@ -867,6 +895,7 @@ footer{text-align:center;color:#adb5bd;font-size:12px;padding:12px}
 
   <div id="bt-results" style="margin-top:20px"></div>
 </section>
+</div>
 
 <footer>資料來源:台灣證券交易所 · 買賣超單位:張(千股)</footer>
 </div>
@@ -890,6 +919,46 @@ async function j(u){
 }
 const days = () => document.getElementById('days').value;
 const EMPTY_MARKET = '尚無資料。請跑 python -m market.update_market_data';
+const PAGE_SECTIONS = ['market','stock','alerts','backtest'];
+
+function parseSectionHash(hash){
+  let h = (hash==null ? location.hash : hash).replace(/^#/, '').split('?')[0];
+  if(h.indexOf('section-')===0) h = h.slice(8);
+  return PAGE_SECTIONS.indexOf(h)>=0 ? h : '';
+}
+function resolveSection(){
+  return parseSectionHash() || (parseStockQuery(location.search) ? 'stock' : 'market');
+}
+function resizeCharts(){
+  Object.keys(charts).forEach(id=>{
+    try{ if(charts[id]) charts[id].resize(); }catch(e){}
+  });
+}
+function showSection(name, opts){
+  opts = opts || {};
+  if(PAGE_SECTIONS.indexOf(name)<0) name = 'market';
+  PAGE_SECTIONS.forEach(s=>{
+    const el = document.getElementById('section-'+s);
+    if(el) el.hidden = s!==name;
+  });
+  document.querySelectorAll('.page-nav [data-section]').forEach(btn=>{
+    const on = btn.dataset.section===name;
+    btn.classList.toggle('is-active', on);
+    btn.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+  if(opts.updateHash !== false){
+    const u = new URL(location.href);
+    history.replaceState(null, '', u.pathname + u.search + '#'+name);
+  }
+  requestAnimationFrame(resizeCharts);
+}
+document.querySelector('.page-nav').addEventListener('click', ev=>{
+  const a = ev.target.closest('[data-section]');
+  if(!a) return;
+  ev.preventDefault();
+  showSection(a.dataset.section);
+});
+window.addEventListener('hashchange', ()=> showSection(resolveSection(), {updateHash:false}));
 
 function setChartEmpty(id, msg){
   if(charts[id]){ charts[id].destroy(); delete charts[id]; }
@@ -983,6 +1052,7 @@ function selectStock(id, name, opts){
   const el = document.getElementById('sid');
   if(el) el.value = name ? (id+' '+name) : id;
   hideStockMenu();
+  if(opts.section !== false) showSection('stock');
   syncStockUrl(id);
   if(opts.scroll !== false){
     const box = document.getElementById('stock-lookup');
@@ -1894,9 +1964,10 @@ function loadAll(){ loadSummary(); loadKline(); loadTaiex(); loadMargin(); loadN
   if(stockId) loadStock(); }
 (function(){
   const id = parseStockQuery(location.search);
-  if(id) selectStock(id, null, {load:false});
+  if(id) selectStock(id, null, {load:false, scroll:false, section:false});
+  loadAll();
+  showSection(resolveSection(), {updateHash:false});
 })();
-loadAll();
 </script>
 </body>
 </html>"""

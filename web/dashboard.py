@@ -5,14 +5,24 @@
   PORT=8080 python -m web.dashboard   # Cloud Run / 任何 PaaS
 
 設了 TURSO_DATABASE_URL 跟 TURSO_AUTH_TOKEN 就讀雲端,否則讀本機 sqlite。
+告警／績效：本機讀 screener.db 的 alerts、performance；Turso 則與市場表同一顆遠端 DB。
 """
 import json
 import re
 import webbrowser
 from contextvars import ContextVar
+from datetime import date, timedelta
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
+from alertsdb.store import (
+    DASHBOARD_HORIZONS,
+    HORIZON_ASSUMPTIONS,
+    get_conn,
+    get_db_path,
+    list_alerts,
+    performance_by_horizon,
+)
 from data import market_db
 
 _YMD = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -60,6 +70,116 @@ def _foreign_window(qs):
         )[0]
         return span[0], span[1]
     return latest, latest
+
+
+def _clamp_int(raw, default, lo, hi):
+    try:
+        n = int(raw)
+    except (TypeError, ValueError):
+        n = default
+    return max(lo, min(n, hi))
+
+
+def _open_alerts_conn():
+    """Turso shares market + alerts on the request connection; local uses screener.db.
+
+    Returns (conn, owns). owns=True means the caller must close conn.
+    """
+    if market_db.using_turso():
+        shared = _request_conn.get()
+        if shared is not None:
+            return shared, False
+        return market_db.connect(), True
+    path = get_db_path()
+    if not path.exists():
+        return None, False
+    return get_conn(), True
+
+
+def _empty_alerts(days, since=None):
+    return {"data": [], "empty": True, "days": days, "since": since}
+
+
+def _empty_performance():
+    return {
+        "empty": True,
+        "assumptions": HORIZON_ASSUMPTIONS,
+        "horizons": [
+            {
+                "horizon_td": h,
+                "n": 0,
+                "wins": 0,
+                "win_rate_pct": None,
+                "avg_return_pct": None,
+                "by_pattern": [],
+            }
+            for h in DASHBOARD_HORIZONS
+        ],
+    }
+
+
+def _stock_names(tickers: list[str]) -> dict[str, str]:
+    uniq = list(dict.fromkeys(t for t in tickers if t))
+    if not uniq:
+        return {}
+    placeholders = ",".join("?" * len(uniq))
+    try:
+        rows = q(
+            f"SELECT stock_id, stock_name FROM stocks WHERE stock_id IN ({placeholders})",
+            tuple(uniq),
+        )
+    except Exception:
+        return {}
+    return {row[0]: row[1] for row in rows if row and row[0]}
+
+
+def api_alerts(qs) -> dict:
+    days = _clamp_int((qs.get("days", ["30"])[0] or "").strip(), 30, 1, 365)
+    since = str(date.today() - timedelta(days=days))
+    conn, owns = None, False
+    try:
+        conn, owns = _open_alerts_conn()
+        if conn is None:
+            return _empty_alerts(days, since)
+        rows = list_alerts(since=since, limit=500, conn=conn)
+    except Exception:
+        return _empty_alerts(days, since)
+    finally:
+        if owns and conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    names = _stock_names([r.get("ticker") for r in rows])
+    data = [
+        {
+            "alert_date": r.get("alert_date"),
+            "ticker": r.get("ticker"),
+            "name": names.get(r.get("ticker")),
+            "pattern_type": r.get("pattern_type"),
+            "price_at_alert": r.get("price_at_alert"),
+            "theme": None,
+        }
+        for r in rows
+    ]
+    return {"data": data, "empty": not data, "days": days, "since": since}
+
+
+def api_performance() -> dict:
+    conn, owns = None, False
+    try:
+        conn, owns = _open_alerts_conn()
+        if conn is None:
+            return _empty_performance()
+        return performance_by_horizon(horizons=DASHBOARD_HORIZONS, conn=conn)
+    except Exception:
+        return _empty_performance()
+    finally:
+        if owns and conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 def api(path, qs):
@@ -185,6 +305,10 @@ def _api(path, qs):
             got = q("SELECT stock_name FROM stocks WHERE stock_id=?", (sid,))
             name = got[0][0] if got else sid
         return {"id": sid, "name": name, "data": [[d, c] for d, c, _n in rows]}
+    if path == "/api/alerts":
+        return api_alerts(qs)
+    if path == "/api/performance":
+        return api_performance()
     return None
 
 
@@ -238,6 +362,11 @@ tr:hover td{background:#f8f9fa}
 .num{text-align:right;font-variant-numeric:tabular-nums}
 .search{display:flex;gap:8px;margin-bottom:14px}
 .search button{padding:6px 16px;border:none;border-radius:4px;background:#4C72B0;color:#fff;cursor:pointer}
+.empty{color:#6c757d;font-size:13px;padding:8px 0}
+.ticker-link{color:#4C72B0;text-decoration:none;font-weight:600;cursor:pointer;background:none;border:none;padding:0;font:inherit}
+.ticker-link:hover{text-decoration:underline}
+.assumptions{font-size:12px;color:#6c757d;margin-top:10px;line-height:1.45}
+.pat{font-size:12px;color:#495057}
 footer{text-align:center;color:#adb5bd;font-size:12px;padding:12px}
 @media(max-width:768px){.two{grid-template-columns:1fr}}
 .bt-grid{display:grid;grid-template-columns:1fr;gap:14px}
@@ -274,6 +403,24 @@ footer{text-align:center;color:#adb5bd;font-size:12px;padding:12px}
   <div class="card"><div class="kpi-label">外資合計買賣超</div><div class="kpi-value" id="k-net">–</div><div class="kpi-sub" id="k-netdate"></div></div>
   <div class="card"><div class="kpi-label">收錄個股數</div><div class="kpi-value" id="k-cnt">–</div><div class="kpi-sub">最新交易日</div></div>
   <div class="card"><div class="kpi-label">資料期間</div><div class="kpi-value" id="k-span" style="font-size:16px">–</div><div class="kpi-sub">foreign_daily</div></div>
+</section>
+
+<section class="two" style="margin-bottom:16px">
+  <div class="card">
+    <div class="chart-head">
+      <h3>今日／近期告警</h3>
+      <select id="alert-days" onchange="loadAlerts()">
+        <option value="7">近 7 天</option>
+        <option value="30" selected>近 30 天</option>
+        <option value="90">近 90 天</option>
+      </select>
+    </div>
+    <div id="alerts-box"><p class="empty">尚無告警</p></div>
+  </div>
+  <div class="card">
+    <div class="chart-head"><h3>績效摘要</h3></div>
+    <div id="perf-box"><p class="empty">尚未結算</p></div>
+  </div>
 </section>
 
 <section class="charts">
@@ -333,7 +480,7 @@ footer{text-align:center;color:#adb5bd;font-size:12px;padding:12px}
   </div>
 </section>
 
-<section class="card" style="margin-bottom:16px">
+<section class="card" style="margin-bottom:16px" id="stock-lookup">
   <div class="chart-head"><h3>個股外資買賣超查詢</h3>
     <span><span class="hint">拖曳平移 · 滾輪縮放　</span><button class="reset-btn" onclick="resetZoom('c-stock')">重置</button></span></div>
   <div class="search">
@@ -582,6 +729,85 @@ function mk(id, cfg){ if(charts[id]) charts[id].destroy();
 
 async function j(u){ return (await fetch(u)).json(); }
 const days = () => document.getElementById('days').value;
+const PAT = {upper_shadow_reversal:'上影線反轉', inside_day:'Inside Day'};
+function patName(p){ return PAT[p] || p || '–'; }
+function pct(n){ return n==null ? '–' : ((n>=0?'+':'')+Number(n).toFixed(2)+'%'); }
+function money(n){ return n==null ? '–' : Number(n).toLocaleString('zh-TW', {maximumFractionDigits:2}); }
+
+function showStock(id){
+  const el = document.getElementById('sid');
+  if(!el) return;
+  el.value = id;
+  const box = document.getElementById('stock-lookup');
+  if(box) box.scrollIntoView({behavior:'smooth', block:'start'});
+  loadStock();
+}
+
+async function loadAlerts(){
+  const box = document.getElementById('alerts-box');
+  if(!box) return;
+  try{
+    const n = document.getElementById('alert-days').value;
+    const r = await j('/api/alerts?days='+encodeURIComponent(n));
+    if(!r || r.empty || !(r.data||[]).length){
+      box.innerHTML = '<p class="empty">尚無告警</p>';
+      return;
+    }
+    box.innerHTML = '<table><thead><tr><th>日期</th><th>代號</th><th>名稱</th><th>型態</th><th class="num">告警價</th><th>題材</th></tr></thead><tbody>'
+      + r.data.map(a => '<tr><td>'+esc(a.alert_date||'')+'</td>'
+        +'<td><button type="button" class="ticker-link" data-ticker="'+esc(a.ticker||'')+'">'+esc(a.ticker||'')+'</button></td>'
+        +'<td>'+esc(a.name||'–')+'</td>'
+        +'<td class="pat">'+esc(patName(a.pattern_type))+'</td>'
+        +'<td class="num">'+money(a.price_at_alert)+'</td>'
+        +'<td>'+esc(a.theme||'–')+'</td></tr>').join('')
+      + '</tbody></table>';
+    box.querySelectorAll('[data-ticker]').forEach(btn=>{
+      btn.addEventListener('click', ()=> showStock(btn.getAttribute('data-ticker')));
+    });
+  }catch(e){
+    box.innerHTML = '<p class="empty">尚無告警</p>';
+  }
+}
+
+async function loadPerformance(){
+  const box = document.getElementById('perf-box');
+  if(!box) return;
+  try{
+    const r = await j('/api/performance');
+    if(!r || r.empty){
+      box.innerHTML = '<p class="empty">尚未結算</p>';
+      return;
+    }
+    const rows = r.horizons || [];
+    let html = '<table><thead><tr><th>區間</th><th class="num">n</th><th class="num">勝率</th><th class="num">平均報酬</th></tr></thead><tbody>';
+    html += rows.map(h => {
+      const wr = h.win_rate_pct==null ? '–' : h.win_rate_pct+'%';
+      return '<tr><td>T+'+h.horizon_td+'</td><td class="num">'+h.n+'</td>'
+        +'<td class="num">'+wr+'</td>'
+        +'<td class="num '+(h.avg_return_pct>0?'pos':(h.avg_return_pct<0?'neg':''))+'">'+pct(h.avg_return_pct)+'</td></tr>';
+    }).join('');
+    html += '</tbody></table>';
+    const pats = [];
+    rows.forEach(h => (h.by_pattern||[]).forEach(p => {
+      pats.push({horizon_td:h.horizon_td, ...p});
+    }));
+    if(pats.length){
+      html += '<div class="bt-section-title">依型態</div>';
+      html += '<table><thead><tr><th>區間</th><th>型態</th><th class="num">n</th><th class="num">勝率</th><th class="num">平均報酬</th></tr></thead><tbody>';
+      html += pats.map(p => {
+        const wr = p.win_rate_pct==null ? '–' : p.win_rate_pct+'%';
+        return '<tr><td>T+'+p.horizon_td+'</td><td class="pat">'+esc(patName(p.pattern_type))+'</td>'
+          +'<td class="num">'+p.n+'</td><td class="num">'+wr+'</td>'
+          +'<td class="num '+(p.avg_return_pct>0?'pos':(p.avg_return_pct<0?'neg':''))+'">'+pct(p.avg_return_pct)+'</td></tr>';
+      }).join('');
+      html += '</tbody></table>';
+    }
+    html += '<p class="assumptions">假設：'+esc(r.assumptions||'')+' 勝率與平均報酬只計已結算列；n 為該區間樣本數。</p>';
+    box.innerHTML = html;
+  }catch(e){
+    box.innerHTML = '<p class="empty">尚未結算</p>';
+  }
+}
 
 async function loadSummary(){
   const s = await j('/api/summary');
@@ -1269,6 +1495,7 @@ btOnHoldToChange();
 btOnModeChange();
 
 function loadAll(){ loadSummary(); loadKline(); loadTaiex(); loadMargin(); loadNet(); loadTaifexOi(); loadTop();
+  loadAlerts(); loadPerformance();
   if(document.getElementById('sid').value.trim()) loadStock(); }
 loadAll();
 </script>

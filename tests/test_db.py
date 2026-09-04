@@ -86,6 +86,61 @@ class DbTests(unittest.TestCase):
             Path(__file__).resolve().parents[1] / "screener.db",
         )
 
+    def test_performance_by_horizon_empty(self):
+        got = db.performance_by_horizon()
+        self.assertTrue(got["empty"])
+        self.assertIn("交易日", got["assumptions"])
+        self.assertEqual([h["horizon_td"] for h in got["horizons"]], [5, 20, 60])
+        for block in got["horizons"]:
+            self.assertEqual(block["n"], 0)
+            self.assertIsNone(block["win_rate_pct"])
+            self.assertIsNone(block["avg_return_pct"])
+            self.assertEqual(block["by_pattern"], [])
+
+    def test_performance_by_horizon_splits_horizons_and_patterns(self):
+        a = db.save_alert("2330", "upper_shadow_reversal", "2026-06-01", 100.0)
+        b = db.save_alert("2317", "inside_day", "2026-06-02", 50.0)
+        db.save_performance(a, "2026-06-09", 110.0, 10.0, horizon_td=5)
+        db.save_performance(a, "2026-06-30", 98.0, -2.0, horizon_td=20)
+        db.save_performance(b, "2026-06-10", 52.0, 4.0, horizon_td=5)
+
+        mixed = db.performance_summary()
+        self.assertEqual(mixed["checked"], 3)
+
+        got = db.performance_by_horizon()
+        self.assertFalse(got["empty"])
+        by_h = {h["horizon_td"]: h for h in got["horizons"]}
+        self.assertEqual(by_h[5]["n"], 2)
+        self.assertEqual(by_h[5]["wins"], 2)
+        self.assertEqual(by_h[5]["win_rate_pct"], 100.0)
+        self.assertEqual(by_h[5]["avg_return_pct"], 7.0)
+        self.assertEqual(by_h[20]["n"], 1)
+        self.assertEqual(by_h[20]["wins"], 0)
+        self.assertEqual(by_h[20]["win_rate_pct"], 0.0)
+        self.assertEqual(by_h[20]["avg_return_pct"], -2.0)
+        self.assertEqual(by_h[60]["n"], 0)
+        self.assertIsNone(by_h[60]["win_rate_pct"])
+
+        t5_pat = {p["pattern_type"]: p for p in by_h[5]["by_pattern"]}
+        self.assertEqual(t5_pat["upper_shadow_reversal"]["n"], 1)
+        self.assertEqual(t5_pat["inside_day"]["avg_return_pct"], 4.0)
+
+    def test_list_alerts_and_performance_accept_tuple_rows(self):
+        """Turso/libsql connections do not set sqlite3.Row."""
+        import sqlite3
+
+        db.save_alert("2330", "inside_day", "2026-07-01", 100.0)
+        aid = db.save_alert("2317", "upper_shadow_reversal", "2026-07-02", 50.0)
+        db.save_performance(aid, "2026-07-10", 55.0, 10.0, horizon_td=5)
+        conn = sqlite3.connect(db.get_db_path())
+        try:
+            rows = db.list_alerts(since="2026-07-01", conn=conn)
+            self.assertEqual(rows[0]["ticker"], "2317")
+            got = db.performance_by_horizon(conn=conn)
+            self.assertEqual(got["horizons"][0]["n"], 1)
+        finally:
+            conn.close()
+
 
 if __name__ == "__main__":
     unittest.main()

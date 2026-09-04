@@ -122,6 +122,17 @@ gcloud run deploy stockalert \
 
 會給一個 `*.run.app` 網址。設了那兩個 Turso 變數就讀雲端，不帶本機 `twse_data.db`。回測會把需要的表快照進暫存 sqlite，pandas 不用改。
 
+### 告警與績效區塊
+
+儀表板「今日／近期告警」與「績效摘要」讀 `alerts`、`performance`（T+5／T+20／T+60 結算列）：
+
+| 環境 | 資料在哪 |
+| --- | --- |
+| 本機 | `screener.db`（`python -m notify.screener`、`python -m notify.performance_checker` 寫入） |
+| Cloud Run | 同一個 Turso DB（排程 `python -m data.cloud_db push-alerts` 把兩張表推上去；不必再開第二個 Turso） |
+
+名稱來自市場資料的 `stocks` 表（本機 `twse_data.db` 或 Turso）。題材（theme）目前沒存在表裡，畫面上是空的，也不會在每次開頁去打 yfinance。沒有列時顯示「尚無告警／尚未結算」。近期告警預設近 30 日（可選 7／90，上限 365）。績效是全樣本，並依 `pattern_type` 拆一列，不是分頁。
+
 本機模擬 PaaS：
 
 ```bash

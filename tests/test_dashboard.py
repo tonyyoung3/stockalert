@@ -54,6 +54,26 @@ class DashboardAlertsAPITests(unittest.TestCase):
         self.assertIn("fresh-banner", dashboard.HTML)
         self.assertIn("請跑 python -m market.update_market_data", dashboard.HTML)
 
+    def test_html_stock_lookup_wires_ranking_search_and_deeplink(self):
+        html = dashboard.HTML
+        self.assertIn("function selectStock(", html)
+        self.assertIn("selectStock(row[0], row[1])", html)
+        self.assertIn("onClick:(evt, els)=>", html)
+        self.assertIn("c-buy", html)
+        self.assertIn("c-sell", html)
+        self.assertIn("查無此股", html)
+        self.assertIn("/api/stocks?q=", html)
+        self.assertIn("submitStockSearch", html)
+        self.assertIn("sidActive<0?0:sidActive", html)
+        self.assertIn("new URLSearchParams", html)
+        self.assertIn("history.replaceState", html)
+        self.assertIn("parseStockQuery(location.search)", html)
+        self.assertIn("代號或名稱", html)
+        self.assertIn("id=\"stock-lookup\"", html)
+        self.assertIn("scrollIntoView", html)
+        self.assertIn("function showStock(id, name){ selectStock(id, name); }", html)
+        self.assertNotIn("placeholder=\"輸入股票代號,例如 2330\"", html)
+
     def test_alerts_empty_when_db_missing(self):
         r = self.call("/api/alerts")
         self.assertTrue(r["empty"])
@@ -142,6 +162,27 @@ class DashboardAlertsAPITests(unittest.TestCase):
             self.assertFalse(owns)
         finally:
             dashboard._request_conn.reset(token)
+
+
+class ParseStockQueryTests(unittest.TestCase):
+    def test_extracts_ticker_from_query_path_or_url(self):
+        self.assertEqual(dashboard.parse_stock_query("stock=2330"), "2330")
+        self.assertEqual(dashboard.parse_stock_query("?stock=2330"), "2330")
+        self.assertEqual(dashboard.parse_stock_query("/?stock=2330&days=90"), "2330")
+        self.assertEqual(
+            dashboard.parse_stock_query("http://localhost:8765/?stock=2330"), "2330"
+        )
+        self.assertEqual(dashboard.parse_stock_query("?stock=00631L"), "00631L")
+        self.assertEqual(dashboard.parse_stock_query("stock=2330 台積電"), "2330")
+
+    def test_rejects_missing_or_unsafe_values(self):
+        self.assertIsNone(dashboard.parse_stock_query(""))
+        self.assertIsNone(dashboard.parse_stock_query(None))
+        self.assertIsNone(dashboard.parse_stock_query("?days=90"))
+        self.assertIsNone(dashboard.parse_stock_query("?stock="))
+        self.assertIsNone(dashboard.parse_stock_query("?stock=<script>"))
+        self.assertIsNone(dashboard.parse_stock_query("?stock=a"))
+        self.assertIsNone(dashboard.parse_stock_query("?stock=" + "1" * 11))
 
 
 if __name__ == "__main__":

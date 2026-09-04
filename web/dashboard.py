@@ -44,6 +44,31 @@ def _ymd(qs, key):
     return v if _YMD.fullmatch(v) else None
 
 
+_STOCK_ID = re.compile(r"^[0-9A-Za-z]{2,10}$")
+
+
+def parse_stock_query(query: str | None) -> str | None:
+    """Extract a ticker from `?stock=` / `stock=` query text.
+
+    Accepts a raw query string, a leading `?`, or a path/URL that contains
+    `?stock=`. First whitespace-delimited token must be 2–10 alphanumerics
+    (same rule as the dashboard JS `parseStockQuery`).
+    """
+    if not query:
+        return None
+    raw = query.strip()
+    if "?" in raw:
+        raw = raw.split("?", 1)[1]
+    if "#" in raw:
+        raw = raw.split("#", 1)[0]
+    qs = parse_qs(raw, keep_blank_values=True)
+    val = (qs.get("stock", [""])[0] or "").strip()
+    if not val:
+        return None
+    token = val.split()[0]
+    return token if _STOCK_ID.fullmatch(token) else None
+
+
 def _foreign_window(qs):
     """Inclusive (start, end) for foreign ranking. Empty DB → (None, None).
 
@@ -475,8 +500,10 @@ th{text-align:left;padding:8px 10px;border-bottom:2px solid #dee2e6;color:#6c757
 td{padding:8px 10px;border-bottom:1px solid #f0f0f0}
 tr:hover td{background:#f8f9fa}
 .num{text-align:right;font-variant-numeric:tabular-nums}
-.search{display:flex;gap:8px;margin-bottom:14px}
+.search{display:flex;gap:8px;margin-bottom:14px;align-items:flex-start}
 .search button{padding:6px 16px;border:none;border-radius:4px;background:#4C72B0;color:#fff;cursor:pointer}
+.sid-search{position:relative;flex:1;max-width:360px}
+.sid-search input{width:100%}
 .empty{color:#6c757d;font-size:13px;padding:8px 0}
 .ticker-link{color:#4C72B0;text-decoration:none;font-weight:600;cursor:pointer;background:none;border:none;padding:0;font:inherit}
 .ticker-link:hover{text-decoration:underline}
@@ -596,6 +623,7 @@ footer{text-align:center;color:#adb5bd;font-size:12px;padding:12px}
       <input type="date" id="top-start" onchange="onTopDates()" aria-label="起始日期">
       <span class="hint">～</span>
       <input type="date" id="top-end" onchange="onTopDates()" aria-label="結束日期">
+      <span class="hint">點長條可開啟下方個股</span>
     </span>
   </div>
   <div class="two" style="margin-bottom:0">
@@ -608,8 +636,12 @@ footer{text-align:center;color:#adb5bd;font-size:12px;padding:12px}
   <div class="chart-head"><h3>個股外資買賣超查詢</h3>
     <span><span class="hint">拖曳平移 · 滾輪縮放　</span><button class="reset-btn" onclick="resetZoom('c-stock')">重置</button></span></div>
   <div class="search">
-    <input id="sid" placeholder="輸入股票代號,例如 2330" onkeydown="if(event.key==='Enter')loadStock()">
-    <button onclick="loadStock()">查詢</button>
+    <div class="sid-search" id="sid-search">
+      <input id="sid" placeholder="代號或名稱,例如 2330、台積電" autocomplete="off"
+             oninput="onStockInput()" onfocus="onStockFocus()" onkeydown="onStockKey(event)">
+      <div id="sid-menu" class="ov-menu" hidden></div>
+    </div>
+    <button type="button" onclick="submitStockSearch()">查詢</button>
   </div>
   <canvas id="c-stock" style="display:none"></canvas>
   <canvas id="c-stock-margin" style="display:none;margin-top:16px"></canvas>
@@ -920,13 +952,127 @@ function patName(p){ return PAT[p] || p || '–'; }
 function pct(n){ return n==null ? '–' : ((n>=0?'+':'')+Number(n).toFixed(2)+'%'); }
 function money(n){ return n==null ? '–' : Number(n).toLocaleString('zh-TW', {maximumFractionDigits:2}); }
 
-function showStock(id){
+let stockId = '';
+let sidHits = [];
+let sidActive = -1;
+let sidTimer = null;
+
+function parseStockQuery(search){
+  try{
+    const v = new URLSearchParams(search || location.search).get('stock');
+    return parseStockId(v||'');
+  }catch(e){ return ''; }
+}
+function parseStockId(raw){
+  const token = ((raw||'').trim().split(/\\s+/)[0] || '');
+  return /^[0-9A-Za-z]{2,10}$/.test(token) ? token : '';
+}
+function syncStockUrl(id){
+  try{
+    const u = new URL(location.href);
+    if(id) u.searchParams.set('stock', id);
+    else u.searchParams.delete('stock');
+    history.replaceState(null, '', u.pathname + u.search + u.hash);
+  }catch(e){}
+}
+function selectStock(id, name, opts){
+  opts = opts || {};
+  id = (id||'').trim();
+  if(!id) return;
+  stockId = id;
   const el = document.getElementById('sid');
-  if(!el) return;
-  el.value = id;
-  const box = document.getElementById('stock-lookup');
-  if(box) box.scrollIntoView({behavior:'smooth', block:'start'});
-  loadStock();
+  if(el) el.value = name ? (id+' '+name) : id;
+  hideStockMenu();
+  syncStockUrl(id);
+  if(opts.scroll !== false){
+    const box = document.getElementById('stock-lookup');
+    if(box) box.scrollIntoView({behavior:'smooth', block:'start'});
+    if(el) el.focus();
+  }
+  if(opts.load !== false) loadStock();
+}
+function showStock(id, name){ selectStock(id, name); }
+
+function hideStockMenu(){
+  const menu = document.getElementById('sid-menu');
+  if(menu) menu.hidden = true;
+  sidActive = -1;
+}
+async function fetchStockHits(q){
+  const t = (q||'').trim();
+  if(!t) return [];
+  const r = await j('/api/stocks?q='+encodeURIComponent(t));
+  return (r.data||[]).map(row=>({id:row[0], name:row[1]||row[0]}));
+}
+function renderStockMenu(items){
+  sidHits = items;
+  if(sidActive >= items.length) sidActive = items.length ? 0 : -1;
+  const menu = document.getElementById('sid-menu');
+  if(!menu) return;
+  if(!items.length){
+    menu.innerHTML = '<div class="hint" style="padding:8px 10px">查無此股</div>';
+    menu.hidden = false;
+    return;
+  }
+  menu.innerHTML = items.map((it,i)=>
+    '<button type="button" class="'+(i===sidActive?'active':'')+'" data-i="'+i+'">'
+    +'<span>'+esc(it.id+' '+(it.name||''))+'</span></button>'
+  ).join('');
+  menu.hidden = false;
+  menu.querySelectorAll('button').forEach(btn=>{
+    btn.addEventListener('mousedown', ev=>{ ev.preventDefault(); pickStock(items[+btn.dataset.i]); });
+  });
+}
+function pickStock(item){
+  if(!item) return;
+  selectStock(item.id, item.name);
+}
+function onStockFocus(){
+  if(stockId) return;
+  onStockInput();
+}
+function onStockInput(){
+  const q = document.getElementById('sid').value;
+  stockId = '';
+  clearTimeout(sidTimer);
+  if(!q.trim()){ hideStockMenu(); syncStockUrl(''); return; }
+  sidTimer = setTimeout(async ()=>{
+    sidActive = -1;
+    renderStockMenu(await fetchStockHits(q));
+  }, 160);
+}
+function onStockKey(ev){
+  const menu = document.getElementById('sid-menu');
+  if(ev.key==='Escape'){ hideStockMenu(); return; }
+  if(ev.key==='ArrowDown' || ev.key==='ArrowUp'){
+    ev.preventDefault();
+    if(!menu || menu.hidden){ onStockInput(); return; }
+    if(!sidHits.length) return;
+    const dir = ev.key==='ArrowDown' ? 1 : -1;
+    sidActive = (sidActive + dir + sidHits.length) % sidHits.length;
+    renderStockMenu(sidHits);
+    const el = menu.querySelector('button.active');
+    if(el) el.scrollIntoView({block:'nearest'});
+    return;
+  }
+  if(ev.key==='Enter'){
+    ev.preventDefault();
+    submitStockSearch();
+  }
+}
+async function submitStockSearch(){
+  const q = (document.getElementById('sid').value||'').trim();
+  if(!q){ hideStockMenu(); return; }
+  const menu = document.getElementById('sid-menu');
+  if(menu && !menu.hidden && sidHits.length){
+    pickStock(sidHits[sidActive<0?0:sidActive]);
+    return;
+  }
+  const hits = await fetchStockHits(q);
+  if(hits.length){ pickStock(hits[0]); return; }
+  const direct = parseStockId(q);
+  if(direct){ selectStock(direct); return; }
+  renderStockMenu([]);
 }
 
 async function loadAlerts(){
@@ -1168,6 +1314,7 @@ function clearOverlay(){
 }
 document.addEventListener('click', ev=>{
   if(!ev.target.closest('.ov-search')) hideOverlayMenu();
+  if(!ev.target.closest('#sid-search')) hideStockMenu();
 });
 
 // 疊圖資料都是日頻,指數走勢是小時頻 —— 用「當日值」對齊到當天每個小時點上,
@@ -1338,7 +1485,16 @@ async function loadTop(){
       data:{labels:rows.map(d=>d[0]+' '+d[1]),
         datasets:[{data:rows.map(d=>Math.abs(zhang(d[2]))), backgroundColor:color}]},
       options:{indexAxis:'y', animation:false, plugins:{legend:{display:false}},
-        scales:{y:{ticks:{font:{size:11}}}}}});
+        scales:{y:{ticks:{font:{size:11}}}},
+        onHover:(evt, els)=>{
+          const t = evt.native && evt.native.target;
+          if(t) t.style.cursor = els.length ? 'pointer' : 'default';
+        },
+        onClick:(evt, els)=>{
+          if(!els.length) return;
+          const row = rows[els[0].index];
+          if(row) selectStock(row[0], row[1]);
+        }}});
     mk('c-buy', cfg(r.buy||[], '#c0392bcc'));
     mk('c-sell', cfg(r.sell||[], '#27ae60cc'));
   } catch(e){
@@ -1348,7 +1504,7 @@ async function loadTop(){
 }
 
 async function loadStock(){
-  const sid = document.getElementById('sid').value.trim();
+  const sid = stockId || parseStockId(document.getElementById('sid').value);
   if(!sid) return;
   const r = await j('/api/stock?id='+encodeURIComponent(sid)+'&days='+days());
   const cv = document.getElementById('c-stock');
@@ -1359,6 +1515,9 @@ async function loadStock(){
     return;
   }
   cv.style.display='block';
+  const nm = r.data[0][1];
+  const el = document.getElementById('sid');
+  if(el && sid && nm) el.value = sid+' '+nm;
   let cum = 0; const cumData = r.data.map(d=>cum += zhang(d[4]));
   mk('c-stock', {type:'bar', data:{labels:r.data.map(d=>d[0]),
     datasets:[
@@ -1732,7 +1891,11 @@ btOnModeChange();
 
 function loadAll(){ loadSummary(); loadKline(); loadTaiex(); loadMargin(); loadNet(); loadTaifexOi(); loadTop();
   loadAlerts(); loadPerformance();
-  if(document.getElementById('sid').value.trim()) loadStock(); }
+  if(stockId) loadStock(); }
+(function(){
+  const id = parseStockQuery(location.search);
+  if(id) selectStock(id, null, {load:false});
+})();
 loadAll();
 </script>
 </body>

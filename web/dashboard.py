@@ -499,7 +499,8 @@ header .days-hint{color:rgba(255,255,255,.72);max-width:340px;text-align:right;l
 .reset-btn{padding:3px 10px;font-size:12px;border:1px solid #dee2e6;border-radius:4px;background:#fff;color:#6c757d;cursor:pointer}
 .reset-btn:hover{background:#f0f0f0}
 .top-range{display:flex;align-items:center;flex-wrap:wrap;gap:8px;overflow:visible;min-width:0}
-.top-range input[type="date"]{min-width:9.5em;min-height:44px;flex:1 1 9.5em;font-size:16px}
+.chart-head > span{display:flex;flex-wrap:wrap;gap:8px;align-items:center;min-width:0}
+.top-range input[type="date"]{min-width:9.5em;height:44px!important;min-height:44px;max-height:44px;flex:1 1 9.5em;font-size:16px;padding:8px 10px;-webkit-appearance:none;appearance:none}
 .ov-wrap{display:flex;align-items:center;flex-wrap:wrap;gap:8px;flex:1 1 220px;min-width:0}
 .ov-search{position:relative;flex:1 1 220px;min-width:0;max-width:100%}
 .ov-search input{width:100%;min-width:0}
@@ -552,10 +553,11 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
   .kpis,.two,.bt-kpis{grid-template-columns:1fr}
   .card{padding:14px 14px}
   .chart-head{flex-direction:column;align-items:stretch}
+  .chart-head > span{flex-direction:column;align-items:stretch}
   .ov-wrap,.top-range,.search{flex-direction:column;align-items:stretch;flex:none;width:100%}
   .ov-search,.sid-search{max-width:none;width:100%;flex:none}
   .ov-search input,.sid-search input,.search button,.top-range select,.top-range input[type="date"]{width:100%;min-width:0}
-  .top-range input[type="date"]{min-height:44px;font-size:16px}
+  .top-range input[type="date"]{width:100%;min-width:0;height:44px;min-height:44px;font-size:16px}
   select,input:not([type="checkbox"]):not([type="radio"]){font-size:16px}
   .reset-btn,.search button,.page-nav a{min-height:44px}
   .bt-row{flex-direction:column;align-items:stretch}

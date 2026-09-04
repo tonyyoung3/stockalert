@@ -18,6 +18,7 @@ from datetime import datetime, date, timedelta
 import requests
 
 from data.paths import repo_file
+from data.sqlite_util import configure_local
 
 DB_PATH = repo_file("twse_data.db")
 
@@ -117,12 +118,20 @@ def init_db(conn: sqlite3.Connection):
         index_value REAL,
         PRIMARY KEY (trade_date, t)
     );
+    -- Covering (id, date) indexes for dashboard per-stock range scans.
+    -- New names so Turso CREATE INDEX IF NOT EXISTS can add them beside the old ones.
+    CREATE INDEX IF NOT EXISTS idx_foreign_stock_date ON foreign_daily(stock_id, trade_date);
+    CREATE INDEX IF NOT EXISTS idx_margin_stock_date ON margin_stock(stock_id, trade_date);
+    CREATE INDEX IF NOT EXISTS idx_stock_daily_id_date ON stock_daily(stock_id, trade_date);
+    CREATE INDEX IF NOT EXISTS idx_taiex_hourly_trade_date ON taiex_hourly(trade_date);
+    CREATE INDEX IF NOT EXISTS idx_taiex_hourly_ohlc_trade_date ON taiex_hourly_ohlc(trade_date);
     """)
     conn.commit()
 
 
 def get_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
+    configure_local(conn)
     init_db(conn)
     return conn
 

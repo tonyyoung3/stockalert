@@ -35,6 +35,7 @@ from datetime import date, timedelta
 import requests
 
 from data.paths import repo_file
+from data.sqlite_util import configure_local
 
 DB_PATH = repo_file("twse_data.db")
 BASE = "https://www.taifex.com.tw/cht/3"
@@ -96,12 +97,14 @@ def init_db(conn: sqlite3.Connection):
     );
     CREATE INDEX IF NOT EXISTS idx_fut_oi_date ON taifex_fut_oi(trade_date);
     CREATE INDEX IF NOT EXISTS idx_opt_oi_date ON taifex_opt_oi(trade_date);
+    CREATE INDEX IF NOT EXISTS idx_fut_oi_product_date ON taifex_fut_oi(product, trade_date);
     """)
     conn.commit()
 
 
 def get_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
+    configure_local(conn)
     init_db(conn)
     return conn
 

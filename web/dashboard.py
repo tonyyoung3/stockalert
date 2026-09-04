@@ -9,15 +9,21 @@
 import json
 import re
 import webbrowser
+from contextvars import ContextVar
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
 from data import market_db
 
 _YMD = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+# One sqlite/Turso connection per HTTP API request (Cloud Run round-trips are expensive).
+_request_conn: ContextVar = ContextVar("dashboard_db_conn", default=None)
 
 
 def q(sql, params=()):
+    conn = _request_conn.get()
+    if conn is not None:
+        return conn.execute(sql, params).fetchall()
     return market_db.fetchall(sql, params)
 
 
@@ -57,6 +63,16 @@ def _foreign_window(qs):
 
 
 def api(path, qs):
+    conn = market_db.connect()
+    token = _request_conn.set(conn)
+    try:
+        return _api(path, qs)
+    finally:
+        _request_conn.reset(token)
+        conn.close()
+
+
+def _api(path, qs):
     try:
         days = int(qs.get("days", ["90"])[0])
     except (TypeError, ValueError):

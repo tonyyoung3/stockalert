@@ -115,6 +115,28 @@ class CoverageTests(unittest.TestCase):
         self.assertIn("2026-08-01", daily)
         self.assertIn("2026-08-29", daily)
 
+    def test_stock_daily_latest_name_count(self):
+        db = self.tmp / "twse_data.db"
+        conn = sqlite3.connect(db)
+        conn.execute(
+            "CREATE TABLE stock_daily ("
+            "trade_date TEXT, stock_id TEXT, stock_name TEXT, "
+            "open REAL, high REAL, low REAL, close REAL, volume INTEGER, turnover INTEGER)"
+        )
+        conn.execute(
+            "INSERT INTO stock_daily VALUES ('2026-09-03','2330','台積電',1,1,1,1,1,1)"
+        )
+        conn.execute(
+            "INSERT INTO stock_daily VALUES ('2026-09-03','6488','環球晶',2,2,2,2,2,2)"
+        )
+        conn.commit()
+        conn.close()
+        lines = umd.coverage_lines(db, self.tmp / "us_data.db")
+        latest = [l for l in lines if l.startswith("stock_daily latest")][0]
+        self.assertIn("2026-09-03", latest)
+        self.assertIn("2 names", latest)
+        self.assertIn("OTC possibly missing", latest)
+
 
 class RunJobsTests(unittest.TestCase):
     def test_records_failures_without_raising(self):
@@ -135,3 +157,30 @@ class RunJobsTests(unittest.TestCase):
         kwargs = bf.call_args.kwargs
         self.assertTrue(kwargs["include_today"])
         self.assertEqual(kwargs["today"], umd.taiwan_now().date())
+
+    def test_stock_daily_failure_is_recorded(self):
+        args = umd.parse_args(["--include-today", "--skip-us", "--skip-taifex"])
+        with patch("market.backfill.backfill_ohlc"), \
+             patch("market.backfill.backfill"), \
+             patch("market.backfill.backfill_stock_daily",
+                   side_effect=RuntimeError("2026-09-03 tpex:empty")), \
+             patch("market.collector.sync_stock_master"):
+            failed = umd.run_jobs(args)
+        self.assertEqual(failed, ["stock_daily"])
+
+
+class StepSummaryTests(unittest.TestCase):
+    def test_writes_coverage_when_env_set(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "summary.md"
+            umd.write_step_summary(
+                ["stock_daily latest 2026-09-03: 2,393 names"],
+                ["stock_daily"],
+                env={"GITHUB_STEP_SUMMARY": str(path)},
+            )
+            text = path.read_text(encoding="utf-8")
+            self.assertIn("2,393 names", text)
+            self.assertIn("Failed jobs:** stock_daily", text)
+
+    def test_skips_when_env_missing(self):
+        umd.write_step_summary(["ok"], [], env={})

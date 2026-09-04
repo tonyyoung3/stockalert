@@ -351,20 +351,28 @@ class TestBackfill(DBTestCase):
         self.assertIn(today, seen)
 
     def test_stock_daily_uses_market_wide_endpoint(self):
-        requested = []
+        requested_twse = []
+        requested_tpex = []
 
-        def fake(day):
-            requested.append(day)
+        def fake_twse(day):
+            requested_twse.append(day)
             return [(day.isoformat(), "2330", "台積電", 1., 1., 1., 1., 1, 1)]
 
+        def fake_tpex(day):
+            requested_tpex.append(day)
+            return [(day.isoformat(), "6488", "環球晶", 2., 2., 2., 2., 2, 2)]
+
         today = date(2026, 8, 31)
-        with patch.object(backfill, "fetch_stock_day_all", side_effect=fake):
+        with patch.object(backfill, "fetch_stock_day_all", side_effect=fake_twse), \
+             patch.object(backfill, "fetch_tpex_stock_day_all", side_effect=fake_tpex):
             n = backfill.backfill_stock_daily(3, today=today, include_today=True)
         self.assertGreater(n, 0)
-        self.assertTrue(all(d.weekday() < 5 for d in requested))
-        self.assertIn(today, requested)
-        rows = self.rows("SELECT COUNT(*) FROM stock_daily")
-        self.assertGreater(rows[0][0], 0)
+        self.assertTrue(all(d.weekday() < 5 for d in requested_twse))
+        self.assertEqual(requested_twse, requested_tpex)
+        self.assertIn(today, requested_twse)
+        rows = self.rows("SELECT stock_id FROM stock_daily WHERE trade_date=?",
+                         (today.isoformat(),))
+        self.assertEqual({r[0] for r in rows}, {"2330", "6488"})
 
     def test_stocks_resume_skips_completed(self):
         """已涵蓋回補區間的股票要跳過(中斷續跑)。"""
@@ -402,6 +410,88 @@ class TestBackfill(DBTestCase):
             with self.assertRaises(SystemExit):
                 backfill.backfill_stocks(None, 730)
             mf.assert_not_called()
+
+    def test_stock_daily_adds_tpex_to_existing_twse_day(self):
+        today = date(2026, 8, 31)
+        con = collector.get_conn()
+        with con:
+            con.execute(
+                "INSERT OR REPLACE INTO stock_daily VALUES (?,?,?,?,?,?,?,?,?)",
+                (today.isoformat(), "2330", "台積電", 1., 1., 1., 1., 1, 1),
+            )
+        con.close()
+        twse_calls = []
+
+        def fake_twse(day):
+            twse_calls.append(day)
+            return [(day.isoformat(), "2330", "台積電", 1., 1., 1., 1., 1, 1)]
+
+        def fake_tpex(day):
+            return [(day.isoformat(), "6488", "環球晶", 2., 2., 2., 2., 2, 2)]
+
+        with patch.object(backfill, "fetch_stock_day_all", side_effect=fake_twse), \
+             patch.object(backfill, "fetch_tpex_stock_day_all", side_effect=fake_tpex):
+            backfill.backfill_stock_daily(
+                0, today=today, include_today=True, min_combined=10,
+            )
+        self.assertEqual(twse_calls, [], "existing listed rows must not re-hit MI_INDEX")
+        ids = {r[0] for r in self.rows(
+            "SELECT stock_id FROM stock_daily WHERE trade_date=?",
+            (today.isoformat(),),
+        )}
+        self.assertEqual(ids, {"2330", "6488"})
+
+    def test_stock_daily_raises_when_tpex_empty_on_twse_day(self):
+        today = date(2026, 8, 31)
+
+        def fake_twse(day):
+            return [(day.isoformat(), "2330", "台積電", 1., 1., 1., 1., 1, 1)]
+
+        with patch.object(backfill, "fetch_stock_day_all", side_effect=fake_twse), \
+             patch.object(backfill, "fetch_tpex_stock_day_all", return_value=[]):
+            with self.assertRaises(RuntimeError) as ctx:
+                backfill.backfill_stock_daily(0, today=today, include_today=True)
+        self.assertIn("tpex:empty", str(ctx.exception))
+        self.assertEqual(
+            self.rows("SELECT COUNT(*) FROM stock_daily")[0][0],
+            1,
+            "TWSE rows should still be saved before the job fails",
+        )
+
+    def test_stock_daily_holiday_both_empty_is_ok(self):
+        today = date(2026, 8, 31)
+        with patch.object(backfill, "fetch_stock_day_all", return_value=[]), \
+             patch.object(backfill, "fetch_tpex_stock_day_all", return_value=[]):
+            n = backfill.backfill_stock_daily(0, today=today, include_today=True)
+        self.assertEqual(n, 0)
+
+    def test_save_stock_day_all_writes_listed_and_otc(self):
+        twse = [("2026-09-03", "2330", "台積電", 1., 1., 1., 1., 1, 1)]
+        tpex = [("2026-09-03", "6488", "環球晶", 2., 2., 2., 2., 2, 2)]
+        with patch.object(collector, "fetch_stock_day_all", return_value=twse), \
+             patch.object(collector, "fetch_tpex_stock_day_all", return_value=tpex):
+            collector.save_stock_day_all(date(2026, 9, 3))
+        ids = {r[0] for r in self.rows("SELECT stock_id FROM stock_daily")}
+        self.assertEqual(ids, {"2330", "6488"})
+        self.assertEqual(self.rows("SELECT stock_name FROM stocks WHERE stock_id='6488'")[0][0], "環球晶")
+
+    def test_official_session_bars_prefers_complete_stock_daily(self):
+        con = collector.get_conn()
+        with con:
+            collector.persist_stock_daily(con, [
+                ("2026-09-03", "2330", "台積電", 1., 2., 1., 1.5, 1, 1),
+                ("2026-09-03", "6488", "環球晶", 4., 5., 3., 4.5, 2, 2),
+            ])
+        con.close()
+
+        def boom(_day):
+            raise AssertionError("live fetch must not run when stock_daily is complete")
+
+        with patch.object(collector, "fetch_stock_day_all", side_effect=boom), \
+             patch.object(collector, "fetch_tpex_stock_day_all", side_effect=boom):
+            bars = collector.official_session_bars(date(2026, 9, 3), min_cached=2)
+        self.assertEqual(bars["2330"][6], 1.5)
+        self.assertEqual(bars["6488"][6], 4.5)
 
 
 # ---------------------------------------------------------------- 儀表板

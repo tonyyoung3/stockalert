@@ -14,12 +14,16 @@ import time
 import sqlite3
 import logging
 from datetime import datetime, date, timedelta
+from pathlib import Path
 
 import requests
 
 from data.paths import repo_file
 
 DB_PATH = repo_file("twse_data.db")
+# MI_INDEX listed-only is ~1,300–1,400 names; listed+OTC is ~2,300.
+# Below this we treat a day as missing 上櫃 and fetch TPEX again.
+MIN_COMBINED_STOCK_DAILY = 1800
 
 logging.basicConfig(
     level=logging.INFO,
@@ -479,8 +483,73 @@ def fetch_tpex_stock_day_all(day: date) -> list[tuple]:
     return out
 
 
-def official_session_bars(day: date, *, fetch_twse=None, fetch_tpex=None) -> dict[str, tuple]:
-    """stock_id -> official (date, id, name, open, high, low, close, volume, turnover)."""
+def persist_stock_daily(conn: sqlite3.Connection, rows: list[tuple]) -> int:
+    """Write listed and/or OTC rows into the existing stock_daily table.
+
+    Same 9-column schema as today — no new table or ALTER. TWSE and TPEX
+    stock_ids do not overlap, so both markets share (trade_date, stock_id).
+    """
+    if not rows:
+        return 0
+    conn.executemany(
+        "INSERT OR REPLACE INTO stock_daily VALUES (?,?,?,?,?,?,?,?,?)",
+        rows,
+    )
+    update_stock_master(conn, [(r[1], r[2]) for r in rows], rows[0][0])
+    return len(rows)
+
+
+def load_stock_daily_bars(
+    day: date,
+    conn: sqlite3.Connection | None = None,
+) -> dict[str, tuple]:
+    """stock_id -> persisted official bar, if twse_data.db already has that day."""
+    own = False
+    if conn is None:
+        if not Path(DB_PATH).exists():
+            return {}
+        conn = get_conn()
+        own = True
+    try:
+        try:
+            rows = conn.execute(
+                "SELECT trade_date, stock_id, stock_name, open, high, low, close, "
+                "volume, turnover FROM stock_daily WHERE trade_date = ?",
+                (day.isoformat(),),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return {}
+        return {
+            str(row[1]).strip(): tuple(row)
+            for row in rows
+            if row[6] is not None
+        }
+    finally:
+        if own:
+            conn.close()
+
+
+def official_session_bars(
+    day: date,
+    *,
+    fetch_twse=None,
+    fetch_tpex=None,
+    use_db: bool = True,
+    min_cached: int = MIN_COMBINED_STOCK_DAILY,
+) -> dict[str, tuple]:
+    """stock_id -> official (date, id, name, open, high, low, close, volume, turnover).
+
+    Prefers persisted stock_daily when the 18:00 catch-up already stored
+    listed+OTC. Otherwise live-fetches TWSE MI_INDEX + TPEX quotes — the same
+    path the screener uses to fill Yahoo Close=NaN. Does not write; writers
+    are save_stock_day_all / backfill_stock_daily.
+    """
+    live_overrides = fetch_twse is not None or fetch_tpex is not None
+    if use_db and not live_overrides:
+        cached = load_stock_daily_bars(day)
+        if len(cached) >= min_cached:
+            log.info("official bars %s from stock_daily (%d names)", day, len(cached))
+            return cached
     twse = fetch_twse or fetch_stock_day_all
     tpex = fetch_tpex or fetch_tpex_stock_day_all
     out: dict[str, tuple] = {}
@@ -498,16 +567,36 @@ def official_session_bars(day: date, *, fetch_twse=None, fetch_tpex=None) -> dic
 
 
 def save_stock_day_all(day: date | None = None):
-    """抓指定日(預設今天)全市場個股日K;無資料則往前找(最多 7 天)。"""
+    """抓指定日(預設今天)上市+上櫃個股日K;無資料則往前找(最多 7 天)。"""
     day = day or date.today()
     for _ in range(7):
-        rows = fetch_stock_day_all(day)
+        twse_err = tpex_err = None
+        try:
+            twse_rows = fetch_stock_day_all(day)
+        except Exception as exc:
+            twse_err = exc
+            twse_rows = []
+            log.warning("%s 上市日K失敗: %s", day, exc)
+        try:
+            tpex_rows = fetch_tpex_stock_day_all(day)
+        except Exception as exc:
+            tpex_err = exc
+            tpex_rows = []
+            log.warning("%s 上櫃日K失敗: %s", day, exc)
+        rows = twse_rows + tpex_rows
         if rows:
             with get_conn() as conn:
-                conn.executemany(
-                    "INSERT OR REPLACE INTO stock_daily VALUES (?,?,?,?,?,?,?,?,?)", rows)
-                update_stock_master(conn, [(r[1], r[2]) for r in rows], rows[0][0])
-            log.info("個股日K %s:%d 檔已存入", day, len(rows))
+                persist_stock_daily(conn, rows)
+            log.info(
+                "個股日K %s:上市 %d 檔、上櫃 %d 檔已存入",
+                day, len(twse_rows), len(tpex_rows),
+            )
+            if twse_err:
+                raise RuntimeError(f"{day.isoformat()} TWSE fetch failed: {twse_err}")
+            if tpex_err:
+                raise RuntimeError(f"{day.isoformat()} TPEX fetch failed: {tpex_err}")
+            if twse_rows and not tpex_rows:
+                raise RuntimeError(f"{day.isoformat()} TPEX empty on TWSE trading day")
             return
         log.info("%s 無個股日K資料,往前一天找", day)
         day -= timedelta(days=1)

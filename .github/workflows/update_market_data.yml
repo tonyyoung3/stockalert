@@ -2,7 +2,9 @@ name: Update market data
 
 on:
   schedule:
-    # 18:00 Taiwan (UTC+8) weekdays. T86 / margin / 5-sec index are usually out by then.
+    # GitHub cron is UTC. 10:00 UTC = 18:00 Asia/Taipei (no DST).
+    # Listed + OTC daily prices live in this job (stock_daily), not a second pipeline.
+    # T86 / margin / 5-sec index / MI_INDEX / TPEX quotes are usually out by then.
     - cron: '0 10 * * 1-5'
   workflow_dispatch:
     inputs:
@@ -45,6 +47,7 @@ jobs:
 
       - name: Catch up market data
         env:
+          TZ: Asia/Taipei
           DAYS: ${{ github.event.inputs.days || '14' }}
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}

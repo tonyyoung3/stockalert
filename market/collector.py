@@ -415,6 +415,10 @@ def _f(v):
         return None
 
 
+def roc_date(day: date) -> str:
+    return f"{day.year - 1911}/{day.month:02d}/{day.day:02d}"
+
+
 def fetch_stock_day_all(day: date) -> list[tuple]:
     """MI_INDEX(全市場收盤行情):一次請求取得所有個股當日開高低收量。"""
     url = "https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX"
@@ -439,6 +443,57 @@ def fetch_stock_day_all(day: date) -> list[tuple]:
         out.append((d, str(row[0]).strip(), str(row[1]).strip(),
                     _f(row[5]), _f(row[6]), _f(row[7]), _f(row[8]),
                     _n(row[2]), _n(row[4])))
+    return out
+
+
+def fetch_tpex_stock_day_all(day: date) -> list[tuple]:
+    """櫃買每日收盤行情。回傳格式與 fetch_stock_day_all 相同。"""
+    url = "https://www.tpex.org.tw/web/stock/aftertrading/otc_quotes_no1430/stk_wn1430_result.php"
+    params = {"l": "zh-tw", "d": roc_date(day), "se": "EW"}
+    r = requests.get(url, params=params, headers=HEADERS, timeout=60)
+    r.raise_for_status()
+    data = r.json()
+    stock_rows = []
+    for table in data.get("tables") or []:
+        fields = [str(f).strip() for f in table.get("fields", [])]
+        if "代號" in fields and any(f.startswith("收盤") for f in fields):
+            stock_rows = table.get("data") or []
+            break
+    d = day.isoformat()
+    out = []
+    for row in stock_rows:
+        # 0代號 1名稱 2收盤 3漲跌 4開 5高 6低 7成交股數 8成交金額
+        if len(row) < 8:
+            continue
+        out.append((
+            d,
+            str(row[0]).strip(),
+            str(row[1]).strip(),
+            _f(row[4]),
+            _f(row[5]),
+            _f(row[6]),
+            _f(row[2]),
+            _n(row[7]),
+            _n(row[8]) if len(row) > 8 else None,
+        ))
+    return out
+
+
+def official_session_bars(day: date, *, fetch_twse=None, fetch_tpex=None) -> dict[str, tuple]:
+    """stock_id -> official (date, id, name, open, high, low, close, volume, turnover)."""
+    twse = fetch_twse or fetch_stock_day_all
+    tpex = fetch_tpex or fetch_tpex_stock_day_all
+    out: dict[str, tuple] = {}
+    for fetch in (twse, tpex):
+        try:
+            rows = fetch(day)
+        except Exception as exc:
+            log.warning("official bars %s failed: %s", day, exc)
+            continue
+        for row in rows:
+            if row[6] is None:
+                continue
+            out[str(row[1]).strip()] = row
     return out
 
 

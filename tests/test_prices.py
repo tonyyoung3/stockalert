@@ -5,12 +5,14 @@ import pandas as pd
 
 from notify.performance_checker import evaluate_row
 from data.prices import (
+    apply_official_bars,
     calendar_buffer_days,
     drop_incomplete_ohlc,
     extract_ohlcv,
     fill_missing_closes,
     horizon_exit,
     last_close,
+    last_bar_needs_close,
     patch_incomplete_closes,
     signal_index,
     taiwan_session_date,
@@ -111,8 +113,67 @@ class PricesTests(unittest.TestCase):
             self.assertEqual(kwargs["interval"], "1h")
             return {tickers[0]: hourly}
 
-        patched = patch_incomplete_closes({"2330.TW": daily}, download=fake_download)
+        patched = patch_incomplete_closes(
+            {"2330.TW": daily}, download=fake_download, official={}
+        )
         self.assertEqual(float(patched["2330.TW"]["Close"].iloc[-1]), 107.5)
+
+    def test_apply_official_bars_fills_nan_close(self):
+        daily = _bars(n=3)
+        session = daily.index[-1].date()
+        daily.loc[daily.index[-1], "Close"] = float("nan")
+        official = {
+            "2330": (
+                session.isoformat(),
+                "2330",
+                "台積電",
+                102.0,
+                108.0,
+                101.0,
+                107.5,
+                2000,
+                200000,
+            )
+        }
+        patched = apply_official_bars({"2330.TW": daily}, official)
+        self.assertEqual(float(patched["2330.TW"]["Close"].iloc[-1]), 107.5)
+        self.assertEqual(float(patched["2330.TW"]["High"].iloc[-1]), 108.0)
+        self.assertFalse(last_bar_needs_close(patched["2330.TW"]))
+
+    def test_apply_official_bars_skips_other_session(self):
+        daily = _bars(n=3)
+        daily.loc[daily.index[-1], "Close"] = float("nan")
+        official = {
+            "2330": ("2020-01-01", "2330", "台積電", 1.0, 1.0, 1.0, 9.0, 1, 1)
+        }
+        patched = apply_official_bars({"2330.TW": daily}, official)
+        self.assertTrue(last_bar_needs_close(patched["2330.TW"]))
+
+    def test_patch_incomplete_closes_prefers_official_over_hourly(self):
+        daily = _bars(n=3)
+        session = daily.index[-1].date()
+        daily.loc[daily.index[-1], "Close"] = float("nan")
+        official = {
+            "2330": (
+                session.isoformat(),
+                "2330",
+                "台積電",
+                102.0,
+                108.0,
+                101.0,
+                109.0,
+                2000,
+                200000,
+            )
+        }
+
+        def boom(*_args, **_kwargs):
+            raise AssertionError("hourly download must not run after official fill")
+
+        patched = patch_incomplete_closes(
+            {"2330.TW": daily}, download=boom, official=official
+        )
+        self.assertEqual(float(patched["2330.TW"]["Close"].iloc[-1]), 109.0)
 
     def test_horizon_exit_is_trading_days_after_signal(self):
         df = _bars()

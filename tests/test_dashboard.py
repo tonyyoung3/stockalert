@@ -252,12 +252,35 @@ class DashboardNavTests(unittest.TestCase):
         self.assertIn("data-bt-fold=\"entry\"", html)
         self.assertIn("scrollIntoView", html)
 
+    def test_html_is_usable_on_narrow_phones(self):
+        html = dashboard.HTML
+        self.assertIn("@media(max-width:768px)", html)
+        self.assertIn(".ov-search input{width:100%", html)
+        self.assertNotIn(".ov-search input{width:260px}", html)
+        self.assertIn("minmax(min(100%,420px)", html)
+        self.assertIn("table-scroll", html)
+        self.assertIn("拖曳／雙指縮放", html)
+        self.assertNotIn("滾輪縮放", html)
+        self.assertIn("function initBtFolds(", html)
+        self.assertIn('<details class="bt-box" data-bt-fold="filters" open>', html)
+        self.assertIn('<details class="bt-box" data-bt-fold="entry" open>', html)
+        self.assertIn('data-bt-fold="exit"', html)
+        self.assertIn(".top-range input[type=\"date\"]{min-width:9.5em;height:44px!important;min-height:44px", html)
+        self.assertIn("-webkit-appearance:none", html)
+        self.assertIn("bindSuggestPick", html)
+        self.assertIn(">市場</a>", html)
+        self.assertIn(">個股</a>", html)
+        self.assertIn(">告警</a>", html)
+        self.assertIn(">回測</a>", html)
+
     def test_readme_documents_nav_and_days_scope(self):
         text = Path(__file__).resolve().parents[1].joinpath("README.md").read_text(encoding="utf-8")
         self.assertIn("### 儀表板分區", text)
         self.assertIn("#backtest", text)
         self.assertIn("不受全域天數控制", text)
         self.assertIn("?stock=", text)
+        self.assertIn("375px", text)
+        self.assertIn("雙指縮放", text)
 
 
 if __name__ == "__main__":

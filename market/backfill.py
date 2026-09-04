@@ -36,6 +36,17 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 
 SLEEP = 4  # 秒,請求間隔
 HOURS = ["09:00:00", "10:00:00", "11:00:00", "12:00:00", "13:00:00"]
+# Catch-up only needs dates inside the window; scanning the full table grows with history.
+_DATE_TABLES = frozenset({
+    "stock_daily",
+    "taiex_hourly",
+    "taiex_hourly_ohlc",
+    "taiex_5sec_open",
+    "foreign_daily",
+    "margin_stock",
+    "margin_total",
+    "taiex_daily",
+})
 
 
 def sample_hours(day: date, rows: list[tuple]) -> list[tuple]:
@@ -53,8 +64,16 @@ def sample_hours(day: date, rows: list[tuple]) -> list[tuple]:
     return out
 
 
-def existing_dates(conn, table) -> set:
-    return {r[0] for r in conn.execute(f"SELECT DISTINCT trade_date FROM {table}")}
+def existing_dates(conn, table, since: str | None = None) -> set:
+    """Distinct trade_date values, optionally only dates on/after `since` (YYYY-MM-DD)."""
+    if table not in _DATE_TABLES:
+        raise ValueError(f"unknown date table: {table!r}")
+    sql = f"SELECT DISTINCT trade_date FROM {table}"
+    params: tuple = ()
+    if since:
+        sql += " WHERE trade_date >= ?"
+        params = (since,)
+    return {r[0] for r in conn.execute(sql, params)}
 
 
 def backfill_ohlc(days: int):
@@ -129,12 +148,17 @@ def window_end(today: date, include_today: bool) -> date:
     return today if include_today else today - timedelta(days=1)
 
 
-def stock_daily_counts(conn) -> dict[str, int]:
+def stock_daily_counts(conn, since: str | None = None) -> dict[str, int]:
+    """Per-date row counts, optionally only dates on/after `since` (YYYY-MM-DD)."""
+    sql = "SELECT trade_date, COUNT(*) FROM stock_daily"
+    params: tuple = ()
+    if since:
+        sql += " WHERE trade_date >= ?"
+        params = (since,)
+    sql += " GROUP BY trade_date"
     return {
         row[0]: int(row[1])
-        for row in conn.execute(
-            "SELECT trade_date, COUNT(*) FROM stock_daily GROUP BY trade_date"
-        )
+        for row in conn.execute(sql, params)
     }
 
 
@@ -148,11 +172,12 @@ def backfill_stock_daily(
 
     已有足夠檔數(上市+上櫃)的日期跳過。只有上市的日期會再抓上櫃,不會重抓上市。
     交易日有上市、上櫃卻抓空或拋錯時 raise,讓正式排程變紅並打 Slack。
+    Catch-up counts are limited to the window so we do not GROUP BY the full table.
     """
     conn = get_conn()
     today = today or date.today()
-    counts = stock_daily_counts(conn)
     start = today - timedelta(days=days)
+    counts = stock_daily_counts(conn, since=start.isoformat())
     end = window_end(today, include_today)
     n = 0
     twse_days = tpex_days = 0
@@ -218,12 +243,13 @@ def backfill(days: int, do_index=True, do_foreign=True, do_margin=True,
              today: date | None = None, include_today: bool = False):
     conn = get_conn()
     today = today or date.today()
-    have_idx = (existing_dates(conn, "taiex_hourly")
-                & existing_dates(conn, "taiex_hourly_ohlc")
-                & existing_dates(conn, "taiex_5sec_open")) if do_index else set()
-    have_for = existing_dates(conn, "foreign_daily") if do_foreign else set()
-    have_mar = existing_dates(conn, "margin_stock") if do_margin else set()
     start = today - timedelta(days=days)
+    since = start.isoformat()
+    have_idx = (existing_dates(conn, "taiex_hourly", since=since)
+                & existing_dates(conn, "taiex_hourly_ohlc", since=since)
+                & existing_dates(conn, "taiex_5sec_open", since=since)) if do_index else set()
+    have_for = existing_dates(conn, "foreign_daily", since=since) if do_foreign else set()
+    have_mar = existing_dates(conn, "margin_stock", since=since) if do_margin else set()
     end = window_end(today, include_today)
     day = start
     n_idx = n_for = n_mar = 0

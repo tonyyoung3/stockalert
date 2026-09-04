@@ -458,6 +458,20 @@ class TestBackfill(DBTestCase):
             "TWSE rows should still be saved before the job fails",
         )
 
+    def test_stock_daily_catchup_counts_are_window_scoped(self):
+        today = date(2026, 8, 31)
+        seen = {}
+
+        def fake_counts(conn, since=None):
+            seen["since"] = since
+            return {}
+
+        with patch.object(backfill, "stock_daily_counts", side_effect=fake_counts), \
+             patch.object(backfill, "fetch_stock_day_all", return_value=[]), \
+             patch.object(backfill, "fetch_tpex_stock_day_all", return_value=[]):
+            backfill.backfill_stock_daily(3, today=today, include_today=True)
+        self.assertEqual(seen["since"], (today - timedelta(days=3)).isoformat())
+
     def test_stock_daily_holiday_both_empty_is_ok(self):
         today = date(2026, 8, 31)
         with patch.object(backfill, "fetch_stock_day_all", return_value=[]), \

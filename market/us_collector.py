@@ -27,6 +27,7 @@ import logging
 from datetime import datetime
 
 from data.paths import repo_file
+from data.sqlite_util import configure_local
 
 DB_PATH = repo_file("us_data.db")
 DEFAULT_TICKERS = ["SPY", "QQQ"]
@@ -64,12 +65,14 @@ def init_db(conn: sqlite3.Connection):
     );
     CREATE INDEX IF NOT EXISTS idx_us_hourly_date ON us_hourly(ticker, trade_date);
     CREATE INDEX IF NOT EXISTS idx_us_minute_date ON us_minute(ticker, trade_date);
+    CREATE INDEX IF NOT EXISTS idx_us_daily_date ON us_daily(trade_date);
     """)
     conn.commit()
 
 
 def get_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
+    configure_local(conn)
     init_db(conn)
     return conn
 

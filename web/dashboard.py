@@ -2073,12 +2073,18 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
+_MISSING_DATA = (
+    "找不到市場資料。本機請先跑 python -m market.update_market_data;"
+    " Cloud Run 請設 TURSO_DATABASE_URL 跟 TURSO_AUTH_TOKEN。"
+)
+
+
 def main() -> int:
     if not market_db.available():
-        raise SystemExit(
-            "找不到市場資料。本機請先跑 python -m market.update_market_data;"
-            " Cloud Run 請設 TURSO_DATABASE_URL 跟 TURSO_AUTH_TOKEN。"
-        )
+        if not market_db.must_listen():
+            raise SystemExit(_MISSING_DATA)
+        print(_MISSING_DATA)
+        print("仍會綁 PORT,讓 Cloud Run 探活通過;頁面與 API 在有資料前會是空的。")
 
     host, port = market_db.listen_host_port()
     try_ports = [port] if host == "0.0.0.0" else list(range(port, port + 10))

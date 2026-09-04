@@ -1,6 +1,8 @@
 """screener.db access for Slack, harness, and later the website."""
 
 from alertsdb.store import (
+    DASHBOARD_HORIZONS,
+    HORIZON_ASSUMPTIONS,
     count_alerts,
     get_conn,
     get_db_path,
@@ -10,6 +12,7 @@ from alertsdb.store import (
     init_db,
     list_alert_history,
     list_alerts,
+    performance_by_horizon,
     performance_summary,
     save_alert,
     save_performance,
@@ -17,6 +20,8 @@ from alertsdb.store import (
 )
 
 __all__ = [
+    "DASHBOARD_HORIZONS",
+    "HORIZON_ASSUMPTIONS",
     "count_alerts",
     "get_conn",
     "get_db_path",
@@ -26,6 +31,7 @@ __all__ = [
     "init_db",
     "list_alert_history",
     "list_alerts",
+    "performance_by_horizon",
     "performance_summary",
     "save_alert",
     "save_performance",

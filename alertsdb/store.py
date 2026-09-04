@@ -160,8 +160,39 @@ def get_pending_horizon_jobs(
     return jobs
 
 
-def _as_dicts(rows) -> list[dict]:
-    return [dict(row) for row in rows]
+DASHBOARD_HORIZONS = (5, 20, 60)
+HORIZON_ASSUMPTIONS = (
+    "以訊號K棒收盤價進場，持有至第 N 個交易日收盤出場（T+N 交易日，非日曆日）。"
+)
+_ALERT_COLS = ("id", "ticker", "pattern_type", "alert_date", "price_at_alert", "created_at")
+
+
+def _as_dicts(rows, keys: tuple[str, ...] | None = None) -> list[dict]:
+    out = []
+    for row in rows:
+        if hasattr(row, "keys") and not isinstance(row, (tuple, list)):
+            out.append(dict(row))
+        elif keys is not None:
+            out.append(dict(zip(keys, row)))
+        else:
+            out.append(dict(row))
+    return out
+
+
+def _cell(row, key: str, idx: int):
+    if isinstance(row, (tuple, list)):
+        return row[idx]
+    try:
+        return row[key]
+    except (KeyError, IndexError, TypeError):
+        return row[idx]
+
+
+def _run_on(conn, fn):
+    if conn is not None:
+        return fn(conn)
+    with get_conn() as owned:
+        return fn(owned)
 
 
 def list_alerts(
@@ -170,6 +201,7 @@ def list_alerts(
     pattern_type: str | None = None,
     since: str | None = None,
     limit: int = 20,
+    conn=None,
 ) -> list[dict]:
     """Newest alerts first. `since` is an inclusive YYYY-MM-DD on alert_date."""
     clauses = ["1=1"]
@@ -184,8 +216,9 @@ def list_alerts(
         clauses.append("alert_date >= ?")
         params.append(since)
     params.append(max(1, limit))
-    with get_conn() as conn:
-        rows = conn.execute(
+
+    def _query(c):
+        rows = c.execute(
             f"""
             SELECT id, ticker, pattern_type, alert_date, price_at_alert, created_at
             FROM alerts
@@ -195,7 +228,9 @@ def list_alerts(
             """,
             params,
         ).fetchall()
-    return _as_dicts(rows)
+        return _as_dicts(rows, _ALERT_COLS)
+
+    return _run_on(conn, _query)
 
 
 def list_alert_history(ticker: str, limit: int = 20) -> list[dict]:
@@ -270,4 +305,108 @@ def performance_summary(pattern_type: str | None = None) -> dict:
         "min_return_pct": round(float(row["min_return_pct"]), 2) if row["min_return_pct"] is not None else None,
         "max_return_pct": round(float(row["max_return_pct"]), 2) if row["max_return_pct"] is not None else None,
         "pattern_type": pattern_type,
+    }
+
+
+def _horizon_stats(n, wins, avg) -> dict:
+    n = int(n or 0)
+    wins = int(wins or 0)
+    return {
+        "n": n,
+        "wins": wins,
+        "win_rate_pct": round(100.0 * wins / n, 2) if n else None,
+        "avg_return_pct": round(float(avg), 2) if avg is not None else None,
+    }
+
+
+def performance_by_horizon(
+    horizons: tuple[int, ...] = DASHBOARD_HORIZONS,
+    conn=None,
+) -> dict:
+    """T+5 / T+20 / T+60 summaries, overall and per pattern_type.
+
+    Unlike `performance_summary`, this does not mix horizons into one bucket
+    and does not report pending_28d.
+    """
+    horizons = tuple(int(h) for h in horizons) or DASHBOARD_HORIZONS
+
+    def _empty_horizon(horizon_td: int) -> dict:
+        return {
+            "horizon_td": horizon_td,
+            "n": 0,
+            "wins": 0,
+            "win_rate_pct": None,
+            "avg_return_pct": None,
+            "by_pattern": [],
+        }
+
+    def _query(c):
+        placeholders = ",".join("?" * len(horizons))
+        overall_rows = c.execute(
+            f"""
+            SELECT horizon_td,
+                   COUNT(*) AS n,
+                   SUM(CASE WHEN return_pct > 0 THEN 1 ELSE 0 END) AS wins,
+                   AVG(return_pct) AS avg_return_pct
+            FROM performance
+            WHERE horizon_td IN ({placeholders})
+            GROUP BY horizon_td
+            """,
+            horizons,
+        ).fetchall()
+        pattern_rows = c.execute(
+            f"""
+            SELECT p.horizon_td,
+                   a.pattern_type,
+                   COUNT(*) AS n,
+                   SUM(CASE WHEN p.return_pct > 0 THEN 1 ELSE 0 END) AS wins,
+                   AVG(p.return_pct) AS avg_return_pct
+            FROM performance p
+            JOIN alerts a ON a.id = p.alert_id
+            WHERE p.horizon_td IN ({placeholders})
+            GROUP BY p.horizon_td, a.pattern_type
+            ORDER BY p.horizon_td, a.pattern_type
+            """,
+            horizons,
+        ).fetchall()
+        return overall_rows, pattern_rows
+
+    overall_rows, pattern_rows = _run_on(conn, _query)
+    by_h: dict[int, dict] = {h: _empty_horizon(h) for h in horizons}
+    for row in overall_rows:
+        h = int(_cell(row, "horizon_td", 0))
+        if h not in by_h:
+            by_h[h] = _empty_horizon(h)
+        stats = _horizon_stats(_cell(row, "n", 1), _cell(row, "wins", 2), _cell(row, "avg_return_pct", 3))
+        by_h[h].update(stats)
+        by_h[h]["horizon_td"] = h
+        by_h[h]["by_pattern"] = []
+    patterns: dict[int, list] = {h: [] for h in by_h}
+    for row in pattern_rows:
+        h = int(_cell(row, "horizon_td", 0))
+        stats = _horizon_stats(_cell(row, "n", 2), _cell(row, "wins", 3), _cell(row, "avg_return_pct", 4))
+        stats["pattern_type"] = _cell(row, "pattern_type", 1)
+        patterns.setdefault(h, []).append(stats)
+    for h, items in patterns.items():
+        if h in by_h:
+            by_h[h]["by_pattern"] = items
+        else:
+            extra = _empty_horizon(h)
+            extra.update(_horizon_stats(
+                sum(p["n"] for p in items),
+                sum(p["wins"] for p in items),
+                None,
+            ))
+            extra["by_pattern"] = items
+            by_h[h] = extra
+
+    ordered = [by_h[h] for h in horizons if h in by_h]
+    for h, block in by_h.items():
+        if h not in horizons:
+            ordered.append(block)
+    empty = all(block["n"] == 0 for block in ordered)
+    return {
+        "empty": empty,
+        "assumptions": HORIZON_ASSUMPTIONS,
+        "horizons": ordered,
     }

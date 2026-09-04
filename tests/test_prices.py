@@ -149,6 +149,27 @@ class PricesTests(unittest.TestCase):
         patched = apply_official_bars({"2330.TW": daily}, official)
         self.assertTrue(last_bar_needs_close(patched["2330.TW"]))
 
+    def test_apply_official_bars_fills_otc_yahoo_symbol(self):
+        daily = _bars(n=3)
+        session = daily.index[-1].date()
+        daily.loc[daily.index[-1], "Close"] = float("nan")
+        official = {
+            "6488": (
+                session.isoformat(),
+                "6488",
+                "環球晶",
+                4.0,
+                5.0,
+                3.0,
+                4.5,
+                2,
+                2,
+            )
+        }
+        patched = apply_official_bars({"6488.TWO": daily}, official)
+        self.assertEqual(float(patched["6488.TWO"]["Close"].iloc[-1]), 4.5)
+        self.assertFalse(last_bar_needs_close(patched["6488.TWO"]))
+
     def test_patch_incomplete_closes_prefers_official_over_hourly(self):
         daily = _bars(n=3)
         session = daily.index[-1].date()

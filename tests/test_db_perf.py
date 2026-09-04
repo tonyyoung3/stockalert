@@ -100,6 +100,28 @@ class CoveringIndexTests(unittest.TestCase):
             backfill.existing_dates(conn, "sqlite_master")
         conn.close()
 
+    def test_stock_daily_counts_can_limit_to_catchup_window(self):
+        conn = sqlite3.connect(self.path)
+        conn.executemany(
+            "INSERT INTO stock_daily (trade_date, stock_id) VALUES (?, ?)",
+            [
+                ("2020-01-02", "2330"),
+                ("2026-08-01", "2330"),
+                ("2026-08-01", "2317"),
+                ("2026-08-02", "2317"),
+            ],
+        )
+        conn.commit()
+        self.assertEqual(
+            backfill.stock_daily_counts(conn),
+            {"2020-01-02": 1, "2026-08-01": 2, "2026-08-02": 1},
+        )
+        self.assertEqual(
+            backfill.stock_daily_counts(conn, since="2026-08-01"),
+            {"2026-08-01": 2, "2026-08-02": 1},
+        )
+        conn.close()
+
 
 class AlertsIndexTests(unittest.TestCase):
     def setUp(self):

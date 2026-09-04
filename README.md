@@ -53,12 +53,14 @@ PTT 股板週報跟 Reddit 投資想法週報都是本機整理、印到 stdout�
 
 ## 台股資料收集器
 
-正式環境用 GitHub Actions 排程，每個台股交易日 **18:00 台灣時間** 跑 `python -m market.update_market_data`，補最近 14 天缺的資料：
+正式環境用 GitHub Actions 排程，每個台股交易日 **18:00 台灣時間（Asia/Taipei）** 跑 `python -m market.update_market_data`，補最近 14 天缺的資料：
 
 - 大盤日 K / 小時 K / 開盤 5 秒
-- 外資買賣超、融資融券、全市場個股日 K
+- 外資買賣超、融資融券、全市場個股日 K（**上市**證交所 MI_INDEX + **上櫃**櫃買收盤行情，寫進同一張 `stock_daily`）
 - 期交所三大法人未平倉
 - 美股 SPY / QQQ / IWM
+
+這就是每日台股價格下載，不是另開一條 Yahoo 全市場 pipeline。篩選器（21:00 台灣時間）仍用 yfinance + `taiwan_stocks.txt`；Yahoo Close=NaN 時回填同一組官方上市/上櫃收盤價（PR #22 / #23）。上櫃抓空或失敗會讓這輪 job 變紅，既有 Slack 失敗通知會帶 log。
 
 資料先寫進 `twse_data.db`、`us_data.db`，用 Actions cache 接下一次、artifact 留 90 天，**不要 commit**。設了 `TURSO_DATABASE_URL` 跟 `TURSO_AUTH_TOKEN` 時，同一輪會把最近 N 天的列推到 Turso（一個 DB 裡同時放台股表跟美股表）。篩選排程另外把 `screener.db` 的 alerts / performance 全量推上去（表很小，且 performance 有 FK）。沒設 secrets 就只留本機檔，排程不會失敗。增量欄位依序認 `trade_date` / `alert_date` / `check_date`。
 

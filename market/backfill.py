@@ -12,7 +12,7 @@
   python -m market.backfill ohlc       # 只回補大盤日K
   python -m market.backfill stock 2330,2454 730  # 回補指定個股日K
   python -m market.backfill stock              # 回補主檔全部股票日K(量大,會先確認)
-  python -m market.backfill stock-daily 14     # 全市場日K(MI_INDEX,每天一次請求)
+  python -m market.backfill stock-daily 14     # 上市+上櫃日K(MI_INDEX + 櫃買,寫進 stock_daily)
 
 支援中斷續跑:已存在的日期會自動跳過。
 每次請求間隔 4 秒(證交所有流量限制,請勿調低)。
@@ -26,7 +26,9 @@ import requests
 
 from market.collector import (get_conn, fetch_foreign, fetch_taiex_ohlc_month,
                        fetch_index_5sec, hourly_ohlc_from_5sec, fetch_margin,
-                       fetch_stock_month, fetch_stock_day_all, update_stock_master,
+                       fetch_stock_month, fetch_stock_day_all,
+                       fetch_tpex_stock_day_all, persist_stock_daily,
+                       update_stock_master, MIN_COMBINED_STOCK_DAILY,
                        HEADERS)
 
 log = logging.getLogger(__name__)
@@ -146,34 +148,94 @@ def window_end(today: date, include_today: bool) -> date:
     return today if include_today else today - timedelta(days=1)
 
 
-def backfill_stock_daily(days: int, today: date | None = None, include_today: bool = False):
-    """全市場個股日K(MI_INDEX,每天一次請求)。已有日期跳過,適合正式環境追平。"""
+def stock_daily_counts(conn, since: str | None = None) -> dict[str, int]:
+    """Per-date row counts, optionally only dates on/after `since` (YYYY-MM-DD)."""
+    sql = "SELECT trade_date, COUNT(*) FROM stock_daily"
+    params: tuple = ()
+    if since:
+        sql += " WHERE trade_date >= ?"
+        params = (since,)
+    sql += " GROUP BY trade_date"
+    return {
+        row[0]: int(row[1])
+        for row in conn.execute(sql, params)
+    }
+
+
+def backfill_stock_daily(
+    days: int,
+    today: date | None = None,
+    include_today: bool = False,
+    min_combined: int = MIN_COMBINED_STOCK_DAILY,
+):
+    """上市 MI_INDEX + 上櫃櫃買收盤行情,寫進既有 stock_daily。
+
+    已有足夠檔數(上市+上櫃)的日期跳過。只有上市的日期會再抓上櫃,不會重抓上市。
+    交易日有上市、上櫃卻抓空或拋錯時 raise,讓正式排程變紅並打 Slack。
+    Catch-up counts are limited to the window so we do not GROUP BY the full table.
+    """
     conn = get_conn()
     today = today or date.today()
     start = today - timedelta(days=days)
-    have = existing_dates(conn, "stock_daily", since=start.isoformat())
+    counts = stock_daily_counts(conn, since=start.isoformat())
     end = window_end(today, include_today)
     n = 0
+    twse_days = tpex_days = 0
+    problems: list[str] = []
     day = start
     while day <= end:
         if day.weekday() < 5:
             ds = day.isoformat()
-            if ds not in have:
-                try:
-                    rows = fetch_stock_day_all(day)
-                    if rows:
-                        with conn:
-                            conn.executemany(
-                                "INSERT OR REPLACE INTO stock_daily VALUES (?,?,?,?,?,?,?,?,?)",
-                                rows)
-                            update_stock_master(conn, [(r[1], r[2]) for r in rows], ds)
-                        n += 1
-                        log.info("個股日K %s:%d 檔", ds, len(rows))
-                except Exception as e:
-                    log.warning("%s 個股日K失敗: %s", ds, e)
-                time.sleep(SLEEP)
+            have = counts.get(ds, 0)
+            need_twse = have == 0
+            need_tpex = have < min_combined
+            if need_twse or need_tpex:
+                twse_rows: list[tuple] = []
+                tpex_rows: list[tuple] = []
+                twse_err = tpex_err = None
+                if need_twse:
+                    try:
+                        twse_rows = fetch_stock_day_all(day)
+                    except Exception as e:
+                        twse_err = e
+                        log.warning("%s 上市日K失敗: %s", ds, e)
+                    time.sleep(SLEEP)
+                if need_tpex:
+                    try:
+                        tpex_rows = fetch_tpex_stock_day_all(day)
+                    except Exception as e:
+                        tpex_err = e
+                        log.warning("%s 上櫃日K失敗: %s", ds, e)
+                    time.sleep(SLEEP)
+                rows = twse_rows + tpex_rows
+                if rows:
+                    with conn:
+                        persist_stock_daily(conn, rows)
+                    n += 1
+                    if twse_rows:
+                        twse_days += 1
+                    if tpex_rows:
+                        tpex_days += 1
+                    counts[ds] = have + len(rows)
+                    log.info(
+                        "個股日K %s:上市 %d 檔、上櫃 %d 檔",
+                        ds, len(twse_rows) if need_twse else have, len(tpex_rows),
+                    )
+                if twse_err:
+                    problems.append(f"{ds} twse:{twse_err}")
+                if tpex_err:
+                    problems.append(f"{ds} tpex:{tpex_err}")
+                elif need_tpex and not tpex_rows and (twse_rows or have > 0):
+                    problems.append(f"{ds} tpex:empty")
+            else:
+                log.info("個股日K %s: already complete (%d names), skip", ds, have)
         day += timedelta(days=1)
-    log.info("個股日K(全市場)回補完成:%d 天", n)
+    log.info(
+        "個股日K(上市+上櫃)回補完成:%d 天 (twse_days=%d tpex_days=%d)",
+        n, twse_days, tpex_days,
+    )
+    if problems:
+        raise RuntimeError("stock_daily incomplete: " + "; ".join(problems))
     return n
 
 

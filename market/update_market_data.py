@@ -4,6 +4,9 @@
 每個台股交易日收盤後跑一次,把最近 N 天缺的資料補齊。冪等:已有的日期會跳過。
 不常駐、不走 collector.py run(那是給本機長駐用的)。
 
+個股日 K 走同一條 stock_daily 路徑:證交所 MI_INDEX(上市)+櫃買收盤行情(上櫃),
+不是另開 Yahoo 全市場下載。篩選器仍用 yfinance,Close=NaN 才回填官方價。
+
 用法:
   python -m market.update_market_data
   python -m market.update_market_data --days 14
@@ -16,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sqlite3
 import sys
 from datetime import date, datetime, timedelta, timezone
@@ -82,6 +86,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def planned_jobs(args: argparse.Namespace) -> list[str]:
     jobs = ["ohlc", "index_foreign_margin"]
     if not args.skip_stocks:
+        # listed MI_INDEX + OTC TPEX quotes, same stock_daily table
         jobs.append("stock_daily")
     if not args.skip_taifex:
         jobs.append("taifex")
@@ -98,6 +103,19 @@ def _table_span(conn: sqlite3.Connection, table: str) -> tuple[int, str | None, 
         return int(row[0] or 0), row[1], row[2]
     except sqlite3.OperationalError:
         return 0, None, None
+
+
+def _stock_daily_latest(conn: sqlite3.Connection) -> tuple[str, int] | None:
+    try:
+        row = conn.execute(
+            "SELECT trade_date, COUNT(*) FROM stock_daily "
+            "GROUP BY trade_date ORDER BY trade_date DESC LIMIT 1"
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    if not row or not row[0]:
+        return None
+    return str(row[0]), int(row[1] or 0)
 
 
 def coverage_lines(twse_path: Path, us_path: Path) -> list[str]:
@@ -117,6 +135,14 @@ def coverage_lines(twse_path: Path, us_path: Path) -> list[str]:
             ):
                 n, lo, hi = _table_span(conn, table)
                 lines.append(f"{table}: {n:,} rows, {lo or '–'} ~ {hi or '–'}")
+            latest = _stock_daily_latest(conn)
+            if latest:
+                day, n_names = latest
+                from market.collector import MIN_COMBINED_STOCK_DAILY
+                note = ""
+                if n_names < MIN_COMBINED_STOCK_DAILY:
+                    note = " (OTC possibly missing; listed+OTC is typically ~2,300)"
+                lines.append(f"stock_daily latest {day}: {n_names:,} names{note}")
         finally:
             conn.close()
     else:
@@ -198,6 +224,25 @@ def run_jobs(args: argparse.Namespace) -> list[str]:
     return failed
 
 
+def write_step_summary(lines: list[str], failed: list[str], env: dict[str, str] | None = None) -> None:
+    """Append coverage to the GitHub Actions job summary when running in GHA."""
+    env = env if env is not None else os.environ
+    path = (env.get("GITHUB_STEP_SUMMARY") or "").strip()
+    if not path:
+        return
+    parts = ["## Market data coverage", ""]
+    parts.extend(f"- {line}" for line in lines)
+    if failed:
+        parts.append("")
+        parts.append(f"**Failed jobs:** {', '.join(failed)}")
+    else:
+        parts.append("")
+        parts.append("All jobs succeeded.")
+    parts.append("")
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write("\n".join(parts))
+
+
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(
         level=logging.INFO,
@@ -224,6 +269,7 @@ def main(argv: list[str] | None = None) -> int:
     print("=== coverage ===")
     for line in lines:
         print(line)
+    write_step_summary(lines, failed)
 
     from data import cloud_db
     if cloud_db.configured() and not args.skip_turso:

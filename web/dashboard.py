@@ -733,12 +733,15 @@ async function loadAlerts(){
     }
     box.innerHTML = '<table><thead><tr><th>日期</th><th>代號</th><th>名稱</th><th>型態</th><th class="num">告警價</th><th>題材</th></tr></thead><tbody>'
       + r.data.map(a => '<tr><td>'+esc(a.alert_date||'')+'</td>'
-        +'<td><button type="button" class="ticker-link" onclick="showStock(\''+esc(a.ticker||'')+'\')">'+esc(a.ticker||'')+'</button></td>'
+        +'<td><button type="button" class="ticker-link" data-ticker="'+esc(a.ticker||'')+'">'+esc(a.ticker||'')+'</button></td>'
         +'<td>'+esc(a.name||'–')+'</td>'
         +'<td class="pat">'+esc(patName(a.pattern_type))+'</td>'
         +'<td class="num">'+money(a.price_at_alert)+'</td>'
         +'<td>'+esc(a.theme||'–')+'</td></tr>').join('')
       + '</tbody></table>';
+    box.querySelectorAll('[data-ticker]').forEach(btn=>{
+      btn.addEventListener('click', ()=> showStock(btn.getAttribute('data-ticker')));
+    });
   }catch(e){
     box.innerHTML = '<p class="empty">尚無告警</p>';
   }

@@ -47,6 +47,8 @@ class DashboardAlertsAPITests(unittest.TestCase):
         self.assertIn("尚未結算", dashboard.HTML)
         self.assertIn("/api/alerts", dashboard.HTML)
         self.assertIn("/api/performance", dashboard.HTML)
+        self.assertIn("data-ticker=", dashboard.HTML)
+        self.assertNotIn("onclick=\"showStock(", dashboard.HTML)
 
     def test_alerts_empty_when_db_missing(self):
         r = self.call("/api/alerts")

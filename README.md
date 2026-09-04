@@ -134,6 +134,14 @@ gcloud run deploy stockalert \
 | `GET /api/summary` | 原有 KPI，另含同一個 `freshness` 物件 |
 | `GET /health` | JSON：`status`/`ok` 表示**行程活著**（HTTP **一律 200**）。資料過期是 payload 的 `freshness.stale`／`empty`，**不會因此回 503**，方便之後 Cloud Run 探活依欄位延伸。 |
 
+### 儀表板分區
+
+頂部分頁：`市場`（預設）｜`個股`｜`告警`｜`回測`。用顯示／隱藏切換，不必捲完整頁。新鮮度橫幅與各表最後日期留在分頁上方。
+
+網址 hash：`#market` / `#stock` / `#alerts` / `#backtest`（也接受 `#section-stock` 這種寫法），可與既有 `?stock=2330` 並用。沒有 hash、但有 `?stock=` 時開個股分頁；純首次進入落在市場總覽，回測表單與結果不佔首屏。
+
+Header **顯示範圍**（全域 `days`）只影響加權 K 線／走勢、外資合計、融資融券、台指期未平倉、個股圖。外資買賣超排行用自己的當日／近 N 日／自訂區間，不受全域天數控制。
+
 ### 告警與績效區塊
 
 儀表板「今日／近期告警」與「績效摘要」讀 `alerts`、`performance`（T+5／T+20／T+60 結算列）：

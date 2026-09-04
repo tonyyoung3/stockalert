@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from datetime import date, timedelta
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from alertsdb import store as alerts_db
 from data import market_db
@@ -16,6 +17,7 @@ class DashboardAlertsAPITests(unittest.TestCase):
         root = Path(self.tmp.name)
         self.screener = root / "screener.db"
         self.market = root / "twse.db"
+        sqlite3.connect(self.market).close()
         alerts_db.set_db_path(self.screener)
         market_db.set_db_path(self.market)
 
@@ -127,6 +129,17 @@ class DashboardAlertsAPITests(unittest.TestCase):
         self.assertTrue(r["empty"])
         p = self.call("/api/performance")
         self.assertTrue(p["empty"])
+
+    def test_turso_alerts_reuse_request_connection(self):
+        shared = MagicMock(name="request_conn")
+        token = dashboard._request_conn.set(shared)
+        try:
+            with patch.object(market_db, "using_turso", return_value=True):
+                conn, owns = dashboard._open_alerts_conn()
+            self.assertIs(conn, shared)
+            self.assertFalse(owns)
+        finally:
+            dashboard._request_conn.reset(token)
 
 
 if __name__ == "__main__":

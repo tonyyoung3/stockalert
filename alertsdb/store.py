@@ -3,6 +3,8 @@ import sqlite3
 from pathlib import Path
 from datetime import date, timedelta
 
+from data.sqlite_util import configure_local
+
 # Repo root, not alertsdb/. Default file stays screener.db next to screener.py.
 _ROOT = Path(__file__).resolve().parent.parent
 _db_path: Path | None = None
@@ -26,6 +28,7 @@ def set_db_path(path: Path | str | None) -> None:
 def get_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(get_db_path())
     conn.row_factory = sqlite3.Row
+    configure_local(conn)
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
@@ -54,6 +57,9 @@ def init_db() -> None:
 
             CREATE UNIQUE INDEX IF NOT EXISTS idx_alerts_ticker_pattern_date
             ON alerts (ticker, pattern_type, alert_date);
+
+            CREATE INDEX IF NOT EXISTS idx_alerts_alert_date
+            ON alerts (alert_date);
         """)
         _ensure_performance_horizons(conn)
 

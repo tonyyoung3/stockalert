@@ -10,6 +10,7 @@
 import json
 import re
 import webbrowser
+from contextvars import ContextVar
 from datetime import date, timedelta
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
@@ -25,9 +26,14 @@ from alertsdb.store import (
 from data import market_db
 
 _YMD = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+# One sqlite/Turso connection per HTTP API request (Cloud Run round-trips are expensive).
+_request_conn: ContextVar = ContextVar("dashboard_db_conn", default=None)
 
 
 def q(sql, params=()):
+    conn = _request_conn.get()
+    if conn is not None:
+        return conn.execute(sql, params).fetchall()
     return market_db.fetchall(sql, params)
 
 
@@ -75,13 +81,19 @@ def _clamp_int(raw, default, lo, hi):
 
 
 def _open_alerts_conn():
-    """Turso shares market + alerts; local alerts live in screener.db."""
+    """Turso shares market + alerts on the request connection; local uses screener.db.
+
+    Returns (conn, owns). owns=True means the caller must close conn.
+    """
     if market_db.using_turso():
-        return market_db.connect()
+        shared = _request_conn.get()
+        if shared is not None:
+            return shared, False
+        return market_db.connect(), True
     path = get_db_path()
     if not path.exists():
-        return None
-    return get_conn()
+        return None, False
+    return get_conn(), True
 
 
 def _empty_alerts(days, since=None):
@@ -124,16 +136,16 @@ def _stock_names(tickers: list[str]) -> dict[str, str]:
 def api_alerts(qs) -> dict:
     days = _clamp_int((qs.get("days", ["30"])[0] or "").strip(), 30, 1, 365)
     since = str(date.today() - timedelta(days=days))
-    conn = None
+    conn, owns = None, False
     try:
-        conn = _open_alerts_conn()
+        conn, owns = _open_alerts_conn()
         if conn is None:
             return _empty_alerts(days, since)
         rows = list_alerts(since=since, limit=500, conn=conn)
     except Exception:
         return _empty_alerts(days, since)
     finally:
-        if conn is not None:
+        if owns and conn is not None:
             try:
                 conn.close()
             except Exception:
@@ -154,16 +166,16 @@ def api_alerts(qs) -> dict:
 
 
 def api_performance() -> dict:
-    conn = None
+    conn, owns = None, False
     try:
-        conn = _open_alerts_conn()
+        conn, owns = _open_alerts_conn()
         if conn is None:
             return _empty_performance()
         return performance_by_horizon(horizons=DASHBOARD_HORIZONS, conn=conn)
     except Exception:
         return _empty_performance()
     finally:
-        if conn is not None:
+        if owns and conn is not None:
             try:
                 conn.close()
             except Exception:
@@ -171,6 +183,16 @@ def api_performance() -> dict:
 
 
 def api(path, qs):
+    conn = market_db.connect()
+    token = _request_conn.set(conn)
+    try:
+        return _api(path, qs)
+    finally:
+        _request_conn.reset(token)
+        conn.close()
+
+
+def _api(path, qs):
     try:
         days = int(qs.get("days", ["90"])[0])
     except (TypeError, ValueError):

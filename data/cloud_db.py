@@ -65,22 +65,32 @@ def _add_if_not_exists(sql: str) -> str:
     upper = sql.upper()
     if "IF NOT EXISTS" in upper:
         return sql
-    for prefix in ("CREATE UNIQUE INDEX", "CREATE INDEX", "CREATE TABLE"):
+    for prefix in ("CREATE UNIQUE INDEX", "CREATE INDEX", "CREATE TABLE", "CREATE VIEW"):
         if upper.startswith(prefix):
             return prefix + " IF NOT EXISTS" + sql[len(prefix):]
     return sql
 
 
 def ensure_schema(local: sqlite3.Connection, remote) -> None:
+    """Copy table/index/view DDL. Views are DROP+CREATE so definition updates land.
+
+    libSQL (Turso) accepts CREATE VIEW. push_file still copies rows only from
+    type='table', so views such as stock_chips_daily are never INSERT targets.
+    """
     rows = local.execute(
         "SELECT type, name, sql FROM sqlite_master "
         "WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' "
-        "AND type IN ('table', 'index') "
-        "ORDER BY CASE type WHEN 'table' THEN 0 ELSE 1 END, name"
+        "AND type IN ('table', 'index', 'view') "
+        "ORDER BY CASE type WHEN 'table' THEN 0 WHEN 'index' THEN 1 "
+        "WHEN 'view' THEN 2 ELSE 3 END, name"
     ).fetchall()
     for _type, name, sql in rows:
-        _ident(name)
-        remote.execute(_add_if_not_exists(sql))
+        safe = _ident(name)
+        if _type == "view":
+            remote.execute(f"DROP VIEW IF EXISTS {safe}")
+            remote.execute(sql)
+        else:
+            remote.execute(_add_if_not_exists(sql))
     remote.commit()
 
 
@@ -184,6 +194,7 @@ def push_file(path: Path, remote, since: str | None = None) -> dict[str, int]:
     local = sqlite3.connect(path)
     try:
         ensure_schema(local, remote)
+        # Views (stock_chips_daily) are created in ensure_schema; do not INSERT them.
         tables = [
             name for (name,) in local.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"

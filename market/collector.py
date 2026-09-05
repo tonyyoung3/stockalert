@@ -181,6 +181,36 @@ def init_db(conn: sqlite3.Connection):
     CREATE INDEX IF NOT EXISTS idx_stock_daily_id_date ON stock_daily(stock_id, trade_date);
     CREATE INDEX IF NOT EXISTS idx_taiex_hourly_trade_date ON taiex_hourly(trade_date);
     CREATE INDEX IF NOT EXISTS idx_taiex_hourly_ohlc_trade_date ON taiex_hourly_ohlc(trade_date);
+    -- Scanner wide view (#77): price/volume from stock_daily LEFT JOIN T86 chips.
+    -- Always current; no refresh. Contract: docs/stock_chips_daily.md
+    DROP VIEW IF EXISTS stock_chips_daily;
+    CREATE VIEW stock_chips_daily AS
+    SELECT
+        s.trade_date,
+        s.stock_id,
+        s.stock_name,
+        s.open,
+        s.high,
+        s.low,
+        s.close,
+        s.volume,
+        s.turnover,
+        f.foreign_buy,
+        f.foreign_sell,
+        f.foreign_net,
+        t.trust_buy,
+        t.trust_sell,
+        t.trust_net,
+        d.dealer_buy,
+        d.dealer_sell,
+        d.dealer_net
+    FROM stock_daily AS s
+    LEFT JOIN foreign_daily AS f
+        ON f.trade_date = s.trade_date AND f.stock_id = s.stock_id
+    LEFT JOIN trust_daily AS t
+        ON t.trade_date = s.trade_date AND t.stock_id = s.stock_id
+    LEFT JOIN dealer_daily AS d
+        ON d.trade_date = s.trade_date AND d.stock_id = s.stock_id;
     """)
     conn.commit()
 

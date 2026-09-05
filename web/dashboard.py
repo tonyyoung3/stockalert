@@ -861,7 +861,7 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
       <div id="bt-close-decided-hint" class="bt-warn" style="display:none">
         ⚠️ 「當日漲跌」「今日均線」「N日新高/新低突破」「均線交叉」要等今天收盤才能確定。日內模式進場通常早於收盤,套用等於偷看未來資訊。這些積木已收合且不會送出；請改選隔夜或波段,或刪除後再執行。
       </div>
-      <div id="bt-filter-empty" class="bt-empty">尚未加入濾網積木。按下方「新增積木」加入第一個條件（例如星期或跳空）。不加油濾網也可以直接跑日內預設進場。</div>
+      <div id="bt-filter-empty" class="bt-empty">尚未加入濾網積木。按下方「新增積木」加入第一個條件（例如星期或跳空）。不加濾網也可以直接跑日內預設進場。</div>
       <div id="bt-filter-blocks"></div>
       <div class="bt-add-row">
         <select id="bt-add-filter" aria-label="選擇要新增的濾網積木"></select>
@@ -932,14 +932,20 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
       </div>
     </details>
 
-    <details class="bt-box" id="bt-overnight-box" data-bt-fold="exit" style="display:none" open>
-      <summary class="bt-label">則進場／出場（隔夜）</summary>
+    <details class="bt-box" id="bt-overnight-entry-box" data-bt-fold="entry" style="display:none" open>
+      <summary class="bt-label">則進場（隔夜,收盤）</summary>
       <div class="bt-row">
         <span class="bt-sub">方向</span>
         <select id="bt-on-direction">
           <option value="long">做多</option>
           <option value="short">做空</option>
         </select>
+      </div>
+    </details>
+
+    <details class="bt-box" id="bt-overnight-box" data-bt-fold="exit" style="display:none" open>
+      <summary class="bt-label">則出場（隔夜）</summary>
+      <div class="bt-row">
         <span class="bt-sub">出場時機</span>
         <select id="bt-holdto">
           <option value="next_open">隔日開盤</option>
@@ -958,14 +964,20 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
       </div>
     </details>
 
-    <details class="bt-box" id="bt-swing-box" data-bt-fold="exit" style="display:none" open>
-      <summary class="bt-label">則進場／出場（波段,收盤進場,固定 % 停損）</summary>
+    <details class="bt-box" id="bt-swing-entry-box" data-bt-fold="entry" style="display:none" open>
+      <summary class="bt-label">則進場（波段,收盤）</summary>
       <div class="bt-row">
         <span class="bt-sub">方向</span>
         <select id="bt-swing-direction">
           <option value="long">做多</option>
           <option value="short">做空</option>
         </select>
+      </div>
+    </details>
+
+    <details class="bt-box" id="bt-swing-box" data-bt-fold="exit" style="display:none" open>
+      <summary class="bt-label">則出場（波段,固定 % 停損／停利／持有）</summary>
+      <div class="bt-row">
         <span class="bt-sub">停損 %(相對進場價)</span>
         <input type="number" id="bt-swing-stoppct" value="2" step="0.1" min="0.1" style="width:70px">
         <span class="bt-sub">最長持有天數</span>
@@ -1776,7 +1788,9 @@ function btOnModeChange(){
   document.getElementById('bt-intraday-box').style.display = mode==='intraday' ? 'block' : 'none';
   const intraExit = document.getElementById('bt-intraday-exit-box');
   if(intraExit) intraExit.style.display = mode==='intraday' ? 'block' : 'none';
+  document.getElementById('bt-overnight-entry-box').style.display = mode==='overnight' ? 'block' : 'none';
   document.getElementById('bt-overnight-box').style.display = mode==='overnight' ? 'block' : 'none';
+  document.getElementById('bt-swing-entry-box').style.display = mode==='swing' ? 'block' : 'none';
   document.getElementById('bt-swing-box').style.display = mode==='swing' ? 'block' : 'none';
   const hasIncompat = mode==='intraday' && btFilters.some(btBlockIncompat);
   document.getElementById('bt-close-decided-hint').style.display = hasIncompat ? 'block' : 'none';

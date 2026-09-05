@@ -108,6 +108,9 @@ class SchemaAndCompileTests(unittest.TestCase):
                 "oi_ratio",
             ),
         )
+        self.assertNotIn("pattern", FILTER_TYPES)
+        self.assertNotIn("inside_day", FILTER_TYPES)
+        self.assertNotIn("upper_shadow", FILTER_TYPES)
 
     def test_is_blocks_payload_uses_filters_list(self):
         self.assertTrue(is_blocks_payload({"version": 1, "filters": []}))

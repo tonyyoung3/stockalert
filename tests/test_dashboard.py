@@ -589,6 +589,8 @@ class DashboardNavTests(unittest.TestCase):
         self.assertIn("#scanner", text)
         self.assertIn("掃描", text)
         self.assertIn("/api/scanner/chip_zscore", text)
+        self.assertIn("stockalert.sc.watchlist.v1", text)
+        self.assertIn("一鍵套用", text)
 
 
 class DashboardScannerScatterTests(unittest.TestCase):
@@ -649,6 +651,72 @@ class DashboardScannerScatterTests(unittest.TestCase):
         )
         self.assertNotIn("stock_chips_daily", src)
         self.assertIn("/api/scanner/chip_zscore", src)
+
+
+class DashboardScannerWatchlistTests(unittest.TestCase):
+    """#81: local watchlist → same sc-picks / chip_zscore path; no second fetch."""
+
+    def test_watchlist_ui_and_localstorage_wiring(self):
+        html = dashboard.HTML
+        self.assertIn('id="sc-watch"', html)
+        self.assertIn('id="sc-watch-list"', html)
+        self.assertIn('id="sc-watch-add"', html)
+        self.assertIn('id="sc-watch-apply"', html)
+        self.assertIn('id="sc-watch-save"', html)
+        self.assertIn('id="sc-watch-clear"', html)
+        self.assertIn('id="sc-watch-msg"', html)
+        self.assertIn(">加入追蹤</button>", html)
+        self.assertIn(">套用到掃描</button>", html)
+        self.assertIn(">存目前標的</button>", html)
+        self.assertIn(">清空追蹤</button>", html)
+        self.assertIn("stockalert.sc.watchlist.v1", html)
+        self.assertIn("localStorage.getItem(SC_WATCH_KEY)", html)
+        self.assertIn("localStorage.setItem(SC_WATCH_KEY", html)
+        self.assertIn("function applyScannerWatchlist(", html)
+        self.assertIn("function addScannerWatch(", html)
+        self.assertIn("function removeScannerWatch(", html)
+        self.assertIn("function saveScannerPicksToWatchlist(", html)
+        self.assertIn("function clearScannerWatchlist(", html)
+        self.assertIn("function submitScannerWatchAdd(", html)
+        self.assertIn("function resolveScannerSearch(", html)
+        self.assertIn("function scReadWatchlist(", html)
+        self.assertIn("function renderScannerWatchlist(", html)
+        self.assertIn("renderScannerWatchlist();", html)
+        self.assertIn("一鍵套用", html)
+        self.assertIn("重整後仍在", html)
+        self.assertIn("也可從追蹤清單一鍵套用", html)
+        scanner = html[html.index('id="section-scanner"'):html.index('id="section-alerts"')]
+        self.assertNotIn("stockalert.bt.presets.v1", scanner)
+        watch_js = html[html.index("const SC_WATCH_KEY"):html.index("function scHideChart(")]
+        self.assertNotIn("stockalert.bt.presets.v1", watch_js)
+        self.assertNotIn("BT_PRESET_KEY", watch_js)
+        src = Path(__file__).resolve().parents[1].joinpath("web/dashboard.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("stock_chips_daily", src)
+        self.assertNotIn("watchlist", src)
+
+    def test_apply_reuses_picks_and_single_chip_zscore(self):
+        html = dashboard.HTML
+        self.assertEqual(html.count("j('/api/scanner/chip_zscore?"), 1)
+        apply = html[html.index("function applyScannerWatchlist("):html.index("function saveScannerPicksToWatchlist(")]
+        self.assertIn("scPicks = store.tickers", apply)
+        self.assertIn("renderScannerPicks()", apply)
+        self.assertIn("scPicks.length >= 2", apply)
+        self.assertIn("loadScanner()", apply)
+        self.assertNotIn("/api/scanner/chip_zscore", apply)
+        self.assertNotIn("await j(", apply)
+        add = html[html.index("function addScannerWatch("):html.index("function removeScannerWatch(")]
+        self.assertIn("fetchStockHits", html[html.index("async function resolveScannerSearch("):html.index("async function submitScannerSearch(")])
+        self.assertIn("/api/stocks", html[html.index("async function fetchStockHits("):html.index("function renderStockMenu(")])
+        self.assertNotIn("/api/scanner/chip_zscore", add)
+        watch_add = html[html.index("async function submitScannerWatchAdd("):html.index("function scHideChart(")]
+        self.assertIn("resolveScannerSearch()", watch_add)
+        self.assertIn("addScannerWatch(item)", watch_add)
+        self.assertNotIn("/api/scanner/chip_zscore", watch_add)
+        load = html[html.index("async function loadScanner("):html.index("async function loadAlerts(")]
+        self.assertEqual(load.count("/api/scanner/chip_zscore"), 1)
+        self.assertIn("scPicks.map(p=>p.id)", load)
 
 
 class DashboardScannerTableTests(unittest.TestCase):

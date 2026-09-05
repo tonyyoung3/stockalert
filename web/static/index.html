@@ -153,6 +153,16 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
 .sc-pick{display:inline-flex;align-items:center;gap:4px;background:#eef3fa;color:#2c4a70;border-radius:999px;padding:4px 6px 4px 10px;font-size:13px;line-height:1.4}
 .sc-pick button{border:none;background:transparent;color:#6c757d;cursor:pointer;font-size:16px;line-height:1;padding:4px 8px;min-width:32px;min-height:32px;border-radius:999px}
 .sc-pick button:hover{background:#fdecea;color:#a94442}
+.search button.sc-secondary{background:#fff;color:#4C72B0;border:1px solid #4C72B0}
+.sc-watch{margin:0 0 12px;padding:10px 12px;background:#f4f7fb;border:1px solid #e4e8ee;border-radius:6px}
+.sc-watch-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px;margin-bottom:8px}
+.sc-watch-head h4{margin:0;font-size:13px;font-weight:600}
+.sc-watch #sc-watch-list{margin-bottom:8px}
+.sc-watch-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.sc-watch-actions button{padding:8px 14px;border:1px solid #4C72B0;background:#fff;color:#4C72B0;border-radius:4px;cursor:pointer;font-size:13px;min-height:36px}
+.sc-watch-actions button.sc-watch-primary{background:#4C72B0;color:#fff;border:none}
+#sc-watch-msg{margin-top:8px}
+#sc-watch-msg[hidden]{display:none!important}
 .sc-controls{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin-bottom:12px}
 .sc-field{display:flex;flex-direction:column;gap:4px;min-width:0}
 .sc-field label{font-size:12px;color:#6c757d}
@@ -206,7 +216,9 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
   .bt-block>summary.bt-block-sum{min-height:44px}
   .kpi-value{font-size:22px}
   .sc-controls{flex-direction:column;align-items:stretch}
-  .sc-field select,.sc-field input,.sc-run,#sc-search input,#sc-add{width:100%;min-height:44px}
+  .sc-field select,.sc-field input,.sc-run,#sc-search input,#sc-add,#sc-watch-add{width:100%;min-height:44px}
+  .sc-watch-actions{flex-direction:column;align-items:stretch}
+  .sc-watch-actions button{width:100%;min-height:44px}
   .sc-chart-wrap{height:280px;min-height:240px}
   .sc-pick button{min-width:44px;min-height:44px}
   .sc-table-tools{flex-direction:column;align-items:stretch}
@@ -406,7 +418,7 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
       <button class="reset-btn" type="button" onclick="resetZoom('c-scanner')">重置</button>
     </span>
   </div>
-  <p class="sc-note">多檔橫向比較工作台，<b>不是</b>個股分頁、不是回測「個股 pattern」宇宙、也不是全市場一次掃描。搜尋加入 ≥2 檔後才向 <code>/api/scanner/chip_zscore</code> 要真實籌碼／價量；<b>一次查詢</b>同時餵散布圖與下方結果表格，沒有第二條資料徑、沒有假資料。點圖上的點或表格列會開個股分頁。</p>
+  <p class="sc-note">多檔橫向比較工作台，<b>不是</b>個股分頁、不是回測「個股 pattern」宇宙、也不是全市場一次掃描。搜尋加入 ≥2 檔後才向 <code>/api/scanner/chip_zscore</code> 要真實籌碼／價量；<b>一次查詢</b>同時餵散布圖與下方結果表格，沒有第二條資料徑、沒有假資料。追蹤清單存在這個瀏覽器（localStorage），可增刪、重整後仍在；<b>一鍵套用</b>寫入目前掃描標的，≥2 檔才打同一支 API。點圖上的點或表格列會開個股分頁。</p>
   <div class="search">
     <div class="sid-search" id="sc-search">
       <input id="sc-q" placeholder="搜尋代號／名稱，加入比較（复用 /api/stocks）" autocomplete="off"
@@ -414,8 +426,22 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
       <div id="sc-menu" class="ov-menu" hidden></div>
     </div>
     <button type="button" id="sc-add" onclick="submitScannerSearch()">加入</button>
+    <button type="button" id="sc-watch-add" class="sc-secondary" onclick="submitScannerWatchAdd()">加入追蹤</button>
   </div>
   <div id="sc-picks" class="sc-picks" aria-live="polite"></div>
+  <div id="sc-watch" class="sc-watch">
+    <div class="sc-watch-head">
+      <h4>追蹤清單</h4>
+      <span class="hint">本機清單，不是第二條掃描資料徑。套用後沿用目前掃描標的與同一支 chip_zscore。</span>
+    </div>
+    <div id="sc-watch-list" class="sc-picks" aria-live="polite"></div>
+    <div class="sc-watch-actions">
+      <button type="button" id="sc-watch-apply" class="sc-watch-primary" onclick="applyScannerWatchlist()">套用到掃描</button>
+      <button type="button" id="sc-watch-save" onclick="saveScannerPicksToWatchlist()">存目前標的</button>
+      <button type="button" id="sc-watch-clear" onclick="clearScannerWatchlist()">清空追蹤</button>
+    </div>
+    <div id="sc-watch-msg" role="status" hidden></div>
+  </div>
   <div class="sc-controls">
     <div class="sc-field">
       <label for="sc-x">X 軸</label>
@@ -440,7 +466,7 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
     <button type="button" class="sc-run" id="sc-run" onclick="loadScanner()">更新掃描</button>
   </div>
   <p class="hint" id="sc-mobile-note">窄螢幕請用下方表格點進個股；圖上也可點。表頭可排序，篩選只改表格列、不另打 API。軸與窗格／截至日可調，對齊籌碼 z-score 時間模型（預設 20 個交易日）。</p>
-  <div id="sc-empty" class="bb-empty">請先搜尋並加入至少 2 檔，才會載入掃描散布圖與結果表格。不是單檔查詢，也不是全市場宇宙。</div>
+  <div id="sc-empty" class="bb-empty">請先搜尋並加入至少 2 檔，才會載入掃描散布圖與結果表格。也可從追蹤清單一鍵套用。不是單檔查詢，也不是全市場宇宙。</div>
   <div id="sc-loading" class="empty" hidden>載入中…</div>
   <div id="sc-error" class="bt-error" hidden></div>
   <div class="sc-chart-wrap" id="sc-chart-wrap" hidden>
@@ -1139,19 +1165,145 @@ function onScannerKey(ev){
     submitScannerSearch();
   }
 }
-async function submitScannerSearch(){
+async function resolveScannerSearch(){
   const q = ((document.getElementById('sc-q')||{}).value||'').trim();
-  if(!q){ hideScannerMenu(); return; }
+  if(!q){ hideScannerMenu(); return null; }
   const menu = document.getElementById('sc-menu');
   if(menu && !menu.hidden && scHits.length){
-    addScannerPick(scHits[scActive<0?0:scActive]);
-    return;
+    return scHits[scActive<0?0:scActive];
   }
   const hits = await fetchStockHits(q);
-  if(hits.length){ addScannerPick(hits[0]); return; }
+  if(hits.length) return hits[0];
   const direct = parseStockId(q);
-  if(direct){ addScannerPick({id:direct, name:direct}); return; }
+  if(direct) return {id:direct, name:direct};
   renderScannerMenu([]);
+  return null;
+}
+async function submitScannerSearch(){
+  const item = await resolveScannerSearch();
+  if(item) addScannerPick(item);
+}
+const SC_WATCH_KEY = 'stockalert.sc.watchlist.v1';
+const SC_WATCH_CAP = SC_MAX;
+function scWatchEmpty(){ return {version:1, tickers:[]}; }
+function scNormalizeTicker(item){
+  if(!item) return null;
+  const id = String(item.id || item.stock_id || '').trim();
+  if(!id) return null;
+  const name = String(item.name || item.stock_name || id).trim() || id;
+  return {id:id, name:name};
+}
+function scWatchStatus(text, kind){
+  const el = document.getElementById('sc-watch-msg');
+  if(!el) return;
+  if(!text){ el.hidden = true; el.textContent = ''; el.className = ''; return; }
+  el.hidden = false;
+  el.className = kind==='ok' ? 'bt-ok' : 'bt-error';
+  el.textContent = text;
+}
+function scReadWatchlist(){
+  let raw;
+  try { raw = localStorage.getItem(SC_WATCH_KEY); }
+  catch(e){ return scWatchEmpty(); }
+  if(!raw) return scWatchEmpty();
+  let obj;
+  try { obj = JSON.parse(raw); }
+  catch(e){ return scWatchEmpty(); }
+  if(!obj || typeof obj!=='object' || !Array.isArray(obj.tickers)) return scWatchEmpty();
+  const seen = {};
+  const cleaned = [];
+  obj.tickers.forEach(item=>{
+    const t = scNormalizeTicker(item);
+    if(!t || seen[t.id]) return;
+    seen[t.id] = 1;
+    cleaned.push(t);
+  });
+  return {version:1, tickers:cleaned.slice(0, SC_WATCH_CAP)};
+}
+function scWriteWatchlist(store){
+  try {
+    localStorage.setItem(SC_WATCH_KEY, JSON.stringify(store));
+    return true;
+  } catch(e){
+    scWatchStatus('無法寫入追蹤清單（瀏覽器可能停用儲存空間）。', 'err');
+    return false;
+  }
+}
+function renderScannerWatchlist(){
+  const box = document.getElementById('sc-watch-list');
+  if(!box) return;
+  const store = scReadWatchlist();
+  if(!store.tickers.length){
+    box.innerHTML = '<span class="hint">尚未追蹤。用上方搜尋按「加入追蹤」，或把目前標的存下來。</span>';
+    return;
+  }
+  box.innerHTML = store.tickers.map((it,i)=>
+    '<span class="sc-pick">'+esc(it.id)+(it.name && it.name!==it.id?' '+esc(it.name):'')
+    +'<button type="button" data-i="'+i+'" aria-label="取消追蹤 '+esc(it.id)+'">×</button></span>'
+  ).join('');
+  box.querySelectorAll('button[data-i]').forEach(btn=>{
+    btn.addEventListener('click', ()=> removeScannerWatch(+btn.dataset.i));
+  });
+}
+function addScannerWatch(item){
+  const t = scNormalizeTicker(item);
+  if(!t) return;
+  const store = scReadWatchlist();
+  if(store.tickers.some(p=>p.id===t.id)){
+    scWatchStatus(t.id+' 已在追蹤清單。', 'ok');
+    hideScannerMenu();
+    const inp = document.getElementById('sc-q');
+    if(inp) inp.value = '';
+    return;
+  }
+  if(store.tickers.length >= SC_WATCH_CAP){
+    scWatchStatus('追蹤清單最多 '+SC_WATCH_CAP+' 檔。', 'err');
+    return;
+  }
+  store.tickers.push(t);
+  if(!scWriteWatchlist(store)) return;
+  hideScannerMenu();
+  const inp = document.getElementById('sc-q');
+  if(inp) inp.value = '';
+  renderScannerWatchlist();
+  scWatchStatus('已加入 '+t.id+(t.name && t.name!==t.id ? ' '+t.name : '')+'。', 'ok');
+}
+function removeScannerWatch(i){
+  const store = scReadWatchlist();
+  if(i<0 || i>=store.tickers.length) return;
+  store.tickers.splice(i, 1);
+  if(!scWriteWatchlist(store)) return;
+  renderScannerWatchlist();
+  scWatchStatus('已從追蹤清單移除。', 'ok');
+}
+function applyScannerWatchlist(){
+  const store = scReadWatchlist();
+  scPicks = store.tickers.slice(0, SC_MAX).map(t=>({id:t.id, name:t.name||t.id}));
+  hideScannerMenu();
+  renderScannerPicks();
+  if(scPicks.length >= 2){
+    scWatchStatus('已套用 '+scPicks.length+' 檔到掃描標的。', 'ok');
+    loadScanner();
+  } else {
+    scLastPayload = null;
+    scShowEmpty();
+    scWatchStatus('已套用。至少 2 檔才會進圖。', 'ok');
+  }
+}
+function saveScannerPicksToWatchlist(){
+  const store = {version:1, tickers: scPicks.slice(0, SC_WATCH_CAP).map(t=>({id:t.id, name:t.name||t.id}))};
+  if(!scWriteWatchlist(store)) return;
+  renderScannerWatchlist();
+  scWatchStatus(store.tickers.length ? '已把目前標的存成追蹤清單。' : '目前沒有標的，追蹤清單已清空。', 'ok');
+}
+function clearScannerWatchlist(){
+  if(!scWriteWatchlist(scWatchEmpty())) return;
+  renderScannerWatchlist();
+  scWatchStatus('已清空追蹤清單。', 'ok');
+}
+async function submitScannerWatchAdd(){
+  const item = await resolveScannerSearch();
+  if(item) addScannerWatch(item);
 }
 function scHideChart(){
   if(charts['c-scanner']){ charts['c-scanner'].destroy(); delete charts['c-scanner']; }
@@ -3461,6 +3613,7 @@ window.addEventListener('resize', resizeCharts);
   initBtFolds();
   initScannerAxes();
   renderScannerPicks();
+  renderScannerWatchlist();
   loadAll();
   showSection(resolveSection(), {updateHash:false});
 })();

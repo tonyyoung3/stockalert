@@ -1099,7 +1099,7 @@ function renderScannerPicks(){
     return;
   }
   box.innerHTML = scPicks.map((it,i)=>
-    '<span class="sc-pick">'+esc(it.id)+(it.name?' '+esc(it.name):'')
+    '<span class="sc-pick">'+esc(it.id)+(it.name && it.name!==it.id?' '+esc(it.name):'')
     +'<button type="button" data-i="'+i+'" aria-label="移除 '+esc(it.id)+'">×</button></span>'
   ).join('');
   box.querySelectorAll('button[data-i]').forEach(btn=>{

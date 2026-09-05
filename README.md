@@ -70,6 +70,8 @@ PTT 股板週報跟 Reddit 投資想法週報都是本機整理、印到 stdout�
 
 投信／自營商表是後來才加的。若 `foreign_daily` 已有歷史、另外兩張還是空的，不要重抓外資：本機跑 `python -m market.backfill institutional`（只抓 `foreign_daily` 有、`trust_daily`／`dealer_daily` 缺的日期；已有列的日期跳過），或 Actions 同一支 workflow 勾 `institutional_gaps`。T86 間隔約 4 秒。上櫃三大法人不在 `foreign_daily`，這兩張也不收 OTC。
 
+掃描用寬表 `stock_chips_daily` 是 **SQL VIEW**（不是實體表）：`stock_daily` LEFT JOIN 三大法人日表，鍵是 `(trade_date, stock_id)`。VIEW 不用刷新，底表仍由 `update_market_data` 寫入。欄位、單位、增量與 Turso 見 `docs/stock_chips_daily.md`（#77 / epic #76）。儀表板讀徑繼續打底表，不要改走這個 VIEW。
+
 開 Turso：
 
 ```bash

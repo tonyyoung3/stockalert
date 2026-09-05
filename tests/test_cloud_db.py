@@ -261,3 +261,45 @@ class PushTests(unittest.TestCase):
         counts = cloud_db.push_file(self.path, remote, since="2026-09-01")
         self.assertEqual(counts["trust_daily"], 1)
         self.assertEqual(counts["dealer_daily"], 1)
+
+    def test_stock_chips_daily_view_is_pushed_not_copied_as_table(self):
+        """#77: Turso gets the VIEW DDL; rows still come from base tables."""
+        from market import collector
+        orig = collector.DB_PATH
+        collector.DB_PATH = self.path
+        try:
+            conn = collector.get_conn()
+            conn.execute(
+                "INSERT INTO stock_daily VALUES "
+                "('2026-09-04','2330','台積電',1,1,1,1,100,1000)"
+            )
+            conn.execute(
+                "INSERT INTO foreign_daily VALUES "
+                "('2026-09-04','2330','台積電',9,3,6)"
+            )
+            conn.commit()
+            conn.close()
+        finally:
+            collector.DB_PATH = orig
+        remote = FakeRemote()
+        counts = cloud_db.push_file(self.path, remote, since="2026-09-01")
+        self.assertNotIn("stock_chips_daily", counts)
+        self.assertEqual(counts["stock_daily"], 1)
+        self.assertEqual(counts["foreign_daily"], 1)
+        kind = remote.execute(
+            "SELECT type FROM sqlite_master WHERE name='stock_chips_daily'"
+        ).fetchone()
+        self.assertEqual(kind[0], "view")
+        row = remote.execute(
+            "SELECT close, volume, turnover, foreign_net, trust_net, dealer_net "
+            "FROM stock_chips_daily WHERE stock_id='2330'"
+        ).fetchone()
+        self.assertEqual(row, (1, 100, 1000, 6, None, None))
+        # Definition updates: second push DROP+CREATE still queryable
+        cloud_db.push_file(self.path, remote, since="2026-09-01")
+        self.assertEqual(
+            remote.execute(
+                "SELECT foreign_net FROM stock_chips_daily WHERE stock_id='2330'"
+            ).fetchone()[0],
+            6,
+        )

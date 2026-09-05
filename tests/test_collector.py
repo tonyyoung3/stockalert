@@ -348,6 +348,9 @@ class TestPersistence(DBTestCase):
         indexes = {r[0] for r in self.rows(
             "SELECT name FROM sqlite_master WHERE type='index'")}
         self.assertTrue({"idx_trust_stock_date", "idx_dealer_stock_date"} <= indexes)
+        views = {r[0] for r in self.rows(
+            "SELECT name FROM sqlite_master WHERE type='view'")}
+        self.assertIn("stock_chips_daily", views)
 
     def test_foreign_idempotent(self):
         """同一天寫兩次不應該產生重複列。"""

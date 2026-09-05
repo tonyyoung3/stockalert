@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """回補歷史資料(預設近兩年)
 - 大盤指數:證交所「每5秒指數統計」取每個整點 (09:00–13:00) 及收盤 13:30
-- 外資買賣超:T86 逐日回補
+- 三大法人:T86 一次請求寫外資／投信／自營商;已有的日期跳過
 
 用法:
   python -m market.backfill            # 回補兩年
   python -m market.backfill 90         # 回補近 90 天
   python -m market.backfill index 90   # 只回補指數
-  python -m market.backfill foreign 90 # 只回補外資
+  python -m market.backfill foreign 90 # 只回補 T86(外資+投信+自營商)
+  python -m market.backfill institutional      # 只補 foreign_daily 已有、trust/dealer 缺少的日期
+  python -m market.backfill institutional 14   # 同上,限近 14 個日曆天
+  python -m market.backfill institutional --dry-run
   python -m market.backfill margin 90  # 只回補融資融券
   python -m market.backfill ohlc       # 只回補大盤日K
   python -m market.backfill stock 2330,2454 730  # 回補指定個股日K
@@ -24,7 +27,8 @@ from datetime import date, timedelta, datetime
 
 import requests
 
-from market.collector import (get_conn, fetch_foreign, fetch_taiex_ohlc_month,
+from market.collector import (get_conn, fetch_t86, persist_t86,
+                       fetch_taiex_ohlc_month,
                        fetch_index_5sec, hourly_ohlc_from_5sec, fetch_margin,
                        fetch_stock_month, fetch_stock_day_all,
                        fetch_tpex_stock_day_all, persist_stock_daily,
@@ -44,6 +48,8 @@ _DATE_TABLES = frozenset({
     "taiex_hourly_ohlc",
     "taiex_5sec_open",
     "foreign_daily",
+    "trust_daily",
+    "dealer_daily",
     "margin_stock",
     "margin_total",
     "taiex_daily",
@@ -250,6 +256,8 @@ def backfill(days: int, do_index=True, do_foreign=True, do_margin=True,
                 & existing_dates(conn, "taiex_hourly_ohlc", since=since)
                 & existing_dates(conn, "taiex_5sec_open", since=since)) if do_index else set()
     have_for = existing_dates(conn, "foreign_daily", since=since) if do_foreign else set()
+    have_trust = existing_dates(conn, "trust_daily", since=since) if do_foreign else set()
+    have_dealer = existing_dates(conn, "dealer_daily", since=since) if do_foreign else set()
     have_mar = existing_dates(conn, "margin_stock", since=since) if do_margin else set()
     end = window_end(today, include_today)
     day = start
@@ -275,17 +283,23 @@ def backfill(days: int, do_index=True, do_foreign=True, do_margin=True,
                 except Exception as e:
                     log.warning("%s 指數失敗: %s", ds, e)
                 time.sleep(SLEEP)
-            if do_foreign and ds not in have_for:
+            # One T86 call fills foreign + trust + dealer. Skip only when all three exist.
+            if do_foreign and (ds not in have_for or ds not in have_trust or ds not in have_dealer):
                 try:
-                    rows = fetch_foreign(day)
-                    if rows:
+                    tables = fetch_t86(day)
+                    if tables.foreign:
                         with conn:
-                            conn.executemany(
-                                "INSERT OR REPLACE INTO foreign_daily VALUES (?,?,?,?,?,?)", rows)
+                            persist_t86(conn, tables)
                         n_for += 1
-                        log.info("%s 外資 %d 檔", ds, len(rows))
+                        have_for.add(ds)
+                        have_trust.add(ds)
+                        have_dealer.add(ds)
+                        log.info(
+                            "%s T86 外資 %d / 投信 %d / 自營商 %d 檔",
+                            ds, len(tables.foreign), len(tables.trust), len(tables.dealer),
+                        )
                 except Exception as e:
-                    log.warning("%s 外資失敗: %s", ds, e)
+                    log.warning("%s T86 失敗: %s", ds, e)
                 time.sleep(SLEEP)
             if do_margin and ds not in have_mar:
                 try:
@@ -302,14 +316,94 @@ def backfill(days: int, do_index=True, do_foreign=True, do_margin=True,
                     log.warning("%s 融資融券失敗: %s", ds, e)
                 time.sleep(SLEEP)
         day += timedelta(days=1)
-    log.info("完成:指數回補 %d 天、外資回補 %d 天、融資融券回補 %d 天", n_idx, n_for, n_mar)
+    log.info("完成:指數回補 %d 天、T86 回補 %d 天、融資融券回補 %d 天", n_idx, n_for, n_mar)
+
+
+def _table_span(conn, table: str) -> tuple[int, str | None, str | None]:
+    row = conn.execute(
+        f"SELECT COUNT(*), MIN(trade_date), MAX(trade_date) FROM {table}"
+    ).fetchone()
+    return int(row[0] or 0), row[1], row[2]
+
+
+def institutional_coverage(conn) -> list[str]:
+    lines = []
+    for table in ("foreign_daily", "trust_daily", "dealer_daily"):
+        n, lo, hi = _table_span(conn, table)
+        lines.append(f"{table}: {n:,} rows, {lo or '–'} ~ {hi or '–'}")
+    return lines
+
+
+def missing_institutional_dates(conn, since: str | None = None) -> list[str]:
+    """Dates in foreign_daily that lack trust_daily or dealer_daily rows."""
+    foreign = existing_dates(conn, "foreign_daily", since=since)
+    trust = existing_dates(conn, "trust_daily", since=since)
+    dealer = existing_dates(conn, "dealer_daily", since=since)
+    return sorted(d for d in foreign if d not in trust or d not in dealer)
+
+
+def backfill_institutional_gaps(
+    days: int | None = None,
+    today: date | None = None,
+    dry_run: bool = False,
+) -> int:
+    """Fetch T86 only for foreign_daily dates missing trust or dealer.
+
+    Aligns to the foreign_daily span (or the last `days` calendar days).
+    Does not re-download dates that already have both trust and dealer rows.
+    """
+    conn = get_conn()
+    today = today or date.today()
+    since = (today - timedelta(days=days)).isoformat() if days is not None else None
+    missing = missing_institutional_dates(conn, since=since)
+    log.info(
+        "institutional gaps: %d dates missing vs foreign_daily%s",
+        len(missing),
+        f" (since {since})" if since else " (full foreign_daily span)",
+    )
+    for line in institutional_coverage(conn):
+        log.info("coverage %s", line)
+    if dry_run:
+        if missing:
+            log.info("dry-run would fetch %s .. %s", missing[0], missing[-1])
+        return 0
+    n = 0
+    for ds in missing:
+        day = date.fromisoformat(ds)
+        try:
+            tables = fetch_t86(day)
+            if tables.foreign or tables.trust or tables.dealer:
+                with conn:
+                    persist_t86(conn, tables)
+                n += 1
+                log.info(
+                    "%s T86 外資 %d / 投信 %d / 自營商 %d 檔",
+                    ds, len(tables.foreign), len(tables.trust), len(tables.dealer),
+                )
+            else:
+                log.warning("%s T86 無資料(foreign_daily 有此日,可能假日或尚未公布)", ds)
+        except Exception as e:
+            log.warning("%s T86 失敗: %s", ds, e)
+        time.sleep(SLEEP)
+    log.info("institutional gap fill: wrote %d days", n)
+    for line in institutional_coverage(conn):
+        log.info("coverage %s", line)
+    return n
 
 
 if __name__ == "__main__":
     args = sys.argv[1:]
     mode = "all"
-    if args and args[0] in ("index", "foreign", "ohlc", "margin", "stock", "stock-daily"):
+    if args and args[0] in (
+        "index", "foreign", "institutional", "ohlc", "margin", "stock", "stock-daily",
+    ):
         mode = args.pop(0)
+    if mode == "institutional":
+        dry = "--dry-run" in args
+        args = [a for a in args if a != "--dry-run"]
+        days = int(args[0]) if args else None
+        backfill_institutional_gaps(days=days, dry_run=dry)
+        raise SystemExit
     if mode == "stock-daily":
         days = int(args[0]) if args else 14
         backfill_stock_daily(days)

@@ -54,6 +54,8 @@ class CoveringIndexTests(unittest.TestCase):
             {
                 "idx_stock_daily_id_date",
                 "idx_foreign_stock_date",
+                "idx_trust_stock_date",
+                "idx_dealer_stock_date",
                 "idx_margin_stock_date",
                 "idx_taiex_hourly_trade_date",
                 "idx_taiex_hourly_ohlc_trade_date",
@@ -98,6 +100,15 @@ class CoveringIndexTests(unittest.TestCase):
         )
         with self.assertRaises(ValueError):
             backfill.existing_dates(conn, "sqlite_master")
+        conn.close()
+
+    def test_existing_dates_allows_trust_and_dealer(self):
+        conn = sqlite3.connect(self.path)
+        conn.execute("INSERT INTO trust_daily (trade_date, stock_id) VALUES ('2026-09-04','2330')")
+        conn.execute("INSERT INTO dealer_daily (trade_date, stock_id) VALUES ('2026-09-04','2330')")
+        conn.commit()
+        self.assertEqual(backfill.existing_dates(conn, "trust_daily"), {"2026-09-04"})
+        self.assertEqual(backfill.existing_dates(conn, "dealer_daily"), {"2026-09-04"})
         conn.close()
 
     def test_stock_daily_counts_can_limit_to_catchup_window(self):

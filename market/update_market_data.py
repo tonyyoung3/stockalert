@@ -62,6 +62,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--us-hourly-days", type=int, default=None)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--institutional-gaps-only",
+        action="store_true",
+        help="only fill trust_daily/dealer_daily dates missing vs foreign_daily",
+    )
     parser.add_argument("--skip-turso", action="store_true",
                         help="do not push local sqlite to Turso even if secrets are set")
     parser.add_argument(
@@ -87,6 +92,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def planned_jobs(args: argparse.Namespace) -> list[str]:
+    if getattr(args, "institutional_gaps_only", False):
+        return ["institutional_gaps"]
     jobs = ["ohlc", "index_foreign_margin"]
     if not args.skip_stocks:
         # listed MI_INDEX + OTC TPEX quotes, same stock_daily table
@@ -131,6 +138,8 @@ def coverage_lines(twse_path: Path, us_path: Path) -> list[str]:
                 "taiex_hourly_ohlc",
                 "taiex_5sec_open",
                 "foreign_daily",
+                "trust_daily",
+                "dealer_daily",
                 "margin_stock",
                 "stock_daily",
                 "taifex_fut_oi",
@@ -178,6 +187,15 @@ def run_jobs(args: argparse.Namespace) -> list[str]:
         "catch-up days=%s include_today=%s today=%s jobs=%s",
         days, include, today, ",".join(planned_jobs(args)),
     )
+
+    if args.institutional_gaps_only:
+        try:
+            n = backfill.backfill_institutional_gaps(days=None, today=today)
+            log.info("institutional gaps wrote %s days", n)
+        except Exception:
+            log.exception("institutional_gaps failed")
+            failed.append("institutional_gaps")
+        return failed
 
     try:
         backfill.backfill_ohlc(days)
@@ -278,9 +296,27 @@ def main(argv: list[str] | None = None) -> int:
     write_step_summary(lines, failed)
 
     from data import cloud_db
+    push_days = args.days
+    if args.institutional_gaps_only:
+        # New tables may span the whole foreign_daily history; 14 days would miss it.
+        twse = REPO_ROOT / "twse_data.db"
+        if twse.exists():
+            conn = sqlite3.connect(twse)
+            try:
+                lo = conn.execute("SELECT MIN(trade_date) FROM foreign_daily").fetchone()[0]
+            except sqlite3.OperationalError:
+                lo = None
+            finally:
+                conn.close()
+            if lo:
+                try:
+                    span = (taiwan_now().date() - date.fromisoformat(lo)).days + 7
+                    push_days = max(push_days, span)
+                except ValueError:
+                    pass
     if cloud_db.configured() and not args.skip_turso:
         try:
-            pushed = cloud_db.push_market_files(days=args.days, today=taiwan_now().date())
+            pushed = cloud_db.push_market_files(days=push_days, today=taiwan_now().date())
             print("=== turso ===")
             for fname, tables in pushed.items():
                 print(fname, ", ".join(f"{k}={v}" for k, v in tables.items()) or "(empty)")

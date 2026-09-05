@@ -43,6 +43,10 @@ class ParseArgsTests(unittest.TestCase):
             ["ohlc", "index_foreign_margin", "stock_daily", "taifex", "us"],
         )
 
+    def test_institutional_gaps_only_job(self):
+        args = umd.parse_args(["--institutional-gaps-only", "--exclude-today"])
+        self.assertEqual(umd.planned_jobs(args), ["institutional_gaps"])
+
     def test_skip_flags(self):
         args = umd.parse_args(["--skip-us", "--skip-taifex", "--skip-stocks", "--exclude-today"])
         self.assertEqual(umd.planned_jobs(args), ["ohlc", "index_foreign_margin"])
@@ -120,6 +124,29 @@ class CoverageTests(unittest.TestCase):
         self.assertIn("2026-08-01", daily)
         self.assertIn("2026-08-29", daily)
 
+    def test_coverage_includes_trust_and_dealer(self):
+        db = self.tmp / "twse_data.db"
+        conn = sqlite3.connect(db)
+        for table, buy, sell, net in (
+            ("foreign_daily", "foreign_buy", "foreign_sell", "foreign_net"),
+            ("trust_daily", "trust_buy", "trust_sell", "trust_net"),
+            ("dealer_daily", "dealer_buy", "dealer_sell", "dealer_net"),
+        ):
+            conn.execute(
+                f"CREATE TABLE {table} ("
+                f"trade_date TEXT, stock_id TEXT, stock_name TEXT, "
+                f"{buy} INTEGER, {sell} INTEGER, {net} INTEGER)"
+            )
+            conn.execute(
+                f"INSERT INTO {table} VALUES ('2026-09-04','2330','台積電',1,1,0)"
+            )
+        conn.commit()
+        conn.close()
+        lines = umd.coverage_lines(db, self.tmp / "us_data.db")
+        for table in ("foreign_daily", "trust_daily", "dealer_daily"):
+            hit = [l for l in lines if l.startswith(table)][0]
+            self.assertIn("2026-09-04", hit)
+
     def test_stock_daily_latest_name_count(self):
         db = self.tmp / "twse_data.db"
         conn = sqlite3.connect(db)
@@ -162,6 +189,19 @@ class RunJobsTests(unittest.TestCase):
         kwargs = bf.call_args.kwargs
         self.assertTrue(kwargs["include_today"])
         self.assertEqual(kwargs["today"], umd.taiwan_now().date())
+
+    def test_institutional_gaps_only_skips_other_jobs(self):
+        args = umd.parse_args(["--institutional-gaps-only", "--exclude-today"])
+        with patch("market.backfill.backfill_institutional_gaps", return_value=3) as inst, \
+             patch("market.backfill.backfill_ohlc") as ohlc, \
+             patch("market.backfill.backfill") as bf, \
+             patch("market.collector.sync_stock_master"):
+            failed = umd.run_jobs(args)
+        self.assertEqual(failed, [])
+        inst.assert_called_once()
+        self.assertIsNone(inst.call_args.kwargs.get("days"))
+        ohlc.assert_not_called()
+        bf.assert_not_called()
 
     def test_stock_daily_failure_is_recorded(self):
         args = umd.parse_args(["--include-today", "--skip-us", "--skip-taifex"])

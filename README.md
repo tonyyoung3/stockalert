@@ -56,7 +56,7 @@ PTT 股板週報跟 Reddit 投資想法週報都是本機整理、印到 stdout�
 正式環境用 GitHub Actions 排程，每個台股交易日 **18:00 台灣時間（Asia/Taipei）** 跑 `python -m market.update_market_data`，補最近 14 天缺的資料：
 
 - 大盤日 K / 小時 K / 開盤 5 秒
-- 外資買賣超、融資融券、全市場個股日 K（**上市**證交所 MI_INDEX + **上櫃**櫃買收盤行情，寫進同一張 `stock_daily`）
+- 三大法人個股買賣超（證交所 T86 一次寫 `foreign_daily`／`trust_daily`／`dealer_daily`；自營商用合計含避險）、融資融券、全市場個股日 K（**上市**證交所 MI_INDEX + **上櫃**櫃買收盤行情，寫進同一張 `stock_daily`）
 - 期交所三大法人未平倉
 - 美股 SPY / QQQ / IWM
 
@@ -67,6 +67,8 @@ PTT 股板週報跟 Reddit 投資想法週報都是本機整理、印到 stdout�
 排程失敗時，若 repo 已有 `SLACK_BOT_TOKEN` 跟 `SLACK_CHANNEL`，會把最後約 80 行 log 跟完整 `market-update.log` 打到同一個頻道，並附 Actions 連結。沒設 Slack secrets 就只紅在 Actions。
 
 第一次或 cache 被清掉時，到 Actions → *Update market data* → Run workflow，把 `days` 設成 `730` 回補約兩年。
+
+投信／自營商表是後來才加的。若 `foreign_daily` 已有歷史、另外兩張還是空的，不要重抓外資：本機跑 `python -m market.backfill institutional`（只抓 `foreign_daily` 有、`trust_daily`／`dealer_daily` 缺的日期；已有列的日期跳過），或 Actions 同一支 workflow 勾 `institutional_gaps`。T86 間隔約 4 秒。上櫃三大法人不在 `foreign_daily`，這兩張也不收 OTC。
 
 開 Turso：
 
@@ -82,6 +84,9 @@ turso db tokens create stockalert
 ```bash
 python -m market.update_market_data              # 預設近 14 天
 python -m market.update_market_data --days 730   # 歷史回補
+python -m market.update_market_data --institutional-gaps-only
+python -m market.backfill institutional          # 對齊 foreign_daily 日期、只補缺的投信／自營商
+python -m market.backfill institutional --dry-run
 python -m market.update_market_data --dry-run
 python -m data.cloud_db status
 python -m data.cloud_db push --days 14

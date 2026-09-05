@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """台股資料收集器
 - 每小時:抓取台灣加權指數 (TAIEX) 即時值
-- 每天:抓取證交所 T86 個股外資買賣超
+- 每天:抓取證交所 T86 個股三大法人(外資／投信／自營商)買賣超
 
 用法:
   python -m market.collector index    # 抓一次大盤指數
-  python -m market.collector foreign  # 抓一次外資買賣超 (預設抓最近交易日)
+  python -m market.collector foreign  # 抓一次 T86 (外資+投信+自營商, 預設最近交易日)
   python -m market.collector foreign 20260731  # 抓指定日期
   python -m market.collector run      # 常駐執行,自動排程 (需 pip install schedule)
 """
@@ -15,6 +15,7 @@ import sqlite3
 import logging
 from datetime import datetime, date, timedelta
 from pathlib import Path
+from typing import NamedTuple
 
 import requests
 
@@ -61,6 +62,29 @@ def init_db(conn: sqlite3.Connection):
         PRIMARY KEY (trade_date, stock_id)
     );
     CREATE INDEX IF NOT EXISTS idx_foreign_stock ON foreign_daily(stock_id);
+    CREATE TABLE IF NOT EXISTS trust_daily (
+        trade_date  TEXT,               -- 交易日 YYYY-MM-DD
+        stock_id    TEXT,
+        stock_name  TEXT,
+        trust_buy   INTEGER,            -- 投信買進股數
+        trust_sell  INTEGER,            -- 投信賣出股數
+        trust_net   INTEGER,            -- 投信買賣超股數
+        PRIMARY KEY (trade_date, stock_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_trust_stock ON trust_daily(stock_id);
+    -- 自營商 = T86「自營商買賣超股數」(合計含避險 = 自行買賣 + 避險)。
+    -- 這是三大法人合計的自營商分量,也是籌碼分析慣用的「自營商」淨額。
+    -- 不是「自行買賣」單欄。上市 T86 only;上櫃不在 foreign_daily,本表也不收 OTC。
+    CREATE TABLE IF NOT EXISTS dealer_daily (
+        trade_date  TEXT,               -- 交易日 YYYY-MM-DD
+        stock_id    TEXT,
+        stock_name  TEXT,
+        dealer_buy  INTEGER,            -- 自營商買進股數(自行買賣+避險)
+        dealer_sell INTEGER,            -- 自營商賣出股數(自行買賣+避險)
+        dealer_net  INTEGER,            -- 自營商買賣超股數(合計含避險)
+        PRIMARY KEY (trade_date, stock_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_dealer_stock ON dealer_daily(stock_id);
     CREATE TABLE IF NOT EXISTS taiex_daily (
         trade_date TEXT PRIMARY KEY,    -- YYYY-MM-DD
         open  REAL,
@@ -151,6 +175,8 @@ def init_db(conn: sqlite3.Connection):
     -- Covering (id, date) indexes for dashboard per-stock range scans.
     -- New names so Turso CREATE INDEX IF NOT EXISTS can add them beside the old ones.
     CREATE INDEX IF NOT EXISTS idx_foreign_stock_date ON foreign_daily(stock_id, trade_date);
+    CREATE INDEX IF NOT EXISTS idx_trust_stock_date ON trust_daily(stock_id, trade_date);
+    CREATE INDEX IF NOT EXISTS idx_dealer_stock_date ON dealer_daily(stock_id, trade_date);
     CREATE INDEX IF NOT EXISTS idx_margin_stock_date ON margin_stock(stock_id, trade_date);
     CREATE INDEX IF NOT EXISTS idx_stock_daily_id_date ON stock_daily(stock_id, trade_date);
     CREATE INDEX IF NOT EXISTS idx_taiex_hourly_trade_date ON taiex_hourly(trade_date);
@@ -335,10 +361,132 @@ def save_hourly_ohlc(day: date | None = None):
     log.info("小時 K %s 共 %d 根已存入(含開盤5秒資料)", day, len(rows))
 
 
-# ---------- 外資買賣超 (每天) ----------
+# ---------- 三大法人買賣超 (每天,一次 T86) ----------
+#
+# T86 欄位(2024+ / 2026-09-04 實測 19 欄):
+#   0 證券代號
+#   1 證券名稱
+#   2-4  外陸資買/賣/超(不含外資自營商)  ← foreign_daily
+#   5-7  外資自營商買/賣/超              ← 不另存;三大法人合計已含,且 foreign 沿用舊定義
+#   8-10 投信買/賣/超                    ← trust_daily
+#   11   自營商買賣超股數                ← dealer_daily.net (合計含避險)
+#   12-14 自營商自行買賣 買/賣/超
+#   15-17 自營商避險 買/賣/超
+#   18   三大法人買賣超股數
+#
+# 自營商定義:合計含避險。T86 把「自營商買賣超股數」獨立成第 11 欄,
+# 且三大法人合計 = 外資(不含自營) + 外資自營商 + 投信 + 此欄。
+# 籌碼分析慣用的「自營商」就是這個合計,不是「自行買賣」單欄。
+# dealer_buy / dealer_sell = 自行買賣 + 避險,使 buy - sell = net。
+#
+# 範圍:上市 T86 only。foreign_daily 本來就不含上櫃;櫃買雖有
+# 3itrade_hedge JSON,這裡不鏡射,避免跟外資覆蓋範圍不一致。
 
-def fetch_foreign(day: date) -> list[tuple]:
-    """證交所 T86:個股三大法人買賣超,取外資(不含外資自營商)欄位。"""
+class T86Tables(NamedTuple):
+    foreign: list[tuple]
+    trust: list[tuple]
+    dealer: list[tuple]
+
+
+EMPTY_T86 = T86Tables([], [], [])
+
+# Fallback indexes when the payload has no fields[] (or a short test fixture).
+_T86_IDX = {
+    "foreign_buy": 2, "foreign_sell": 3, "foreign_net": 4,
+    "trust_buy": 8, "trust_sell": 9, "trust_net": 10,
+    "dealer_net": 11,
+    "dealer_prop_buy": 12, "dealer_prop_sell": 13,
+    "dealer_hedge_buy": 15, "dealer_hedge_sell": 16,
+}
+
+
+def _t86_int(v) -> int:
+    try:
+        return int(str(v).replace(",", ""))
+    except (ValueError, TypeError):
+        return 0
+
+
+def _t86_col(row: list, idx: int | None) -> int:
+    if idx is None or idx < 0 or idx >= len(row):
+        return 0
+    return _t86_int(row[idx])
+
+
+def _t86_colmap(fields: list | None) -> dict[str, int]:
+    """Map T86 logical columns. Prefer fields[] labels; else the 19-col layout."""
+    if not fields:
+        return dict(_T86_IDX)
+    labels = [str(f).strip() for f in fields]
+
+    def find(*needles: str, exclude: tuple[str, ...] = ()) -> int | None:
+        for i, label in enumerate(labels):
+            if any(x in label for x in exclude):
+                continue
+            if all(n in label for n in needles):
+                return i
+        return None
+
+    mapped = {
+        "foreign_buy": find("外陸資買進") or find("外資買進"),
+        "foreign_sell": find("外陸資賣出") or find("外資賣出"),
+        "foreign_net": find("外陸資買賣超") or find("外資買賣超"),
+        "trust_buy": find("投信買進"),
+        "trust_sell": find("投信賣出"),
+        "trust_net": find("投信買賣超"),
+        # 「自營商買賣超股數」不含「自行買賣」「避險」= 合計欄
+        "dealer_net": find("自營商買賣超", exclude=("自行", "避險")),
+        "dealer_prop_buy": find("自營商買進", "自行"),
+        "dealer_prop_sell": find("自營商賣出", "自行"),
+        "dealer_hedge_buy": find("自營商買進", "避險"),
+        "dealer_hedge_sell": find("自營商賣出", "避險"),
+    }
+    out = dict(_T86_IDX)
+    for key, idx in mapped.items():
+        if idx is not None:
+            out[key] = idx
+    return out
+
+
+def parse_t86(data: dict, day: date) -> T86Tables:
+    """Split one T86 JSON payload into foreign / trust / dealer row lists."""
+    if data.get("stat") != "OK":
+        return EMPTY_T86
+    cmap = _t86_colmap(data.get("fields"))
+    trade_date = day.isoformat()
+    foreign, trust, dealer = [], [], []
+    for row in data.get("data") or []:
+        if len(row) < 5:
+            continue
+        sid = str(row[0]).strip()
+        name = str(row[1]).strip()
+        foreign.append((
+            trade_date, sid, name,
+            _t86_col(row, cmap["foreign_buy"]),
+            _t86_col(row, cmap["foreign_sell"]),
+            _t86_col(row, cmap["foreign_net"]),
+        ))
+        trust.append((
+            trade_date, sid, name,
+            _t86_col(row, cmap["trust_buy"]),
+            _t86_col(row, cmap["trust_sell"]),
+            _t86_col(row, cmap["trust_net"]),
+        ))
+        prop_buy = _t86_col(row, cmap["dealer_prop_buy"])
+        prop_sell = _t86_col(row, cmap["dealer_prop_sell"])
+        hedge_buy = _t86_col(row, cmap["dealer_hedge_buy"])
+        hedge_sell = _t86_col(row, cmap["dealer_hedge_sell"])
+        dealer.append((
+            trade_date, sid, name,
+            prop_buy + hedge_buy,
+            prop_sell + hedge_sell,
+            _t86_col(row, cmap["dealer_net"]),
+        ))
+    return T86Tables(foreign, trust, dealer)
+
+
+def fetch_t86(day: date) -> T86Tables:
+    """One HTTP call: TWSE T86 → foreign + trust + dealer rows."""
     url = "https://www.twse.com.tw/rwd/zh/fund/T86"
     params = {
         "date": day.strftime("%Y%m%d"),
@@ -347,39 +495,46 @@ def fetch_foreign(day: date) -> list[tuple]:
     }
     r = requests.get(url, params=params, headers=HEADERS, timeout=30)
     r.raise_for_status()
-    data = r.json()
-    if data.get("stat") != "OK":
-        return []  # 非交易日或資料未出
-    rows = []
-    trade_date = day.isoformat()
-    for row in data.get("data", []):
-        # 欄位: 0=代號 1=名稱 2=外資買進 3=外資賣出 4=外資買賣超 ...
-        def n(v):
-            try:
-                return int(str(v).replace(",", ""))
-            except ValueError:
-                return 0
-        rows.append((trade_date, row[0].strip(), row[1].strip(),
-                     n(row[2]), n(row[3]), n(row[4])))
-    return rows
+    return parse_t86(r.json(), day)
+
+
+def fetch_foreign(day: date) -> list[tuple]:
+    """證交所 T86:個股三大法人買賣超,取外資(不含外資自營商)欄位。"""
+    return fetch_t86(day).foreign
+
+
+def persist_t86(conn: sqlite3.Connection, tables: T86Tables) -> int:
+    """Write all three T86 tables from one parsed day. Returns foreign row count."""
+    if tables.foreign:
+        conn.executemany(
+            "INSERT OR REPLACE INTO foreign_daily VALUES (?,?,?,?,?,?)", tables.foreign)
+        update_stock_master(conn, [(r[1], r[2]) for r in tables.foreign], tables.foreign[0][0])
+    if tables.trust:
+        conn.executemany(
+            "INSERT OR REPLACE INTO trust_daily VALUES (?,?,?,?,?,?)", tables.trust)
+    if tables.dealer:
+        conn.executemany(
+            "INSERT OR REPLACE INTO dealer_daily VALUES (?,?,?,?,?,?)", tables.dealer)
+    return len(tables.foreign)
 
 
 def save_foreign(day: date | None = None):
-    """抓指定日(預設今天);若無資料則往前找最近交易日(最多回溯 7 天)。"""
+    """抓指定日 T86(外資+投信+自營商);無資料則往前找最近交易日(最多 7 天)。"""
     day = day or date.today()
     for _ in range(7):
-        rows = fetch_foreign(day)
-        if rows:
+        tables = fetch_t86(day)
+        if tables.foreign:
             with get_conn() as conn:
-                conn.executemany(
-                    "INSERT OR REPLACE INTO foreign_daily VALUES (?,?,?,?,?,?)", rows)
-                update_stock_master(conn, [(r[1], r[2]) for r in rows], rows[0][0])
-            log.info("外資買賣超 %s:%d 檔已存入", day, len(rows))
+                persist_t86(conn, tables)
+            log.info(
+                "T86 %s:外資 %d 檔、投信 %d 檔、自營商 %d 檔已存入",
+                day, len(tables.foreign), len(tables.trust), len(tables.dealer),
+            )
             return
         log.info("%s 無資料,往前一天找", day)
         day -= timedelta(days=1)
         time.sleep(3)  # 對證交所禮貌性間隔
-    log.warning("最近 7 天都抓不到外資資料")
+    log.warning("最近 7 天都抓不到 T86 資料")
 
 
 # ---------- 融資融券 (每天) ----------

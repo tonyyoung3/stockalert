@@ -136,6 +136,12 @@ def listen_host_port(env: dict[str, str] | None = None) -> tuple[str, int]:
     return host, port
 
 
+def must_listen(env: dict[str, str] | None = None) -> bool:
+    """Cloud Run sets PORT / K_SERVICE and requires the process to bind immediately."""
+    env = env if env is not None else os.environ
+    return bool((env.get("PORT") or "").strip() or env.get("K_SERVICE"))
+
+
 def should_open_browser(env: dict[str, str] | None = None) -> bool:
     env = env if env is not None else os.environ
     if env.get("K_SERVICE") or env.get("DASHBOARD_NO_BROWSER"):

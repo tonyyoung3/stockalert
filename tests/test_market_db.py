@@ -27,6 +27,19 @@ class ListenTests(unittest.TestCase):
         self.assertEqual((host, port), ("0.0.0.0", 9000))
         self.assertFalse(market_db.should_open_browser({"PORT": "9000"}))
 
+    def test_must_listen_on_cloud_run(self):
+        self.assertTrue(market_db.must_listen({"PORT": "8080"}))
+        self.assertTrue(market_db.must_listen({"K_SERVICE": "stockalert"}))
+        self.assertFalse(market_db.must_listen({}))
+
+
+class ImageTests(unittest.TestCase):
+    def test_dockerfile_copies_dashboard_imports(self):
+        text = Path(__file__).resolve().parents[1].joinpath("Dockerfile").read_text()
+        self.assertIn("COPY data/", text)
+        self.assertIn("COPY web/", text)
+        self.assertIn("COPY alertsdb/", text)
+
 
 class PathTests(unittest.TestCase):
     def tearDown(self):

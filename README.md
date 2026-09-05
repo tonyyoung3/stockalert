@@ -79,7 +79,7 @@ PTT 股板週報跟 Reddit 投資想法週報都是本機整理、印到 stdout�
 
 掃描用寬表 `stock_chips_daily` 是 **SQL VIEW**（不是實體表）：`stock_daily` LEFT JOIN 三大法人日表，鍵是 `(trade_date, stock_id)`。VIEW 不用刷新，底表仍由 `update_market_data` 寫入。欄位、單位、增量與 Turso 見 `docs/stock_chips_daily.md`（#77 / epic #76）。儀表板讀徑繼續打底表，不要改走這個 VIEW。
 
-籌碼 z-score（#78）是 **query-time**：`GET /api/scanner/chip_zscore?tickers=2330,2454&window=20&asof=YYYY-MM-DD`，預設窗格 **20 個交易日**，樣本標準差（ddof=1）。多檔、樣本不足旗標、NULL 規則見 `docs/chip_zscore.md`。不物化。掃描散布圖 UI（#79）與結果表格（#80）共用同一回應：自選多檔、軸可選價量／z-score，表頭可排序、表格可篩選，點擊進個股。本機追蹤清單（#81）存在瀏覽器 `localStorage` 鍵 `stockalert.sc.watchlist.v1`，可增刪、重整後仍在；一鍵套用寫入目前掃描標的（≥2 檔才打同一支 API）。沒有雲端同步、也沒有第二條掃描資料徑。
+籌碼 z-score（#78）是 **query-time**：`GET /api/scanner/chip_zscore?tickers=2330,2454&window=20&asof=YYYY-MM-DD`，預設窗格 **20 個交易日**，樣本標準差（ddof=1）。多檔、樣本不足旗標、NULL 規則見 `docs/chip_zscore.md`。不物化。掃描散布圖 UI（#79）與結果表格（#80）共用同一回應：自選多檔、軸可選價量／z-score，表頭可排序、表格可篩選，點擊進個股。本機追蹤清單（#81）存在瀏覽器 `localStorage` 鍵 `stockalert.sc.watchlist.v1`，可增刪、重整後仍在；一鍵套用寫入目前掃描標的（≥2 檔才打同一支 API）。掃描狀態（#82）寫進網址 `?sc=2330,2454`（可加 `scx` / `scy` / `scw` / `scmp` / `scd`），與既有 `?stock=` 同一套 query、可並用 `#scanner`；複製網址即可分享或在新工作階段還原，≥2 檔才打同一支 API。過長時先省略預設／可選參數，再截標的（沒有短網址服務）。沒有雲端同步、也沒有第二條掃描資料徑。
 
 **Cache-local foreign span ≠ Turso foreign span.** GitHub Actions 的 `twse_data.db` cache 裡 `foreign_daily` 常常只有約 85 個交易日，但 Turso 上同一張表可以有約 510 日。設了 `TURSO_*` 時，`institutional_gaps` 以 Turso（並集本機）的 `foreign_daily` 日期當缺口來源，略過 Turso 上 trust/dealer 都已齊的日期；抓完只推這三張 T86 表的補齊區間，不會用本機 cache 的短外資歷史當「已補完」。未設 secrets 時行為不變，只看本機。
 
@@ -214,7 +214,7 @@ gcloud run deploy stockalert \
 
 頂部分頁：`市場`（預設）｜`個股`｜`掃描`｜`告警`｜`回測`。用顯示／隱藏切換，不必捲完整頁。新鮮度橫幅與各表最後日期留在分頁上方。
 
-網址 hash：`#market` / `#stock` / `#scanner` / `#alerts` / `#backtest`（也接受 `#section-stock` 這種寫法），可與既有 `?stock=2330` 並用。沒有 hash、但有 `?stock=` 時開個股分頁；純首次進入落在市場總覽，回測表單與結果不佔首屏。回測頁內再切 `大盤策略`｜`個股 pattern`（與日內／隔夜／波段不同層）。**掃描**是多檔橫向比較工作台，不是單檔個股宇宙、也不是回測個股 pattern。自選 ≥2 檔後打一次 `GET /api/scanner/chip_zscore`，同時餵散布圖與結果表格（不另打 API）；軸可選價量／籌碼 z-score；表頭點擊排序（代號、軸／z、收盤、成交量），表格可依代號／名稱與列狀態篩選；點圖或列呼叫 `selectStock` 進個股。本機追蹤清單（`stockalert.sc.watchlist.v1`，與回測預設同一 localStorage 模式）可增刪並一鍵套用到 `sc-picks`，不會另打 API。少於 2 檔是空狀態；載入中／失敗明示（無假資料）；所選軸為 null 時標「樣本不足」。窄螢幕控制列直向堆疊，並用下方表格當點進個股的降級入口。
+網址 hash：`#market` / `#stock` / `#scanner` / `#alerts` / `#backtest`（也接受 `#section-stock` 這種寫法），可與既有 `?stock=2330` 並用。沒有 hash、但有 `?stock=` 時開個股分頁；沒有 hash、但有 `?sc=` 標的時開掃描分頁；純首次進入落在市場總覽，回測表單與結果不佔首屏。回測頁內再切 `大盤策略`｜`個股 pattern`（與日內／隔夜／波段不同層）。**掃描**是多檔橫向比較工作台，不是單檔個股宇宙、也不是回測個股 pattern。自選 ≥2 檔後打一次 `GET /api/scanner/chip_zscore`，同時餵散布圖與結果表格（不另打 API）；軸可選價量／籌碼 z-score；表頭點擊排序（代號、軸／z、收盤、成交量），表格可依代號／名稱與列狀態篩選；點圖或列呼叫 `selectStock` 進個股。本機追蹤清單（`stockalert.sc.watchlist.v1`，與回測預設同一 localStorage 模式）可增刪並一鍵套用到 `sc-picks`，不會另打 API。掃描條件編碼在 `?sc=` / `scx` / `scy` / `scw`（與 `?stock=` 同一套 query；hash 後 `?sc=` 也可讀），複製網址可還原；過長 URL 先丟掉可選參數再截標的，畫面上有短註。少於 2 檔是空狀態；載入中／失敗明示（無假資料）；所選軸為 null 時標「樣本不足」。窄螢幕控制列直向堆疊，並用下方表格當點進個股的降級入口。
 
 窄螢幕（約 375px）控制列改直向堆疊、input 滿寬、表格在區內橫滑；回測的資料集／濾網／進場／出場用 `data-bt-fold` 折疊（手機預設收合），濾網積木是列表、參數為第二層。圖表手勢文案是拖曳／雙指縮放（pinch 原本就開著）。外資排行日期欄在小螢幕改直向、高度至少 44px，避免 iOS 裁切。
 

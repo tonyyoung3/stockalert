@@ -282,7 +282,7 @@ class DashboardNavTests(unittest.TestCase):
         self.assertIn("熱門股分點動向", title_tag)
 
     def test_pm_locked_copy_gates_issue_55(self):
-        """PM copy/gates for #55: hot-N title, token empty, not T86, no live FinMind."""
+        """PM copy/gates for #55: hot-N title, token empty, not T86, not 全市場."""
         html = dashboard.HTML
         card = html[html.index("id=\"broker-branch-card\""):html.index("id=\"section-stock\"")]
         self.assertIn(">熱門股分點動向</h3>", card)
@@ -301,7 +301,7 @@ class DashboardNavTests(unittest.TestCase):
         self.assertNotIn("live_ingest: true", html)
         from market import broker_branch
         self.assertFalse(broker_branch.ingest_status({}).get("live_ingest"))
-        self.assertFalse(broker_branch.ingest_status({"FINMIND_TOKEN": "x"}).get("live_ingest"))
+        self.assertTrue(broker_branch.ingest_status({"FINMIND_TOKEN": "x"}).get("live_ingest"))
         self.assertEqual(broker_branch.market_title("empty"), "熱門股分點動向")
         self.assertEqual(broker_branch.market_title("hot_n"), "熱門股分點動向")
         self.assertNotIn("全市場", broker_branch.market_title("empty"))

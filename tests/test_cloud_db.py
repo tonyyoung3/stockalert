@@ -207,3 +207,29 @@ class PushTests(unittest.TestCase):
     def test_push_alerts_cli_ok_without_secrets(self):
         with patch("data.cloud_db.configured", return_value=False):
             self.assertEqual(cloud_db.main(["push-alerts"]), 0)
+
+    def test_broker_branch_tables_use_existing_trade_date_window(self):
+        """#61: broker_branch_daily has trade_date so push_market_files N-day window applies."""
+        path = Path(self.tmp.name) / "twse_broker.db"
+        conn = sqlite3.connect(path)
+        from market import broker_branch
+        broker_branch.ensure_schema(conn)
+        conn.execute(
+            "INSERT INTO broker_branch_daily VALUES ('2026-08-01','2330','1020',1,0,1)"
+        )
+        conn.execute(
+            "INSERT INTO broker_branch_daily VALUES ('2026-09-03','2330','1020',5,1,4)"
+        )
+        conn.execute("INSERT INTO brokers VALUES ('1020','合庫')")
+        conn.execute("INSERT INTO broker_branch_meta VALUES ('source','live')")
+        conn.commit()
+        conn.close()
+        remote = FakeRemote()
+        counts = cloud_db.push_file(path, remote, since="2026-08-20")
+        self.assertEqual(counts["broker_branch_daily"], 1)
+        self.assertEqual(counts["brokers"], 1)
+        self.assertEqual(counts["broker_branch_meta"], 1)
+        self.assertEqual(
+            remote.execute("SELECT trade_date FROM broker_branch_daily").fetchone()[0],
+            "2026-09-03",
+        )

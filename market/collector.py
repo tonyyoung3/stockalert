@@ -117,7 +117,7 @@ def init_db(conn: sqlite3.Connection):
         stock_name TEXT,
         last_seen  TEXT   -- 最後出現在資料中的交易日
     );
-    -- 分點買賣超日彙總（#54 契約）。空表；無 FINMIND_TOKEN 不寫 live 列。
+    -- 分點買賣超日彙總（#54 / #61）。無 FINMIND_TOKEN 不寫 live 列。
     -- 不存價位明細。見 docs/broker_branch.md。
     CREATE TABLE IF NOT EXISTS broker_branch_daily (
         trade_date  TEXT,
@@ -131,6 +131,10 @@ def init_db(conn: sqlite3.Connection):
     CREATE TABLE IF NOT EXISTS brokers (
         broker_id   TEXT PRIMARY KEY,
         broker_name TEXT
+    );
+    CREATE TABLE IF NOT EXISTS broker_branch_meta (
+        key   TEXT PRIMARY KEY,
+        value TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_broker_branch_date_net
         ON broker_branch_daily(trade_date, net_volume);

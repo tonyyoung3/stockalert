@@ -83,15 +83,5 @@ jobs:
           GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: python -m notify.notify_job --title "市場資料更新失敗" --log market-update.log
 
-  # ---------------------------------------------------------------------------
-  # broker-branch / 熱門股分點動向 — NOT ENABLED (issue #54 / epic #53)
-  # Path A locked: 熱門前 N market Top (not 全市場). Same tables for stock reads.
-  # Blocker: FINMIND_TOKEN is absent. Do not add a cron that calls FinMind.
-  # If later enabled (after token is in secrets):
-  #   - weekday after FinMind post-close ~21:00 Asia/Taipei (13:00 UTC)
-  #   - do NOT fold into the 18:00 update-market-data job
-  #   - 熱門前 N uses latest stock_daily.turnover; title 「熱門股分點動向」
-  #   - reuse this file's Slack failure notify pattern
-  #   - then Turso push if secrets are set
-  #   - see docs/broker_branch.md
-  # ---------------------------------------------------------------------------
+  # broker-branch / 熱門股分點動向 lives in update_broker_branch.yml (#61).
+  # Weekday ~21:00 Asia/Taipei — do NOT fold FinMind calls into this 18:00 job.

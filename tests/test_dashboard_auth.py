@@ -5,7 +5,6 @@ import os
 import threading
 import unittest
 from contextlib import contextmanager
-from http.server import HTTPServer
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 from urllib.error import HTTPError
@@ -38,7 +37,7 @@ def _request(url, method="GET", headers=None, data=None, timeout=5):
 
 @contextmanager
 def _serve():
-    httpd = HTTPServer(("127.0.0.1", 0), dashboard.Handler)
+    httpd = dashboard.make_server("127.0.0.1", 0)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
     try:
@@ -184,7 +183,7 @@ class DashboardAuthHTTPTests(unittest.TestCase):
 
                 fake_conn = MagicMock()
                 with patch.object(dashboard.market_db, "connect_for_backtest", return_value=fake_conn):
-                    with patch("web.backtest_engine.run_backtest", return_value={"n": 0}):
+                    with patch.object(dashboard, "execute_index_backtest", return_value={"n": 0}):
                         status, _, body = _request(
                             base + "/api/backtest",
                             method="POST",
@@ -212,10 +211,11 @@ class DashboardAuthHTTPTests(unittest.TestCase):
                         data=payload,
                     )
                 text = body.decode("utf-8")
-                self.assertEqual(status, 200)
+                self.assertEqual(status, 500)
                 self.assertEqual(json.loads(text), {"error": "回測執行失敗"})
                 self.assertNotIn("/secret", text)
                 self.assertNotIn("sqlite", text.lower())
+                self.assertNotIn("traceback", text.lower())
 
     def test_only_user_or_only_password_is_open(self):
         for env in (
@@ -253,8 +253,9 @@ class DashboardAuthHTTPTests(unittest.TestCase):
 
                 fake_conn = MagicMock()
                 with patch.object(dashboard.market_db, "connect", return_value=fake_conn):
-                    with patch(
-                        "web.stock_backtest.run_stock_backtest",
+                    with patch.object(
+                        dashboard,
+                        "execute_stock_backtest",
                         return_value={"n": 0, "no_trigger": True},
                     ):
                         status, _, body = _request(
@@ -277,6 +278,8 @@ class DashboardAuthHTTPTests(unittest.TestCase):
         self.assertIn("DASHBOARD_PASSWORD", text)
         self.assertIn("--set-secrets", text)
         self.assertIn("--allow-unauthenticated", text)
+        self.assertIn("--max-instances", text)
+        self.assertIn("DASHBOARD_ALLOW_ANONYMOUS", text)
         self.assertIn("不要在沒設這兩個變數的情況下公開部署", text)
         self.assertIn("僅本機", text)
         self.assertIn("GET /health", text)

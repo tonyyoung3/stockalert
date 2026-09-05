@@ -120,12 +120,13 @@ python -m market.us_collector hourly
 這是個人研究工具。`DASHBOARD_USER` 與 `DASHBOARD_PASSWORD` **兩個都有非空值**時，啟用 HTTP Basic Auth：
 
 - 受保護：HTML（`/`、`/index.html`）與所有 `/api/*`（含 `POST /api/backtest`、`POST /api/backtest/stock`）
-- 永遠開放：`GET /health`（Cloud Run 探活；HTTP 200 + freshness JSON，與今天相同）
+- 永遠開放：`GET /health`（Cloud Run 探活；HTTP 200 + `{status, ok}` + freshness JSON，與業務錯誤可區分）
 - 未帶帳密或密碼錯誤：HTTP **401**，`WWW-Authenticate: Basic realm="stockalert"`，內容只有通用 `{"error":"unauthorized"}`（不回內部路徑、DB、stack）
 - 瀏覽器對同網域的 `/api/*` 與回測 `fetch` 會自動帶 Basic（前端用 `credentials: 'same-origin'`，**不要把密碼寫進 JS**）
-- Auth 開啟時，`POST /api/backtest` 與 `POST /api/backtest/stock` 共用簡易記憶體限流（每 IP 每分鐘約 10 次）
+- `POST /api/backtest` 與 `POST /api/backtest/stock` **一律**限流（含匿名）。有 auth 時每 IP 每分鐘約 10 次（`DASHBOARD_BACKTEST_RPM`）；匿名更嚴，約 3 次（`DASHBOARD_BACKTEST_ANON_RPM`）
+- 伺服器是 `ThreadingHTTPServer`：一次慢回測不會卡住 `GET /health`，Cloud Run 探活不會因單次回測被拖死。每個 request thread 各自開／關 sqlite／Turso 連線（`ContextVar`，不共用 cursor）
 
-**任一變數未設：不做驗證。** 只適合本機；**不要在沒設這兩個變數的情況下公開部署**。Cloud Run IAM 維持 `--allow-unauthenticated` 沒問題——那只表示任何人打得到服務，擋人的是應用層 Basic。IAM 全開 + 應用層 Basic 是個人部署的預期組合；沒設 Basic 環境變數時，網站是全開的。
+**任一變數未設：匿名。** 本機（沒有 `K_SERVICE`）預設允許匿名，但回測仍限流，只適合本機；**不要在沒設這兩個變數的情況下公開部署**。Cloud Run 設了 `K_SERVICE`：必須設帳密，或明確 `DASHBOARD_ALLOW_ANONYMOUS=1`，否則 HTML 與 `/api/*` 回 HTTP **403** `{"error":"anonymous_disabled"}`（fail-closed；`GET /health` 仍開）。本機也可設 `DASHBOARD_FAIL_CLOSED=1` 測同一條路徑。Cloud Run IAM 維持 `--allow-unauthenticated` 沒問題——那只表示任何人打得到服務，擋人的是應用層 Basic／fail-closed。IAM 全開 + 應用層 Basic 是個人部署的預期組合。
 
 本機（無驗證，僅本機）：
 
@@ -153,21 +154,27 @@ gcloud run deploy stockalert \
   --source . \
   --region us-central1 \
   --allow-unauthenticated \
+  --max-instances 2 \
   --set-env-vars TURSO_DATABASE_URL="$TURSO_DATABASE_URL",TURSO_AUTH_TOKEN="$TURSO_AUTH_TOKEN" \
   --set-secrets DASHBOARD_USER=DASHBOARD_USER:latest,DASHBOARD_PASSWORD=DASHBOARD_PASSWORD:latest
 ```
 
-或把帳密一併寫進環境變數（會出現在服務設定裡，只建議暫時用）：
+`--max-instances` 限制同時跑的 revision 數，避免回測把 CPU／費用打爆（可依需要調）。或把帳密一併寫進環境變數（會出現在服務設定裡，只建議暫時用）：
 
 ```bash
 gcloud run deploy stockalert \
   --source . \
   --region us-central1 \
   --allow-unauthenticated \
+  --max-instances 2 \
   --set-env-vars TURSO_DATABASE_URL="$TURSO_DATABASE_URL",TURSO_AUTH_TOKEN="$TURSO_AUTH_TOKEN",DASHBOARD_USER="$DASHBOARD_USER",DASHBOARD_PASSWORD="$DASHBOARD_PASSWORD"
 ```
 
-會給一個 `*.run.app` 網址。設了那兩個 Turso 變數就讀雲端，不帶本機 `twse_data.db`。回測會把需要的表快照進暫存 sqlite，pandas 不用改。既有服務在 merge 後也要把 `DASHBOARD_USER` / `DASHBOARD_PASSWORD` 設成 secret 或 env，否則站點仍全開。
+會給一個 `*.run.app` 網址。設了那兩個 Turso 變數就讀雲端，不帶本機 `twse_data.db`。回測會把需要的表快照進暫存 sqlite，pandas 不用改。既有服務在 merge 後也要把 `DASHBOARD_USER` / `DASHBOARD_PASSWORD` 設成 secret 或 env；Cloud Run 沒設帳密又沒設 `DASHBOARD_ALLOW_ANONYMOUS=1` 時，業務 API 會 fail-closed。
+
+限流看的是 `X-Forwarded-For` **最後一段**（Cloud Run 單一信任 proxy 會把連上來的 client 加在最右邊）。前面的段是客戶端可偽造的，不當 rate-limit key。
+
+未預期的 handler 例外會 `logging.exception`（含 traceback，Cloud Run 可蒐集），HTTP **500**（壞 JSON 是 **400**）只回穩定 `{"error":"..."}`，不把 stack 給瀏覽器。`GET /health` 仍是 200 + `status`/`ok`，跟業務 4xx／5xx 可區分。
 
 ### 資料新鮮度與 `/health`
 
@@ -210,7 +217,7 @@ Header **顯示範圍**（全域 `days`）只影響加權 K 線／走勢、外�
 
 回測頁用積木組「若…（濾網 AND）→ 則進場／出場」，能力對齊現有 `web/backtest_engine.py`，**不是**新 DSL。
 
-`POST /api/backtest` 仍走既有 **HTTP Basic Auth** 與（auth 開啟時）每 IP 每分鐘約 10 次限流。Body 可為：
+`POST /api/backtest` 仍走既有 **HTTP Basic Auth**（若已設）與**一律**每 IP 限流（匿名更嚴）。Body 可為：
 
 1. **v1 積木 JSON**（儀表板現在送這個；伺服器 `blocks_to_rule` 編成扁平 rule）
 2. **舊扁平 rule**（`filters` 為物件）— 相容，行為與以前相同
@@ -256,7 +263,7 @@ Header **顯示範圍**（全域 `days`）只影響加權 K 線／走勢、外�
 - 資料：**只有** `stock_daily` 日 OHLCV。**沒有**個股小時／日內路徑，也不走 TAIEX 小時回測。
 - 進場：每個交易日用「截至當日」的 trailing window 跑同一組 `check_*`（不偷看未來）。訊號日**收盤**進場。
 - 出場：持有 N 個交易日收盤；可選％停損／停利。觸價語意：做多時當日**低點**觸及停損、**高點**觸及停利；同一日兩者都可能觸及時，保守假設先停損。進出場假設在摘要區**一行可見**。
-- API：`POST /api/backtest/stock`（同一套 HTTP Basic Auth；auth 開啟時與 `/api/backtest` 共用每 IP 每分鐘約 10 次限流）。
+- API：`POST /api/backtest/stock`（同一套 HTTP Basic Auth；與 `/api/backtest` 共用每 IP 限流，匿名更嚴）。
 - 空狀態／無觸發／錯誤分開顯示。結果標 `個股 · {代號} · {pattern中文名}` 與 `日K；非大盤回測`。
 
 非目標：組合部位、分點濾網、DSL、一次做完所有 pattern、實盤。

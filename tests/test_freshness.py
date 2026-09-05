@@ -5,7 +5,6 @@ import tempfile
 import threading
 import unittest
 from datetime import date, datetime, timedelta, timezone
-from http.server import HTTPServer
 from pathlib import Path
 from unittest.mock import patch
 from urllib.request import urlopen
@@ -276,7 +275,7 @@ class FreshnessAPITests(unittest.TestCase):
 
     def test_health_http_200_json_when_stale(self):
         self._insert("2026-08-01")
-        httpd = HTTPServer(("127.0.0.1", 0), dashboard.Handler)
+        httpd = dashboard.make_server("127.0.0.1", 0)
         thread = threading.Thread(target=httpd.serve_forever, daemon=True)
         thread.start()
         try:

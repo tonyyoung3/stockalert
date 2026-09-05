@@ -8,11 +8,14 @@
 告警／績效：本機讀 screener.db 的 alerts、performance；Turso 則與市場表同一顆遠端 DB。
 
 DASHBOARD_USER 與 DASHBOARD_PASSWORD 都有值時啟用 HTTP Basic Auth
-（HTML 與 /api/*；GET /health 永遠開放）。缺任一變數則不驗證，只適合本機。
+（HTML 與 /api/*；GET /health 永遠開放）。缺任一變數則為匿名：本機預設
+允許（回測仍限流）；Cloud Run（K_SERVICE）需設帳密或
+DASHBOARD_ALLOW_ANONYMOUS=1，否則業務 API 拒絕。
 """
 import base64
 import hmac
 import json
+import logging
 import os
 import re
 import sqlite3
@@ -22,6 +25,7 @@ import webbrowser
 from contextvars import ContextVar
 from datetime import date, timedelta
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from socketserver import ThreadingMixIn
 from urllib.parse import urlparse, parse_qs
 
 from alertsdb.store import (
@@ -38,7 +42,10 @@ from web import freshness as freshness_mod
 
 _YMD = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 # One sqlite/Turso connection per HTTP API request (Cloud Run round-trips are expensive).
+# ContextVar is copied per thread: ThreadingHTTPServer workers must not share this
+# cursor/connection. api() always opens, binds, then resets+closes in the same thread.
 _request_conn: ContextVar = ContextVar("dashboard_db_conn", default=None)
+_log = logging.getLogger("web.dashboard")
 
 
 def q(sql, params=()):
@@ -56,9 +63,15 @@ def _ymd(qs, key):
 _STOCK_ID = re.compile(r"^[0-9A-Za-z]{2,10}$")
 AUTH_REALM = "stockalert"
 UNAUTHORIZED_JSON = {"error": "unauthorized"}
+ANONYMOUS_DISABLED_JSON = {"error": "anonymous_disabled"}
 RATE_LIMITED_JSON = {"error": "rate_limited"}
+INVALID_JSON = {"error": "invalid_json"}
+INTERNAL_ERROR_JSON = {"error": "internal_error"}
+BACKTEST_FAILED_JSON = {"error": "回測執行失敗"}
 BACKTEST_RATE_LIMIT = 10
+BACKTEST_ANON_RATE_LIMIT = 3
 BACKTEST_RATE_WINDOW_SEC = 60
+_TRUTHY = {"1", "true", "yes", "on"}
 
 
 def dashboard_credentials(env=None):
@@ -73,6 +86,53 @@ def dashboard_credentials(env=None):
 
 def auth_enabled(env=None) -> bool:
     return dashboard_credentials(env) is not None
+
+
+def env_flag(name: str, env=None) -> bool:
+    env = os.environ if env is None else env
+    return (env.get(name) or "").strip().lower() in _TRUTHY
+
+
+def on_cloud_run(env=None) -> bool:
+    """Cloud Run always sets K_SERVICE. PORT-only local sims stay anonymous-allowed."""
+    env = os.environ if env is None else env
+    return bool((env.get("K_SERVICE") or "").strip())
+
+
+def allow_anonymous(env=None) -> bool:
+    """Whether unauthenticated HTML / business APIs are served.
+
+    Local-dev (no K_SERVICE): yes, with backtest rate limits.
+    Cloud Run: no, unless DASHBOARD_ALLOW_ANONYMOUS=1 (or Basic auth is set;
+    callers still go through auth when credentials exist).
+    DASHBOARD_FAIL_CLOSED=1 denies anonymous even locally.
+    """
+    env = os.environ if env is None else env
+    if env_flag("DASHBOARD_ALLOW_ANONYMOUS", env):
+        return True
+    if env_flag("DASHBOARD_FAIL_CLOSED", env):
+        return False
+    if on_cloud_run(env):
+        return False
+    return True
+
+
+def _env_int(env, name: str, default: int, lo: int, hi: int) -> int:
+    raw = (env.get(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        return max(lo, min(int(raw), hi))
+    except (TypeError, ValueError):
+        return default
+
+
+def backtest_max_hits(env=None) -> int:
+    """RPM cap for POST /api/backtest*. Anonymous is stricter."""
+    env = os.environ if env is None else env
+    if auth_enabled(env):
+        return _env_int(env, "DASHBOARD_BACKTEST_RPM", BACKTEST_RATE_LIMIT, 1, 600)
+    return _env_int(env, "DASHBOARD_BACKTEST_ANON_RPM", BACKTEST_ANON_RATE_LIMIT, 1, 600)
 
 
 def path_requires_auth(path: str) -> bool:
@@ -121,11 +181,12 @@ class _IpRateLimiter:
         self._hits = {}
         self._lock = threading.Lock()
 
-    def allow(self, key, now=None) -> bool:
+    def allow(self, key, now=None, max_hits=None) -> bool:
         now = time.monotonic() if now is None else now
+        cap = self.max_hits if max_hits is None else max_hits
         with self._lock:
             recent = [t for t in self._hits.get(key, ()) if now - t < self.window_sec]
-            if len(recent) >= self.max_hits:
+            if len(recent) >= cap:
                 self._hits[key] = recent
                 return False
             recent.append(now)
@@ -141,12 +202,35 @@ _backtest_limiter = _IpRateLimiter(BACKTEST_RATE_LIMIT, BACKTEST_RATE_WINDOW_SEC
 
 
 def client_ip(handler) -> str:
+    """Rate-limit identity: trust the *rightmost* X-Forwarded-For hop.
+
+    Cloud Run sits behind one trusted proxy that appends the connecting
+    client as the last XFF segment. Leading segments are client-controlled
+    and must not mint extra limiter buckets.
+    """
     xff = handler.headers.get("X-Forwarded-For") if handler.headers else None
     if xff:
-        return xff.split(",", 1)[0].strip() or "unknown"
+        parts = [p.strip() for p in xff.split(",") if p.strip()]
+        if parts:
+            return parts[-1]
     if handler.client_address:
         return handler.client_address[0]
     return "unknown"
+
+
+def _synthetic_handler_hold():
+    """Production no-op. Tests patch this to hold a worker while probing /health."""
+    return None
+
+
+def execute_index_backtest(conn, payload):
+    from web import backtest_engine
+    return backtest_engine.run_backtest(conn, payload)
+
+
+def execute_stock_backtest(conn, payload):
+    from web.stock_backtest import run_stock_backtest
+    return run_stock_backtest(conn, payload)
 
 
 def parse_stock_query(query: str | None) -> str | None:
@@ -404,12 +488,13 @@ def health_payload() -> dict:
             }
             return body
         body["freshness"] = api("/api/freshness", {})
-    except Exception as e:
+    except Exception:
+        _log.exception("health freshness check failed")
         body["freshness"] = {
             "stale": True,
             "empty": True,
             "tables": [],
-            "error": str(e),
+            "error": "freshness_unavailable",
             "calendar": freshness_mod.CALENDAR,
             "calendar_note": freshness_mod.CALENDAR_NOTE,
         }
@@ -3411,8 +3496,13 @@ window.addEventListener('resize', resizeCharts);
 
 
 class Handler(BaseHTTPRequestHandler):
+    def setup(self):
+        self._wrote_response = False
+        super().setup()
+
     def _send_bytes(self, status, body, content_type, extra_headers=None):
         self.send_response(status)
+        self._wrote_response = True
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         if extra_headers:
@@ -3432,6 +3522,15 @@ class Handler(BaseHTTPRequestHandler):
             {"WWW-Authenticate": f'Basic realm="{AUTH_REALM}"'},
         )
 
+    def _reject_anonymous_disabled(self):
+        self._send_json(403, ANONYMOUS_DISABLED_JSON)
+
+    def _send_unexpected_error(self, path: str):
+        _log.exception("unexpected error %s %s", self.command, path)
+        if self._wrote_response:
+            return
+        self._send_json(500, INTERNAL_ERROR_JSON)
+
     def _drain_body(self):
         try:
             length = int(self.headers.get("Content-Length", 0) or 0)
@@ -3440,86 +3539,147 @@ class Handler(BaseHTTPRequestHandler):
         if length > 0:
             self.rfile.read(length)
 
+    def _is_authorized(self, path: str) -> bool:
+        if not path_requires_auth(path):
+            return True
+        if auth_enabled():
+            creds = dashboard_credentials()
+            return bool(
+                creds
+                and valid_basic_header(self.headers.get("Authorization"), creds[0], creds[1])
+            )
+        return allow_anonymous()
+
+    def _reject_access(self):
+        if auth_enabled():
+            self._reject_unauthorized()
+        else:
+            self._reject_anonymous_disabled()
+
     def _authorize(self, path: str) -> bool:
-        if not path_requires_auth(path) or not auth_enabled():
+        if self._is_authorized(path):
             return True
-        creds = dashboard_credentials()
-        if creds and valid_basic_header(self.headers.get("Authorization"), creds[0], creds[1]):
-            return True
-        self._reject_unauthorized()
+        self._reject_access()
         return False
 
     def do_GET(self):
         u = urlparse(self.path)
-        if u.path == "/health":
-            body = json.dumps(health_payload()).encode("utf-8")
-            self._send_bytes(200, body, "application/json; charset=utf-8")
-            return
-        if not self._authorize(u.path):
-            return
-        if u.path == "/" or u.path == "/index.html":
-            body = HTML.encode("utf-8")
-            self._send_bytes(200, body, "text/html; charset=utf-8")
-            return
-        result = api(u.path, parse_qs(u.query))
-        if result is None:
-            self.send_response(404)
-            self.end_headers()
-            return
-        self._send_json(200, result)
+        try:
+            if u.path == "/health":
+                body = json.dumps(health_payload()).encode("utf-8")
+                self._send_bytes(200, body, "application/json; charset=utf-8")
+                return
+            if not self._authorize(u.path):
+                return
+            if u.path == "/" or u.path == "/index.html":
+                body = HTML.encode("utf-8")
+                self._send_bytes(200, body, "text/html; charset=utf-8")
+                return
+            result = api(u.path, parse_qs(u.query))
+            if result is None:
+                self.send_response(404)
+                self._wrote_response = True
+                self.end_headers()
+                return
+            self._send_json(200, result)
+        except Exception:
+            self._send_unexpected_error(u.path)
 
     def do_POST(self):
         u = urlparse(self.path)
-        if path_requires_auth(u.path) and auth_enabled():
-            creds = dashboard_credentials()
-            ok = bool(
-                creds
-                and valid_basic_header(
-                    self.headers.get("Authorization"), creds[0], creds[1]
-                )
-            )
-            if not ok:
-                self._drain_body()
-                self._reject_unauthorized()
-                return
-        if u.path not in ("/api/backtest", "/api/backtest/stock"):
-            self._drain_body()
-            self.send_response(404)
-            self.end_headers()
-            return
-        if auth_enabled() and not _backtest_limiter.allow(client_ip(self)):
-            self._drain_body()
-            self._send_json(429, RATE_LIMITED_JSON)
-            return
         try:
-            length = int(self.headers.get("Content-Length", 0))
-            payload = json.loads(self.rfile.read(length) or b"{}")
+            if not self._is_authorized(u.path):
+                self._drain_body()
+                self._reject_access()
+                return
+            if u.path not in ("/api/backtest", "/api/backtest/stock"):
+                self._drain_body()
+                self.send_response(404)
+                self._wrote_response = True
+                self.end_headers()
+                return
+            if not _backtest_limiter.allow(client_ip(self), max_hits=backtest_max_hits()):
+                self._drain_body()
+                self._send_json(429, RATE_LIMITED_JSON)
+                return
+            try:
+                length = int(self.headers.get("Content-Length", 0) or 0)
+            except (TypeError, ValueError):
+                length = 0
+            raw = self.rfile.read(length) if length > 0 else b"{}"
+            try:
+                payload = json.loads(raw or b"{}")
+            except (json.JSONDecodeError, UnicodeDecodeError, TypeError, ValueError):
+                _log.warning("invalid JSON POST %s from %s", u.path, client_ip(self))
+                self._send_json(400, INVALID_JSON)
+                return
+            if not isinstance(payload, dict):
+                _log.warning("non-object JSON POST %s from %s", u.path, client_ip(self))
+                self._send_json(400, INVALID_JSON)
+                return
+            _synthetic_handler_hold()
             if u.path == "/api/backtest/stock":
                 conn = market_db.connect()
                 try:
-                    from web.stock_backtest import run_stock_backtest
-                    result = run_stock_backtest(conn, payload)
+                    result = execute_stock_backtest(conn, payload)
                 finally:
                     conn.close()
             else:
                 conn = market_db.connect_for_backtest()
                 try:
-                    from web import backtest_engine
-                    result = backtest_engine.run_backtest(conn, payload)
+                    result = execute_index_backtest(conn, payload)
                 finally:
                     conn.close()
+            self._send_json(200, result)
         except Exception:
-            result = {"error": "回測執行失敗"}
-        self._send_json(200, result)
+            _log.exception("unexpected error POST %s", u.path)
+            if not self._wrote_response:
+                self._send_json(500, BACKTEST_FAILED_JSON)
 
-    def log_message(self, *a):
-        pass
+    def log_message(self, fmt, *args):
+        try:
+            msg = fmt % args
+        except Exception:
+            msg = " ".join(str(x) for x in (fmt,) + args)
+        _log.info("%s %s", self.address_string(), str(msg).rstrip())
+
+    def log_error(self, fmt, *args):
+        try:
+            msg = fmt % args
+        except Exception:
+            msg = " ".join(str(x) for x in (fmt,) + args)
+        _log.error("%s %s", self.address_string(), str(msg).rstrip())
 
 
 _MISSING_DATA = (
     "找不到市場資料。本機請先跑 python -m market.update_market_data;"
     " Cloud Run 請設 TURSO_DATABASE_URL 跟 TURSO_AUTH_TOKEN。"
 )
+
+
+class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
+    """Multi-threaded server so Cloud Run /health probes stay up during a backtest.
+
+    A single-threaded HTTPServer would hold the only worker on POST /api/backtest
+    and fail liveness/startup probes, recycling the revision. daemon_threads
+    lets the process exit without waiting for a long backtest. Each request
+    thread owns its own sqlite/Turso connection via ContextVar (_request_conn).
+    """
+
+    daemon_threads = True
+    block_on_close = False
+
+
+def make_server(host: str, port: int, handler=Handler):
+    return ThreadingHTTPServer((host, port), handler)
+
+
+def _ensure_logging() -> None:
+    if not logging.getLogger().handlers:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s %(levelname)s %(name)s %(message)s",
+        )
 
 
 def main() -> int:
@@ -3529,13 +3689,14 @@ def main() -> int:
         print(_MISSING_DATA)
         print("仍會綁 PORT,讓 Cloud Run 探活通過;頁面與 API 在有資料前會是空的。")
 
+    _ensure_logging()
     host, port = market_db.listen_host_port()
     try_ports = [port] if host == "0.0.0.0" else list(range(port, port + 10))
     server = None
     bound = port
     for candidate in try_ports:
         try:
-            server = HTTPServer((host, candidate), Handler)
+            server = make_server(host, candidate)
             bound = candidate
             break
         except OSError as e:
@@ -3555,8 +3716,13 @@ def main() -> int:
     print(f"儀表板啟動:{url} source={'turso' if market_db.using_turso() else 'sqlite'}")
     if auth_enabled():
         print("HTTP Basic Auth 已啟用（DASHBOARD_USER / DASHBOARD_PASSWORD）。")
+    elif allow_anonymous():
+        print(
+            "匿名模式（回測有限流）。本機預設；Cloud Run 請設帳密或 "
+            "DASHBOARD_ALLOW_ANONYMOUS=1。"
+        )
     else:
-        print("未設 DASHBOARD_USER+DASHBOARD_PASSWORD，無驗證（僅建議本機，勿公開部署）。")
+        print("未設帳密且未允許匿名：業務 API 已關閉（僅 GET /health）。")
     if market_db.should_open_browser():
         webbrowser.open(f"http://localhost:{bound}")
     server.serve_forever()

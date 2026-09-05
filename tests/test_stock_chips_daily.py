@@ -192,3 +192,5 @@ class StockChipsDailyTests(unittest.TestCase):
         for rel in ("web/dashboard.py", "web/freshness.py"):
             text = (REPO / rel).read_text()
             self.assertNotIn("stock_chips_daily", text)
+        # Scanner z-score (#78) is the intended VIEW reader; not existing dashboard SQL.
+        self.assertIn("stock_chips_daily", (REPO / "web/chip_zscore.py").read_text())

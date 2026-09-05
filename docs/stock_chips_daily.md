@@ -100,7 +100,7 @@ libSQL 支援 `CREATE VIEW`。本機 `init_db` 建 VIEW 後，`data.cloud_db.ens
 
 ## 不做
 
-- 籌碼 z-score（#78）
+- 籌碼 z-score（#78）— 見 `docs/chip_zscore.md`（query-time API，不改本 VIEW）
 - 掃描散布圖／表格 UI（#79 / #80）
 - 改儀表板既有 SQL
 - 把上櫃三大法人塞進 T86 三表

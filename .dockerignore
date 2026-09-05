@@ -16,7 +16,6 @@ market
 ptt
 harness
 signals
-alertsdb
 screener.db
 twse_data.db
 us_data.db

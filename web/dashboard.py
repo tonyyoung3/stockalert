@@ -551,7 +551,11 @@ def _api(path, qs):
             k = int(qs.get("k", [str(broker_branch_mod.DEFAULT_K)])[0])
         except (TypeError, ValueError):
             k = broker_branch_mod.DEFAULT_K
-        return broker_branch_mod.top_branches(_request_conn.get(), day, k)
+        days_raw = (qs.get("days", [""])[0] or "").strip()
+        days_n = _clamp_int(days_raw, 1, 1, 730) if days_raw.isdigit() else None
+        return broker_branch_mod.top_branches(
+            _request_conn.get(), day, k, days=days_n,
+        )
     if path == "/api/broker_branch/broker":
         return broker_branch_mod.broker_stocks(
             _request_conn.get(),
@@ -648,6 +652,20 @@ tr:hover td{background:#f8f9fa}
 .empty{color:#6c757d;font-size:13px;padding:8px 0}
 .ticker-link{color:#4C72B0;text-decoration:none;font-weight:600;cursor:pointer;background:none;border:none;padding:0;font:inherit}
 .ticker-link:hover{text-decoration:underline}
+.bb-card{border:1px solid #d9e2ec}
+.bb-card .chart-head h3{color:#1a1a2e}
+.bb-sub{font-size:12.5px;color:#495057;margin:0 0 10px;line-height:1.5}
+.bb-fresh{font-size:12.5px;color:#495057;background:#f4f7fb;border:1px solid #e4e8ee;border-radius:6px;padding:8px 10px;margin-bottom:12px;line-height:1.5}
+.bb-fresh.is-empty,.bb-fresh.is-stale{background:#fff8e8;border-color:#ffe08a;color:#7a5c00}
+.bb-warn{font-size:12.5px;color:#7a5c00;background:#fff8e8;border:1px solid #ffe08a;border-radius:6px;padding:8px 10px;margin-bottom:12px}
+.bb-empty{padding:20px 14px;text-align:center;color:#495057;background:#f4f7fb;border:1px dashed #adb5bd;border-radius:6px;font-size:14px;font-weight:600;line-height:1.55;margin-bottom:4px}
+.bb-lists{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:16px;min-width:0}
+.bb-lists[hidden],.bb-warn[hidden],.bb-empty[hidden]{display:none!important}
+.bb-list-wrap{min-width:0}
+.bb-list-wrap h3{margin-bottom:8px}
+.bb-list{max-height:420px;overflow:auto;-webkit-overflow-scrolling:touch}
+.bb-name{font-weight:600}
+.bb-id{color:#6c757d;font-variant-numeric:tabular-nums}
 .assumptions{font-size:12px;color:#6c757d;margin-top:10px;line-height:1.45}
 .pat{font-size:12px;color:#495057}
 footer{text-align:center;color:#adb5bd;font-size:12px;padding:12px}
@@ -706,6 +724,8 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
   .ov-search,.sid-search{max-width:none;width:100%;flex:none}
   .ov-search input,.sid-search input,.search button,.top-range select,.top-range input[type="date"]{width:100%;min-width:0}
   .top-range input[type="date"]{width:100%;min-width:0;height:44px;min-height:44px;font-size:16px}
+  .bb-lists{grid-template-columns:1fr}
+  .bb-list{max-height:280px}
   select,input:not([type="checkbox"]):not([type="radio"]){font-size:16px}
   .reset-btn,.search button,.page-nav a{min-height:44px}
   .bt-row{flex-direction:column;align-items:stretch}
@@ -734,7 +754,7 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
         <option value="730">近 2 年</option>
       </select>
     </div>
-    <p class="hint days-hint">全域天數影響指數／籌碼／個股圖；外資排行用自己的日期區間。</p>
+    <p class="hint days-hint">全域天數影響指數／籌碼／個股圖；外資排行用自己的日期區間。熱門股分點動向也用自己的當日／近 N 日，不是 T86。</p>
   </div>
 </header>
 <nav class="page-nav" role="tablist" aria-label="儀表板分區">
@@ -817,6 +837,35 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
   <div class="two" style="margin-bottom:0">
     <div><h3 id="t-buy">外資買超前 15</h3><canvas id="c-buy"></canvas></div>
     <div><h3 id="t-sell">外資賣超前 15</h3><canvas id="c-sell"></canvas></div>
+  </div>
+</section>
+
+<section class="card bb-card" id="broker-branch-card" style="margin-bottom:16px">
+  <div class="chart-head">
+    <h3 id="bb-title">熱門股分點動向</h3>
+    <span class="top-range">
+      <select id="bb-preset" onchange="onBbPreset()" aria-label="熱門股分點日期區間">
+        <option value="1" selected>當日</option>
+        <option value="5">近 5 日累計</option>
+        <option value="20">近 20 日累計</option>
+        <option value="60">近 60 日累計</option>
+      </select>
+      <span class="hint">此區間只控制熱門股分點，與上方外資排行、全域天數無關</span>
+    </span>
+  </div>
+  <p class="bb-sub" id="bb-sub">依成交額前 N 檔彙總，非全市場。來源 FinMind 分點（約 21:00），不是證交所 T86 外資排行。</p>
+  <div class="bb-fresh" id="bb-fresh" role="status">分點新鮮度獨立於 T86（21:00 截止）。載入中…</div>
+  <div class="bb-warn" id="bb-fixture-warn" hidden>示範資料（本機 fixture），不是已接上的 FinMind 行情。</div>
+  <div class="bb-empty" id="bb-empty">尚未接上 FinMind token。熱門股分點動向需接上 token 後才會依成交額前 N 檔彙總，不會假裝沒有行情。這不是 T86 外資排行。</div>
+  <div class="bb-lists" id="bb-lists" hidden>
+    <div class="bb-list-wrap">
+      <h3 id="bb-buy-h">買超分點 Top</h3>
+      <div class="bb-list table-scroll" id="bb-buy"></div>
+    </div>
+    <div class="bb-list-wrap">
+      <h3 id="bb-sell-h">賣超分點 Top</h3>
+      <div class="bb-list table-scroll" id="bb-sell"></div>
+    </div>
   </div>
 </section>
 </div>
@@ -1741,6 +1790,108 @@ async function loadTop(){
   }
 }
 
+const BB_TITLE = '熱門股分點動向';
+const BB_EMPTY_TOKEN = '尚未接上 FinMind token。熱門股分點動向需接上 token 後才會依成交額前 N 檔彙總，不會假裝沒有行情。這不是 T86 外資排行。';
+const BB_EMPTY_NODATA = '熱門股分點尚無資料（依成交額前 N 檔彙總，非全市場）。不是 T86 外資、也不是空白圖表。';
+
+function bbRangeParams(){
+  const preset = document.getElementById('bb-preset');
+  const days = preset && preset.value ? preset.value : '1';
+  return '?days='+encodeURIComponent(days);
+}
+function onBbPreset(){ loadBrokerBranch(); }
+function bbSafeTitle(title){
+  if(!title || String(title).indexOf('全市場')>=0) return BB_TITLE;
+  return title;
+}
+function bbEmptyCopy(top, fresh){
+  const mode = (top && top.data_mode) || (fresh && fresh.data_mode) || '';
+  const token = !!(top && top.token_present) || !!(fresh && fresh.token_present);
+  if(!token || mode==='empty_awaiting_token') return BB_EMPTY_TOKEN;
+  return BB_EMPTY_NODATA;
+}
+function renderBbFresh(fresh, top){
+  const el = document.getElementById('bb-fresh');
+  if(!el) return;
+  const f = fresh || (top && top.freshness) || {};
+  const last = f.last_date || '尚無';
+  const expected = f.expected_trade_date || '–';
+  const hour = f.expected_after_hour || 21;
+  const n = (top && (top.hot_n || top.hot_n_default)) || (top && top.universe_count) || 80;
+  let line = '截至 '+last+' · 預期交易日 '+expected+'（台灣時間 '+hour+':00 後）· 依成交額前 '+n+' 檔，非全市場。來源／時間在此卡內，不併入上方 T86 freshness。';
+  if(f.empty) line += ' 分點表空白。';
+  else if(f.stale) line += ' 資料早於預期交易日。';
+  el.textContent = line;
+  el.className = 'bb-fresh' + (f.empty || f.stale ? (f.empty ? ' is-empty' : ' is-stale') : '');
+}
+function renderBbList(id, rows){
+  const el = document.getElementById(id);
+  if(!el) return;
+  if(!(rows||[]).length){
+    el.innerHTML = '<p class="empty">此區間沒有列</p>';
+    return;
+  }
+  const body = rows.map((row,i)=>{
+    const bid = row[0], name = row[1], net = row[2];
+    const z = zhang(net);
+    const cls = z>0 ? 'pos' : (z<0 ? 'neg' : '');
+    const sign = z>0 ? '+' : '';
+    return '<tr><td class="num">'+(i+1)+'</td>'
+      +'<td><span class="bb-name">'+esc(name)+'</span> <span class="bb-id">'+esc(bid)+'</span></td>'
+      +'<td class="num '+cls+'">'+sign+Number(z).toLocaleString('zh-TW')+'</td></tr>';
+  }).join('');
+  el.innerHTML = '<table><thead><tr><th>#</th><th>分點（名稱＋代號）</th><th class="num">淨額(張)</th></tr></thead><tbody>'
+    +body+'</tbody></table>';
+}
+async function loadBrokerBranch(){
+  const emptyEl = document.getElementById('bb-empty');
+  const listsEl = document.getElementById('bb-lists');
+  const titleEl = document.getElementById('bb-title');
+  const subEl = document.getElementById('bb-sub');
+  const warnEl = document.getElementById('bb-fixture-warn');
+  const buyH = document.getElementById('bb-buy-h');
+  const sellH = document.getElementById('bb-sell-h');
+  try {
+    const [top, fresh] = await Promise.all([
+      j('/api/broker_branch/top'+bbRangeParams()),
+      j('/api/broker_branch/freshness'),
+    ]);
+    if(titleEl) titleEl.textContent = bbSafeTitle(top && top.title);
+    renderBbFresh(fresh, top);
+    const n = (top && (top.hot_n || top.hot_n_default)) || 80;
+    const span = (!top || !top.start) ? '' : (top.start===top.end ? top.start : top.start+'～'+top.end);
+    const daysHint = top && top.trading_days>1 ? '（'+top.trading_days+' 個交易日）' : '';
+    if(subEl){
+      subEl.textContent = '依成交額前 '+n+' 檔彙總，非全市場'
+        +(span ? ' · '+span : '')+daysHint
+        +'。來源 FinMind 分點（約 21:00），不是證交所 T86 外資排行。';
+    }
+    if(buyH) buyH.textContent = (span ? span+' ' : '')+'買超分點 Top'+(top && top.k ? ' '+top.k : '')+'（張）'+daysHint;
+    if(sellH) sellH.textContent = (span ? span+' ' : '')+'賣超分點 Top'+(top && top.k ? ' '+top.k : '')+'（張）'+daysHint;
+    if(warnEl){
+      const fixture = top && top.data_mode==='dev_fixture';
+      warnEl.hidden = !fixture;
+    }
+    const hasRows = ((top && top.buy)||[]).length || ((top && top.sell)||[]).length;
+    if(!hasRows){
+      if(emptyEl){ emptyEl.hidden = false; emptyEl.textContent = bbEmptyCopy(top, fresh); }
+      if(listsEl) listsEl.hidden = true;
+      return;
+    }
+    if(emptyEl) emptyEl.hidden = true;
+    if(listsEl) listsEl.hidden = false;
+    renderBbList('bb-buy', top.buy||[]);
+    renderBbList('bb-sell', top.sell||[]);
+  } catch(e){
+    if(titleEl) titleEl.textContent = BB_TITLE;
+    if(emptyEl){ emptyEl.hidden = false; emptyEl.textContent = BB_EMPTY_TOKEN; }
+    if(listsEl) listsEl.hidden = true;
+    if(warnEl) warnEl.hidden = true;
+    const freshEl = document.getElementById('bb-fresh');
+    if(freshEl) freshEl.textContent = '分點新鮮度無法載入（21:00 截止，不併入 T86 /api/freshness）。';
+  }
+}
+
 async function loadStock(){
   const sid = stockId || parseStockId(document.getElementById('sid').value);
   if(!sid) return;
@@ -2617,6 +2768,7 @@ if(btPresetSel){
 }
 
 function loadAll(){ loadSummary(); loadKline(); loadTaiex(); loadMargin(); loadNet(); loadTaifexOi(); loadTop();
+  loadBrokerBranch();
   loadAlerts(); loadPerformance();
   if(stockId) loadStock(); }
 function btApplyMobileBlockFolds(){

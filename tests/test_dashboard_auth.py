@@ -67,6 +67,8 @@ class CredentialHelperTests(unittest.TestCase):
         self.assertTrue(dashboard.path_requires_auth("/index.html"))
         self.assertTrue(dashboard.path_requires_auth("/api/summary"))
         self.assertTrue(dashboard.path_requires_auth("/api/backtest"))
+        self.assertTrue(dashboard.path_requires_auth("/api/broker_branch/top"))
+        self.assertTrue(dashboard.path_requires_auth("/api/broker_branch/freshness"))
         self.assertFalse(dashboard.path_requires_auth("/favicon.ico"))
 
     def test_parse_and_validate_basic(self):

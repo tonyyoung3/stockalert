@@ -179,10 +179,11 @@ Base：與現有儀表板相同的 sqlite／Turso 讀取。
 
 ### 市場：某日熱門股分點買／賣超 Top K（路徑 A）
 
-`GET /api/broker_branch/top?date=YYYY-MM-DD&k=15`
+`GET /api/broker_branch/top?date=YYYY-MM-DD&k=15&days=1`
 
 - 未給 `date`：用表內最大 `trade_date`（空則 `null`）。
-- **定義：** 該日、已入庫股票上，`GROUP BY broker_id` 加總 `net_volume`。買超 = DESC；賣超 = ASC。
+- 可選 `days`：與外資排行相同，取該截止日往前 N 個有列的交易日加總。未給或 `1` = 當日。
+- **定義：** 該區間、已入庫股票上，`GROUP BY broker_id` 加總 `net_volume`。買超 = DESC；賣超 = ASC。
 - 空表：空列表 + `coverage: "empty"` + `title: "熱門股分點動向"`。**不要**假造全市場。
 
 ```sql

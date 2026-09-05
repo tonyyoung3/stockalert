@@ -1,18 +1,24 @@
 """Dashboard data-freshness helpers.
 
-Taiwan trading calendar is weekdays only (no holiday list). After 16:00
-Taiwan time on a weekday, that day is the expected last trade date — same
-cutoff as market.update_market_data.include_today.
+Taiwan trading days are weekdays that are not TWSE holidays
+(web.tw_calendar). After 16:00 Taiwan time on a trading day, that day is
+the expected last trade date — same cutoff as
+market.update_market_data.include_today.
 """
 from __future__ import annotations
 
 import re
 from datetime import date, datetime, timedelta, timezone
 
+from web.tw_calendar import is_tw_trading_day
+
 TW = timezone(timedelta(hours=8))
 INCLUDE_TODAY_AFTER_HOUR = 16
-CALENDAR = "weekdays_only"
-CALENDAR_NOTE = "週末／未內建國定假日；平日 16:00 台灣時間後才把當日視為應有資料"
+CALENDAR = "tw_trading_days"
+CALENDAR_NOTE = (
+    "週末與國定假日不計過期；靜態表 2025–2026（證交所市場開休市日期），"
+    "2027 尚未公告先當平日；平日 16:00 台灣時間後才把當日視為應有資料"
+)
 HEALTH_NOTE = (
     "HTTP 200 表示行程活著。資料過期或空白見 freshness.stale／empty，"
     "不會因此回 503（Cloud Run 探活可之後再依 payload 延伸）。"
@@ -31,18 +37,20 @@ def taiwan_now(now: datetime | None = None) -> datetime:
 
 
 def previous_tw_trading_day(today: date) -> date:
-    """Last weekday strictly before `today` (週末 skipped; no holidays)."""
+    """Last TWSE trading day strictly before `today` (weekends and holidays)."""
     d = today - timedelta(days=1)
-    while d.weekday() >= 5:
+    for _ in range(31):
+        if is_tw_trading_day(d):
+            return d
         d -= timedelta(days=1)
-    return d
+    raise ValueError(f"no TW trading day in 31 days before {today.isoformat()}")
 
 
 def expected_tw_trade_date(now: datetime | None = None) -> date:
-    """Latest Taiwan weekday we expect market rows for."""
+    """Latest Taiwan trading day we expect market rows for."""
     tw = taiwan_now(now)
     today = tw.date()
-    if today.weekday() < 5 and tw.hour >= INCLUDE_TODAY_AFTER_HOUR:
+    if is_tw_trading_day(today) and tw.hour >= INCLUDE_TODAY_AFTER_HOUR:
         return today
     return previous_tw_trading_day(today)
 

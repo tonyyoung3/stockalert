@@ -322,6 +322,21 @@ class TestBackfill(DBTestCase):
             backfill.backfill(14)
         self.assertTrue(all(d.weekday() < 5 for d in seen), "不該請求週末")
 
+    def test_skips_twse_holidays(self):
+        seen = []
+
+        def fake(day):
+            seen.append(day)
+            return []
+
+        today = date(2026, 1, 5)  # Monday after New Year
+        with patch.object(backfill, "fetch_index_5sec", side_effect=fake), \
+             patch.object(backfill, "fetch_foreign", return_value=[]), \
+             patch.object(backfill, "fetch_margin", return_value=([], [])):
+            backfill.backfill(7, today=today, include_today=True)
+        self.assertNotIn(date(2026, 1, 1), seen)
+        self.assertTrue(all(d.weekday() < 5 for d in seen), "不該請求週末")
+
     def test_default_excludes_today(self):
         seen = []
 

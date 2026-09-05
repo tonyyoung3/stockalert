@@ -35,10 +35,18 @@ class ListenTests(unittest.TestCase):
 
 class ImageTests(unittest.TestCase):
     def test_dockerfile_copies_dashboard_imports(self):
-        text = Path(__file__).resolve().parents[1].joinpath("Dockerfile").read_text()
+        root = Path(__file__).resolve().parents[1]
+        text = root.joinpath("Dockerfile").read_text()
         self.assertIn("COPY data/", text)
         self.assertIn("COPY web/", text)
         self.assertIn("COPY alertsdb/", text)
+        ignored = {
+            line.strip()
+            for line in root.joinpath(".dockerignore").read_text().splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        }
+        self.assertNotIn("alertsdb", ignored)
+        self.assertNotIn("alertsdb/", ignored)
 
 
 class PathTests(unittest.TestCase):

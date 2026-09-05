@@ -335,6 +335,8 @@ class DashboardNavTests(unittest.TestCase):
         self.assertIn("onclick=\"btExportPresetJson()\"", html)
         self.assertIn("onclick=\"btImportPresetJson()\"", html)
         self.assertIn("function btApplyBlocks(", html)
+        self.assertIn("function btSetModeRadio(", html)
+        self.assertIn("el.checked = (el.value === mode)", html)
         self.assertIn("function btParseBlocksJson(", html)
         self.assertIn("function btValidateBlocksDoc(", html)
         self.assertIn("role=\"status\"", html)

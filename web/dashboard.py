@@ -2198,42 +2198,46 @@ function btSetValue(id, value){
   if(!el || value==null || value==='') return;
   el.value = value;
 }
+function btSetModeRadio(mode){
+  document.querySelectorAll('input[name="bt-mode"]').forEach(el=>{
+    el.checked = (el.value === mode);
+  });
+}
 function btApplyBlocks(blocks){
   if(!blocks || typeof blocks!=='object') throw new Error(BT_ERR_NOT_V1);
   const dataset = BT_DATASETS.indexOf(blocks.dataset)>=0 ? blocks.dataset : '2y_hourly';
   let mode = BT_MODES.indexOf(blocks.mode)>=0 ? blocks.mode : 'intraday';
-  document.getElementById('bt-dataset').value = dataset;
   if(dataset==='15y_daily' && mode==='intraday') mode = 'overnight';
-  const radio = document.querySelector('input[name="bt-mode"][value="'+mode+'"]');
-  if(radio && !radio.disabled) radio.checked = true;
+  document.getElementById('bt-dataset').value = dataset;
+  btSetModeRadio(mode);
   btApplyDatasetConstraints();
+  if(dataset==='15y_daily' && btMode()==='intraday'){
+    mode = 'overnight';
+    btSetModeRadio(mode);
+  }
   const cost = blocks.cost_pct;
   document.getElementById('bt-cost').value = (cost==null || cost==='') ? '0.03' : cost;
   const entry = blocks.entry || {};
   const ex = blocks.exit || {};
-  const applied = btMode();
-  if(applied==='intraday'){
-    btSetValue('bt-ref', entry.reference || 'first_hour_high');
-    document.getElementById('bt-offset').value = entry.offset_pct==null ? '0' : entry.offset_pct;
-    btSetValue('bt-trigger', entry.trigger || 'touch_from_below');
-    btSetValue('bt-direction', entry.direction || 'long');
-    btSetValue('bt-earliest', entry.earliest_hour==null ? '10' : String(entry.earliest_hour));
-    btSetValue('bt-exithour', ex.exit_hour==null ? '13' : String(ex.exit_hour));
-    document.getElementById('bt-stop-on').checked = !!ex.stop_enabled;
-    btSetValue('bt-stopref', ex.stop_reference || 'day_open');
-    document.getElementById('bt-stopoffset').value = ex.stop_offset_pct==null ? '0' : ex.stop_offset_pct;
-  } else if(applied==='overnight'){
-    btSetValue('bt-on-direction', entry.direction || 'long');
-    btSetValue('bt-holdto', ex.hold_to || 'next_open');
-    btSetValue('bt-holdhour', ex.hold_to_hour==null ? '10' : String(ex.hold_to_hour));
-    document.getElementById('bt-skipweekend').checked = ex.skip_weekend!==false;
-  } else {
-    btSetValue('bt-swing-direction', entry.direction || 'long');
-    document.getElementById('bt-swing-stoppct').value = ex.stop_pct==null ? '2' : ex.stop_pct;
-    document.getElementById('bt-swing-maxhold').value = ex.max_hold_days==null ? '60' : ex.max_hold_days;
-    document.getElementById('bt-swing-tpon').checked = !!ex.take_profit_on;
-    document.getElementById('bt-swing-tppct').value = ex.take_profit_pct==null ? '5' : ex.take_profit_pct;
-  }
+  // Write every mode's fields so a missed radio does not leave stale DOM values.
+  btSetValue('bt-ref', entry.reference || 'first_hour_high');
+  document.getElementById('bt-offset').value = entry.offset_pct==null ? '0' : entry.offset_pct;
+  btSetValue('bt-trigger', entry.trigger || 'touch_from_below');
+  btSetValue('bt-direction', entry.direction || 'long');
+  btSetValue('bt-earliest', entry.earliest_hour==null ? '10' : String(entry.earliest_hour));
+  btSetValue('bt-exithour', ex.exit_hour==null ? '13' : String(ex.exit_hour));
+  document.getElementById('bt-stop-on').checked = !!ex.stop_enabled;
+  btSetValue('bt-stopref', ex.stop_reference || 'day_open');
+  document.getElementById('bt-stopoffset').value = ex.stop_offset_pct==null ? '0' : ex.stop_offset_pct;
+  btSetValue('bt-on-direction', entry.direction || 'long');
+  btSetValue('bt-holdto', ex.hold_to || 'next_open');
+  btSetValue('bt-holdhour', ex.hold_to_hour==null ? '10' : String(ex.hold_to_hour));
+  document.getElementById('bt-skipweekend').checked = ex.skip_weekend!==false;
+  btSetValue('bt-swing-direction', entry.direction || 'long');
+  document.getElementById('bt-swing-stoppct').value = ex.stop_pct==null ? '2' : ex.stop_pct;
+  document.getElementById('bt-swing-maxhold').value = ex.max_hold_days==null ? '60' : ex.max_hold_days;
+  document.getElementById('bt-swing-tpon').checked = !!ex.take_profit_on;
+  document.getElementById('bt-swing-tppct').value = ex.take_profit_pct==null ? '5' : ex.take_profit_pct;
   const incoming = Array.isArray(blocks.filters) ? blocks.filters : [];
   btFilters = incoming.filter(b=>b && btCatalog(b.type)).map(b=>{
     const spec = btCatalog(b.type);

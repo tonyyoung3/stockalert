@@ -1147,7 +1147,7 @@ function renderFreshness(f){
     banner.hidden = false;
     banner.className = 'fresh-banner ' + (f.empty ? 'is-empty' : 'is-stale');
     banner.textContent = '⚠️ 資料'+(f.empty?'空白':'過期（早於上一個台股交易日）')+'：'
-      +parts.join('；')+'。'+action+'（'+ (f.calendar_note||'週末／未內建國定假日')+'）。';
+      +parts.join('；')+'。'+action+'（'+ (f.calendar_note||'週末與國定假日不計過期')+'）。';
   } else {
     banner.hidden = true;
     banner.className = 'fresh-banner';

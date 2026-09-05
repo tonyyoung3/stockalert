@@ -25,6 +25,8 @@ import sys
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
+from web.tw_calendar import is_tw_trading_day
+
 TW = timezone(timedelta(hours=8))
 DEFAULT_DAYS = 14
 # 16:00 台灣時間之後,當日 T86 / 融資 / 5 秒指數通常已公布
@@ -41,8 +43,9 @@ def taiwan_now(now: datetime | None = None) -> datetime:
 
 
 def include_today(now: datetime | None = None) -> bool:
-    """GHA runner 是 UTC,必須用台灣時區判斷收盤後。"""
-    return taiwan_now(now).hour >= INCLUDE_TODAY_AFTER_HOUR
+    """GHA runner 是 UTC,必須用台灣時區判斷收盤後。假日不當交易日。"""
+    tw = taiwan_now(now)
+    return is_tw_trading_day(tw.date()) and tw.hour >= INCLUDE_TODAY_AFTER_HOUR
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

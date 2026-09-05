@@ -20,6 +20,7 @@ import requests
 
 from data.paths import repo_file
 from data.sqlite_util import configure_local
+from web.tw_calendar import is_tw_trading_day
 
 DB_PATH = repo_file("twse_data.db")
 # MI_INDEX listed-only is ~1,300–1,400 names; listed+OTC is ~2,300.
@@ -647,14 +648,14 @@ def run_scheduler():
     def hourly_index():
         now = datetime.now()
         # 只在交易日 09:00–13:30 抓 (13 點那次抓收盤前資料,14 點抓收盤值)
-        if now.weekday() < 5 and 9 <= now.hour <= 14:
+        if is_tw_trading_day(now.date()) and 9 <= now.hour <= 14:
             try:
                 save_taiex()
             except Exception:
                 log.exception("抓大盤失敗")
 
     def daily_foreign():
-        if datetime.now().weekday() < 5:
+        if is_tw_trading_day(datetime.now().date()):
             try:
                 save_foreign()
             except Exception:

@@ -30,6 +30,7 @@ from market.collector import (get_conn, fetch_foreign, fetch_taiex_ohlc_month,
                        fetch_tpex_stock_day_all, persist_stock_daily,
                        update_stock_master, MIN_COMBINED_STOCK_DAILY,
                        HEADERS)
+from web.tw_calendar import is_tw_trading_day
 
 log = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -184,7 +185,7 @@ def backfill_stock_daily(
     problems: list[str] = []
     day = start
     while day <= end:
-        if day.weekday() < 5:
+        if is_tw_trading_day(day):
             ds = day.isoformat()
             have = counts.get(ds, 0)
             need_twse = have == 0
@@ -254,7 +255,7 @@ def backfill(days: int, do_index=True, do_foreign=True, do_margin=True,
     day = start
     n_idx = n_for = n_mar = 0
     while day <= end:
-        if day.weekday() < 5:
+        if is_tw_trading_day(day):
             ds = day.isoformat()
             if do_index and ds not in have_idx:
                 try:

@@ -168,7 +168,7 @@ gcloud run deploy stockalert \
 
 儀表板載入後會顯示 `foreign_daily`、`stock_daily`、`taifex`（`taifex_fut_oi`）、`alerts` 的最後日期與距今天數。最新日若早於「上一個台股交易日」，header 下方會有醒目警告（不是灰色 hint）；圖表空陣列則顯示「請跑 `python -m market.update_market_data`」，不會留空白 canvas。
 
-交易日假設是**平日、未內建國定假日**；平日 **16:00 台灣時間**之後才把當日視為應有資料（與 `market.update_market_data` 的收盤後判斷同一截止）。
+交易日是**平日且非證交所休市**（週末、國定假日、春節前結算日都不計過期）。靜態表在 `web/tw_calendar.py` 的 `is_tw_trading_day`，覆蓋 **2025–2026**；來源是證交所[市場開休市日期](https://www.twse.com.tw/zh/trading/holiday.html)／[holidaySchedule JSON](https://www.twse.com.tw/holidaySchedule/holidaySchedule?response=json)（2026 為 115 年表；2025 為 114 年修正版，含年中新增的教師節／光復節／行憲紀念日）。**2027 尚未公告**，那些年份先當平日，等證交所公布再補表。不爬即時公告，也不含颱風等臨時休市。平日 **16:00 台灣時間**之後才把當日視為應有資料（與 `market.update_market_data.include_today` 同一截止；收集器回補也走同一個 helper）。
 
 | 路徑 | 內容 |
 | --- | --- |

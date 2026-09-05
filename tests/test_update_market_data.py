@@ -24,6 +24,11 @@ class TaiwanTimeTests(unittest.TestCase):
         now = datetime(2026, 8, 31, 10, 0)
         self.assertTrue(umd.include_today(now))
 
+    def test_holiday_after_close_is_not_include_today(self):
+        # 2026-01-01 18:00 Taiwan = 10:00 UTC, New Year's Day
+        now = datetime(2026, 1, 1, 10, 0, tzinfo=timezone.utc)
+        self.assertFalse(umd.include_today(now))
+
 
 class ParseArgsTests(unittest.TestCase):
     def test_positional_days(self):

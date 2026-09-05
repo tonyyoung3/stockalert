@@ -13,6 +13,7 @@ from urllib.request import urlopen
 from alertsdb import store as alerts_db
 from data import market_db
 from web import dashboard, freshness
+from web.tw_calendar import holiday_name, is_tw_holiday, is_tw_trading_day
 
 TW = timezone(timedelta(hours=8))
 # Friday 2026-09-04
@@ -20,13 +21,34 @@ FRIDAY_AFTER_CLOSE = datetime(2026, 9, 4, 18, 0, tzinfo=TW)
 FRIDAY_MORNING = datetime(2026, 9, 4, 10, 0, tzinfo=TW)
 SATURDAY = datetime(2026, 9, 5, 12, 0, tzinfo=TW)
 MONDAY_MORNING = datetime(2026, 9, 7, 10, 0, tzinfo=TW)
+# Day after 2026-01-01 (Thu national holiday), before the 16:00 cutoff
+DAY_AFTER_NY_MORNING = datetime(2026, 1, 2, 10, 0, tzinfo=TW)
+# First weekday after 2026 Lunar New Year, before open/close
+CNY_REOPEN_MORNING = datetime(2026, 2, 23, 10, 0, tzinfo=TW)
+CNY_REOPEN_AFTER_CLOSE = datetime(2026, 2, 23, 18, 0, tzinfo=TW)
 
 
 class CalendarTests(unittest.TestCase):
+    def test_weekend_is_not_a_trading_day(self):
+        self.assertFalse(is_tw_trading_day(date(2026, 9, 5)))
+        self.assertFalse(is_tw_trading_day(date(2026, 9, 6)))
+        self.assertTrue(is_tw_trading_day(date(2026, 9, 4)))
+
+    def test_known_holiday_is_not_a_trading_day(self):
+        self.assertTrue(is_tw_holiday(date(2026, 1, 1)))
+        self.assertFalse(is_tw_trading_day(date(2026, 1, 1)))
+        self.assertIn("開國", holiday_name(date(2026, 1, 1)))
+        self.assertFalse(is_tw_trading_day(date(2026, 2, 20)))
+        self.assertFalse(is_tw_trading_day(date(2025, 10, 10)))
+
     def test_previous_weekday_skips_weekend(self):
         self.assertEqual(freshness.previous_tw_trading_day(date(2026, 9, 7)), date(2026, 9, 4))
         self.assertEqual(freshness.previous_tw_trading_day(date(2026, 9, 5)), date(2026, 9, 4))
         self.assertEqual(freshness.previous_tw_trading_day(date(2026, 9, 4)), date(2026, 9, 3))
+
+    def test_previous_skips_national_holiday(self):
+        self.assertEqual(freshness.previous_tw_trading_day(date(2026, 1, 2)), date(2025, 12, 31))
+        self.assertEqual(freshness.previous_tw_trading_day(date(2026, 2, 23)), date(2026, 2, 11))
 
     def test_expected_after_16_on_weekday_is_today(self):
         self.assertEqual(freshness.expected_tw_trade_date(FRIDAY_AFTER_CLOSE), date(2026, 9, 4))
@@ -39,6 +61,14 @@ class CalendarTests(unittest.TestCase):
 
     def test_monday_morning_expects_friday(self):
         self.assertEqual(freshness.expected_tw_trade_date(MONDAY_MORNING), date(2026, 9, 4))
+
+    def test_day_after_holiday_before_open_expects_prior_session(self):
+        """#47: weekday after a national holiday must not look like a missing trade day."""
+        self.assertEqual(freshness.expected_tw_trade_date(DAY_AFTER_NY_MORNING), date(2025, 12, 31))
+        self.assertEqual(freshness.expected_tw_trade_date(CNY_REOPEN_MORNING), date(2026, 2, 11))
+
+    def test_first_session_after_holiday_becomes_expected_after_close(self):
+        self.assertEqual(freshness.expected_tw_trade_date(CNY_REOPEN_AFTER_CLOSE), date(2026, 2, 23))
 
     def test_table_status_empty_is_stale(self):
         row = freshness.table_status("foreign_daily", None, date(2026, 9, 4), date(2026, 9, 4))
@@ -129,15 +159,16 @@ class FreshnessAPITests(unittest.TestCase):
         self.assertIn("renderFreshness", html)
         self.assertIn("s.freshness", html)
         self.assertIn("過期（早於上一個台股交易日）", html)
-        self.assertIn("週末／未內建國定假日", html)
+        self.assertIn("週末與國定假日不計過期", html)
 
     def test_empty_tables_are_stale_and_empty(self):
         with patch("web.freshness.taiwan_now", return_value=FRIDAY_AFTER_CLOSE):
             r = self.call("/api/freshness")
         self.assertTrue(r["empty"])
         self.assertTrue(r["stale"])
-        self.assertEqual(r["calendar"], "weekdays_only")
+        self.assertEqual(r["calendar"], "tw_trading_days")
         self.assertIn("國定假日", r["calendar_note"])
+        self.assertIn("2025", r["calendar_note"])
         names = [t["table"] for t in r["tables"]]
         self.assertEqual(names, ["foreign_daily", "stock_daily", "taifex", "alerts"])
         for t in r["tables"]:
@@ -178,6 +209,22 @@ class FreshnessAPITests(unittest.TestCase):
             r = self.call("/api/freshness")
         self.assertFalse(r["stale"])
         self.assertEqual(r["expected_trade_date"], "2026-09-03")
+
+    def test_holiday_reopen_morning_does_not_stale_on_last_session(self):
+        """Last pre-holiday session is fresh on the first weekday back, before 16:00."""
+        self._insert("2026-02-11")
+        with patch("web.freshness.taiwan_now", return_value=CNY_REOPEN_MORNING):
+            r = self.call("/api/freshness")
+        self.assertEqual(r["expected_trade_date"], "2026-02-11")
+        self.assertFalse(r["stale"])
+        self.assertFalse(r["empty"])
+
+    def test_new_year_morning_does_not_expect_holiday_weekday(self):
+        self._insert("2025-12-31")
+        with patch("web.freshness.taiwan_now", return_value=DAY_AFTER_NY_MORNING):
+            r = self.call("/api/freshness")
+        self.assertEqual(r["expected_trade_date"], "2025-12-31")
+        self.assertFalse(r["stale"])
 
     def test_thursday_data_is_stale_friday_after_close(self):
         self._insert("2026-09-03")

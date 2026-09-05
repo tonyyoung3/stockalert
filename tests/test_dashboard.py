@@ -566,6 +566,46 @@ class DashboardNavTests(unittest.TestCase):
         self.assertIn("stockalert.bt.presets.v1", text)
         self.assertIn("最多 20 筆", text)
         self.assertIn("不會白屏", text)
+        self.assertIn("/api/backtest/stock", text)
+        self.assertIn("stock_daily", text)
+        self.assertIn("個股小時／日內路徑", text)
+        self.assertIn("個股 pattern", text)
+
+
+class DashboardStockBacktestUITests(unittest.TestCase):
+    def test_universe_switch_is_separate_from_taiex_blocks(self):
+        html = dashboard.HTML
+        self.assertIn(">大盤策略</button>", html)
+        self.assertIn(">個股 pattern</button>", html)
+        self.assertIn('id="bt-index-panel"', html)
+        self.assertIn('id="bt-stock-panel"', html)
+        self.assertIn('id="bt-stock-form"', html)
+        self.assertIn("/api/backtest/stock", html)
+        self.assertIn("function runStockBacktest(", html)
+        self.assertIn("function btShowUniverse(", html)
+        self.assertIn("fetchStockHits(q)", html)
+        self.assertIn('id="bt-sid"', html)
+        self.assertIn('id="bt-stock-pattern"', html)
+        self.assertIn(">上影線反轉</option>", html)
+        self.assertIn(">Inside Day</option>", html)
+        self.assertIn("持有 N 交易日", html)
+        self.assertIn("日K；非大盤回測", html)
+        self.assertIn("尚未執行。先選標的與 pattern，再按執行。", html)
+        self.assertIn("這段日K沒有觸發", html)
+        self.assertIn("stockalert.bt.presets.v1", html)
+        self.assertIn("不寫 stockalert.bt.presets.v1", html)
+        self.assertIn("data-bt-fold=\"stock-ticker\"", html)
+        self.assertIn("data-bt-fold=\"stock-pattern\"", html)
+        self.assertIn("data-bt-fold=\"stock-exit\"", html)
+        self.assertIn("低點≤停損價", html)
+        self.assertIn("保守假設先停損", html)
+        self.assertNotIn("回測此訊號", html)
+        self.assertIn("目前是個股 pattern（stock_daily 日K）", html)
+        self.assertIn("目前是大盤指數積木", html)
+        stock = html[html.index('id="bt-stock-panel"'):html.index("id=\"bt-stock-results\"")]
+        self.assertNotIn("localStorage.setItem(BT_PRESET_KEY", stock)
+        self.assertNotIn("btBuildBlocks()", stock)
+        self.assertNotIn("stockalert.bt.presets.v1", stock)
 
 
 if __name__ == "__main__":

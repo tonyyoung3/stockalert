@@ -6,7 +6,7 @@
 
 ```
 notify/     Slack：篩選、績效、互動 bot、失敗通知
-web/        本地儀表板與指數回測
+web/        本地儀表板、指數回測、個股日K pattern 回測
 market/     證交所／期交所／美股收集與每日補資料
 data/       價格解析、Turso 同步、repo 路徑
 signals/    型態規則（上影線 / Inside Day）
@@ -119,11 +119,11 @@ python -m market.us_collector hourly
 
 這是個人研究工具。`DASHBOARD_USER` 與 `DASHBOARD_PASSWORD` **兩個都有非空值**時，啟用 HTTP Basic Auth：
 
-- 受保護：HTML（`/`、`/index.html`）與所有 `/api/*`（含 `POST /api/backtest`）
+- 受保護：HTML（`/`、`/index.html`）與所有 `/api/*`（含 `POST /api/backtest`、`POST /api/backtest/stock`）
 - 永遠開放：`GET /health`（Cloud Run 探活；HTTP 200 + freshness JSON，與今天相同）
 - 未帶帳密或密碼錯誤：HTTP **401**，`WWW-Authenticate: Basic realm="stockalert"`，內容只有通用 `{"error":"unauthorized"}`（不回內部路徑、DB、stack）
 - 瀏覽器對同網域的 `/api/*` 與回測 `fetch` 會自動帶 Basic（前端用 `credentials: 'same-origin'`，**不要把密碼寫進 JS**）
-- Auth 開啟時，`POST /api/backtest` 另有簡易記憶體限流（每 IP 每分鐘約 10 次）
+- Auth 開啟時，`POST /api/backtest` 與 `POST /api/backtest/stock` 共用簡易記憶體限流（每 IP 每分鐘約 10 次）
 
 **任一變數未設：不做驗證。** 只適合本機；**不要在沒設這兩個變數的情況下公開部署**。Cloud Run IAM 維持 `--allow-unauthenticated` 沒問題——那只表示任何人打得到服務，擋人的是應用層 Basic。IAM 全開 + 應用層 Basic 是個人部署的預期組合；沒設 Basic 環境變數時，網站是全開的。
 
@@ -185,7 +185,7 @@ gcloud run deploy stockalert \
 
 頂部分頁：`市場`（預設）｜`個股`｜`告警`｜`回測`。用顯示／隱藏切換，不必捲完整頁。新鮮度橫幅與各表最後日期留在分頁上方。
 
-網址 hash：`#market` / `#stock` / `#alerts` / `#backtest`（也接受 `#section-stock` 這種寫法），可與既有 `?stock=2330` 並用。沒有 hash、但有 `?stock=` 時開個股分頁；純首次進入落在市場總覽，回測表單與結果不佔首屏。
+網址 hash：`#market` / `#stock` / `#alerts` / `#backtest`（也接受 `#section-stock` 這種寫法），可與既有 `?stock=2330` 並用。沒有 hash、但有 `?stock=` 時開個股分頁；純首次進入落在市場總覽，回測表單與結果不佔首屏。回測頁內再切 `大盤策略`｜`個股 pattern`（與日內／隔夜／波段不同層）。
 
 窄螢幕（約 375px）控制列改直向堆疊、input 滿寬、表格在區內橫滑；回測的資料集／濾網／進場／出場用 `data-bt-fold` 折疊（手機預設收合），濾網積木是列表、參數為第二層。圖表手勢文案是拖曳／雙指縮放（pinch 原本就開著）。外資排行日期欄在小螢幕改直向、高度至少 44px，避免 iOS 裁切。
 
@@ -243,9 +243,21 @@ Header **顯示範圍**（全域 `days`）只影響加權 K 線／走勢、外�
 
 結構：`dataset` ∈ {`2y_hourly`, `15y_daily`}；`mode` ∈ {`intraday`, `overnight`, `swing`}。日內 `entry`/`exit` 對應參考價＋偏移、觸發、方向、最早時間、出場時刻、停損。隔夜／波段 `exit` 對應 `hold_to`／停損%／停利%／最大持有天數（引擎既有優先序：停損＞停利＞時間／持有）。
 
-v1 **不做**：OR／巢狀群組、個股回測、告警 K 線進場、移動停損、任意腳本。日內模式若帶收盤才確定的濾網，編譯與引擎都會拒絕（偷看未來）。
+大盤積木 v1 **不做**：OR／巢狀群組、告警 K 線進場、移動停損、任意腳本。日內模式若帶收盤才確定的濾網，編譯與引擎都會拒絕（偷看未來）。個股日K pattern 回測是另一個宇宙（下一節），不是這套積木。
 
-**本機預設**（回測頁「本機預設」）：具名規則存在瀏覽器 `localStorage` 鍵 `stockalert.bt.presets.v1`（最多 20 筆）。可載入／覆蓋／刪除；也可匯出或貼上 v1 積木 JSON。壞掉的 JSON 會顯示繁中錯誤，不會白屏。沒有雲端同步或多帳號分享。載入後 `blocks_to_rule` 編譯結果與儲存時相同。
+**本機預設**（回測頁「本機預設」）：具名規則存在瀏覽器 `localStorage` 鍵 `stockalert.bt.presets.v1`（最多 20 筆）。可載入／覆蓋／刪除；也可匯出或貼上 v1 積木 JSON。壞掉的 JSON 會顯示繁中錯誤，不會白屏。沒有雲端同步或多帳號分享。載入後 `blocks_to_rule` 編譯結果與儲存時相同。切換到「個股 pattern」**不會**覆寫這個鍵。
+
+### 個股日K pattern 回測（v1.1）
+
+回測頁頂層 `大盤策略`｜`個股 pattern`。個股模式對單一標的重放告警用的 **上影線反轉**／**Inside Day**（`signals/patterns.py` 同一套環境門檻）。
+
+- 資料：**只有** `stock_daily` 日 OHLCV。**沒有**個股小時／日內路徑，也不走 TAIEX 小時回測。
+- 進場：每個交易日用「截至當日」的 trailing window 跑同一組 `check_*`（不偷看未來）。訊號日**收盤**進場。
+- 出場：持有 N 個交易日收盤；可選％停損／停利。觸價語意：做多時當日**低點**觸及停損、**高點**觸及停利；同一日兩者都可能觸及時，保守假設先停損。
+- API：`POST /api/backtest/stock`（同一套 HTTP Basic Auth；auth 開啟時與 `/api/backtest` 共用每 IP 每分鐘約 10 次限流）。
+- 空狀態／無觸發／錯誤分開顯示。結果標 `個股 · {代號} · {pattern}` 與 `日K；非大盤回測`。
+
+非目標：組合部位、分點濾網、DSL、一次做完所有 pattern、告警預填、實盤。
 
 本機模擬 PaaS：
 

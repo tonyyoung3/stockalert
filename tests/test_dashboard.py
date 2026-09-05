@@ -570,6 +570,9 @@ class DashboardNavTests(unittest.TestCase):
         self.assertIn("stock_daily", text)
         self.assertIn("個股小時／日內路徑", text)
         self.assertIn("個股 pattern", text)
+        self.assertIn("不自動執行", text)
+        self.assertIn("回測此訊號", text)
+        self.assertIn("與日內／隔夜／波段不同層", text)
 
 
 class DashboardStockBacktestUITests(unittest.TestCase):
@@ -590,6 +593,7 @@ class DashboardStockBacktestUITests(unittest.TestCase):
         self.assertIn(">Inside Day</option>", html)
         self.assertIn("持有 N 交易日", html)
         self.assertIn("日K；非大盤回測", html)
+        self.assertIn("個股 · '+id+' · '+label", html)
         self.assertIn("尚未執行。先選標的與 pattern，再按執行。", html)
         self.assertIn("這段日K沒有觸發", html)
         self.assertIn("stockalert.bt.presets.v1", html)
@@ -599,13 +603,31 @@ class DashboardStockBacktestUITests(unittest.TestCase):
         self.assertIn("data-bt-fold=\"stock-exit\"", html)
         self.assertIn("低點≤停損價", html)
         self.assertIn("保守假設先停損", html)
-        self.assertNotIn("回測此訊號", html)
+        self.assertIn("與日內／隔夜／波段不同層", html)
+        self.assertIn("不是組合部位", html)
+        self.assertIn("不是全市場一次回測", html)
+        self.assertIn(">型態</summary>", html)
+        self.assertIn("本波不做", html)
+        self.assertNotIn(">回測此訊號<", html)
+        self.assertNotIn("onclick=\"prefillStockBacktest", html)
         self.assertIn("目前是個股 pattern（stock_daily 日K）", html)
         self.assertIn("目前是大盤指數積木", html)
+        uni = html[html.index('class="bt-universe"'):html.index('id="bt-index-panel"')]
+        self.assertNotIn('name="bt-mode"', uni)
+        index = html[html.index('id="bt-index-panel"'):html.index('id="bt-stock-panel"')]
+        self.assertIn('name="bt-mode"', index)
+        self.assertIn("新增積木", index)
+        self.assertIn("參數為第二層", index)
         stock = html[html.index('id="bt-stock-panel"'):html.index("id=\"bt-stock-results\"")]
         self.assertNotIn("localStorage.setItem(BT_PRESET_KEY", stock)
         self.assertNotIn("btBuildBlocks()", stock)
         self.assertNotIn("stockalert.bt.presets.v1", stock)
+        self.assertNotIn("新增積木", stock)
+        self.assertNotIn('name="bt-mode"', stock)
+        self.assertLess(stock.index('id="bt-sid"'), stock.index('id="bt-stock-pattern"'))
+        self.assertLess(stock.index('id="bt-stock-pattern"'), stock.index('id="bt-stock-hold"'))
+        self.assertLess(stock.index('id="bt-stock-hold"'), stock.index('id="bt-stock-summary"'))
+        self.assertLess(stock.index('id="bt-stock-summary"'), stock.index("runStockBacktest()"))
 
 
 if __name__ == "__main__":

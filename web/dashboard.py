@@ -964,7 +964,7 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
 <div id="section-backtest" class="page-section" role="tabpanel" aria-labelledby="tab-backtest" hidden>
 <section class="card" style="margin-bottom:16px">
   <h3 style="margin-bottom:8px">策略回測</h3>
-  <p class="hint" style="margin-bottom:14px">此區與市場圖表分開；首次進入不會自動執行。頂層先選宇宙：<b>大盤策略</b>（TAIEX 積木）或 <b>個股 pattern</b>（stock_daily 日K），資料集不同，切換不會覆寫大盤本機預設。大盤用積木組「若…則進場／出場」（濾網 AND）。篩選／進場／出場可折疊（手機預設收合，積木列參數為第二層）。</p>
+  <p class="hint" style="margin-bottom:14px">此區與市場圖表分開；首次進入不會自動執行。頂層二選一 <b>大盤策略</b>｜<b>個股 pattern</b>（與日內／隔夜／波段不同層）。切換是整份表單對換，不會覆寫大盤本機預設。</p>
 
   <div class="bt-universe" role="tablist" aria-label="回測宇宙">
     <button type="button" id="bt-uni-index" role="tab" aria-selected="true" aria-controls="bt-index-panel" class="is-active" data-universe="index">大盤策略</button>
@@ -973,6 +973,7 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
   <p id="bt-universe-note" class="bt-universe-note">目前是大盤指數積木（TAIEX 小時／日K），不是個股日K。</p>
 
   <div id="bt-index-panel" role="tabpanel" aria-labelledby="bt-uni-index">
+  <p class="hint" style="margin-bottom:12px">大盤用積木組「若…則進場／出場」（濾網 AND）。篩選／進場／出場可折疊（手機預設收合，積木列參數為第二層）。</p>
   <div class="bt-grid" id="bt-form">
     <details class="bt-box" data-bt-fold="presets" open>
       <summary class="bt-label">本機預設</summary>
@@ -1169,7 +1170,7 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
   </div>
 
   <div id="bt-stock-panel" role="tabpanel" aria-labelledby="bt-uni-stock" hidden>
-    <p class="hint" style="margin-bottom:12px">個股日K pattern 重放（只讀 stock_daily），不是大盤積木、也沒有個股小時路徑。快樂路徑：選股 → 選 pattern → 執行。</p>
+    <p class="hint" style="margin-bottom:12px">單檔日K：選股 → 選型態 → 出場 → 摘要 → 執行。不是大盤積木、不是小時K、不是組合部位、也不是全市場一次回測。</p>
     <div class="bt-grid" id="bt-stock-form">
       <details class="bt-box" data-bt-fold="stock-ticker" open>
         <summary class="bt-label">標的</summary>
@@ -1185,15 +1186,15 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
         <p class="hint" style="margin-top:8px">复用個股搜尋（/api/stocks）。不會改到上方個股分頁，也不會寫入大盤本機預設。</p>
       </details>
       <details class="bt-box" data-bt-fold="stock-pattern" open>
-        <summary class="bt-label">Pattern</summary>
+        <summary class="bt-label">型態</summary>
         <div class="bt-row">
-          <span class="bt-sub">型態</span>
-          <select id="bt-stock-pattern" aria-label="個股 pattern" onchange="btRenderStockSummary()">
+          <span class="bt-sub">與告警相同</span>
+          <select id="bt-stock-pattern" aria-label="個股型態" onchange="btRenderStockSummary()">
             <option value="upper_shadow_reversal">上影線反轉</option>
             <option value="inside_day">Inside Day</option>
           </select>
         </div>
-        <p class="hint">名稱與告警相同。每個交易日用截至當日的 trailing window 跑同一套 live 檢查。</p>
+        <p class="hint">中文名對齊 Slack／告警。每個交易日用截至當日的日K trailing window，不是小時K。</p>
       </details>
       <details class="bt-box" data-bt-fold="stock-exit" open>
         <summary class="bt-label">出場</summary>
@@ -1211,7 +1212,7 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
       <div class="bt-box" data-bt-fold="stock-run">
         <div class="bt-label">執行前規則摘要</div>
         <div id="bt-stock-summary" class="bt-chips"></div>
-        <p id="bt-stock-assume" class="bt-assume">進場：訊號日收盤（pattern 收盤才確定）。出場：持有 N 個交易日收盤；可選停損／停利以日K高低觸價（做多：當日低點≤停損價、高點≥停利價）。同一日兩者都觸及時，保守假設先停損。僅 stock_daily 日K，無個股小時／日內路徑。</p>
+        <p id="bt-stock-assume" class="bt-assume">進場：訊號日收盤（pattern 收盤才確定）。出場：持有 N 個交易日收盤；可選停損／停利以日K高低觸價（做多：當日低點≤停損價、高點≥停利價）。同一日兩者都觸及時，保守假設先停損。僅單檔 stock_daily 日K。</p>
         <div class="bt-row" style="margin-top:10px">
           <span class="bt-sub">來回成本 %</span>
           <input type="number" id="bt-stock-cost" value="0.03" step="0.01" style="width:80px" oninput="btRenderStockSummary()">
@@ -3170,6 +3171,8 @@ if(btPresetSel){
 }
 
 // ---- 個股 pattern 宇宙（與大盤積木分離；不寫 stockalert.bt.presets.v1）----
+// #52 later（本波不做）：告警「回測此訊號」只預填標的＋支援的 pattern，不自動執行；
+// 尚不支援的 pattern 只預填代號並提示。不要在告警列加 CTA，也不要吃 query 自動跑。
 let btUniverse = 'index';
 let btStockId = '';
 let btStockName = '';
@@ -3187,8 +3190,8 @@ function btShowUniverse(name){
   const note = document.getElementById('bt-universe-note');
   if(indexBtn){ indexBtn.classList.toggle('is-active', indexOn); indexBtn.setAttribute('aria-selected', indexOn ? 'true' : 'false'); }
   if(stockBtn){ stockBtn.classList.toggle('is-active', !indexOn); stockBtn.setAttribute('aria-selected', indexOn ? 'false' : 'true'); }
-  if(indexPanel) indexPanel.hidden = !indexOn;
-  if(stockPanel) stockPanel.hidden = indexOn;
+  if(indexPanel){ indexPanel.hidden = !indexOn; indexPanel.setAttribute('aria-hidden', indexOn ? 'false' : 'true'); }
+  if(stockPanel){ stockPanel.hidden = indexOn; stockPanel.setAttribute('aria-hidden', indexOn ? 'true' : 'false'); }
   if(note){
     note.textContent = indexOn
       ? '目前是大盤指數積木（TAIEX 小時／日K），不是個股日K。'
@@ -3306,10 +3309,14 @@ function btRenderStockSummary(){
   chips.push('成本 '+(document.getElementById('bt-stock-cost').value||0)+'%');
   box.innerHTML = chips.map(t=>'<span class="bt-chip">'+t+'</span>').join('');
 }
+function btStockResultTitle(d){
+  const id = (d && d.stock_id) || btStockId || '–';
+  const label = (d && (d.pattern_label || patName(d.pattern))) || btStockPatternLabel();
+  return '個股 · '+id+' · '+label;
+}
 function renderStockBacktestResult(d){
   const box = document.getElementById('bt-stock-results');
-  const label = d.pattern_label || patName(d.pattern);
-  const title = '個股 · '+(d.stock_id||btStockId||'–')+(d.stock_name ? ' '+d.stock_name : '')+' · '+label;
+  const title = btStockResultTitle(d);
   if(d.no_trigger){
     box.innerHTML = '<div class="bt-stock-head">'+esc(title)+'</div>'
       + '<p class="bt-stock-sub">日K；非大盤回測</p>'

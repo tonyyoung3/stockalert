@@ -203,6 +203,13 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
 .sc-ov-pick{padding-left:12px}
 #sc-ov-empty[hidden],#sc-ov-error[hidden],#sc-ov-loading[hidden]{display:none!important}
 #sc-error[hidden],#sc-insufficient[hidden],#sc-empty[hidden],#sc-loading[hidden]{display:none!important}
+.sc-mf-panel{margin:12px 0 8px;padding-top:12px;border-top:1px solid #e4e8ee}
+.sc-mf-panel[hidden]{display:none!important}
+.sc-mf-tools{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.sc-mf-list table{font-size:13px}
+.sc-mf-list tr.sc-row{cursor:pointer}
+.sc-mf-list tr.sc-row.is-thin td{color:#7a5c00;background:#fff8e8}
+#sc-mf-empty[hidden],#sc-mf-error[hidden],#sc-mf-loading[hidden]{display:none!important}
 @media(max-width:768px){
   .wrap{padding:12px}
   header{flex-direction:column;align-items:stretch;padding:14px 16px}
@@ -245,6 +252,8 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
   .sc-table-tools input,.sc-table-tools select,.sc-list button.sc-sort{width:100%;min-height:44px}
   .sc-ov-tools{flex-direction:column;align-items:stretch}
   .sc-ov-tools select,.sc-ov-restore{width:100%;min-height:44px}
+  .sc-mf-tools{flex-direction:column;align-items:stretch}
+  .sc-mf-tools input{width:100%;min-height:44px}
 }
 </style>
 </head>
@@ -440,7 +449,7 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
       <button class="reset-btn" type="button" onclick="resetZoom('c-scanner')">重置</button>
     </span>
   </div>
-  <p class="sc-note">多檔橫向比較工作台，<b>不是</b>個股分頁、不是回測「個股 pattern」宇宙、也不是全市場一次掃描。搜尋加入 ≥2 檔後才向 <code>/api/scanner/chip_zscore</code> 要真實籌碼／價量；<b>一次查詢</b>同時餵散布圖與下方結果表格，沒有第二條資料徑、沒有假資料。股價疊圖是第二張圖，复用同一批掃描標的與既有 <code>/api/stock_ohlc</code>（正規化／絕對價），圖例可關系列，× 只從疊圖拿掉、不改掃描標的與散布圖。追蹤清單存在這個瀏覽器（localStorage），可增刪、重整後仍在；<b>一鍵套用</b>寫入目前掃描標的，≥2 檔才打同一支 API。標的／軸／窗格寫進網址 <code>?sc=</code>（與 <code>?stock=</code> 同一套 query，可並用 <code>#scanner</code>），複製即可分享或重整還原；過長時先丟掉可選參數再截標的。點圖上的點或表格列會開個股分頁。<b>存成每日告警</b>把目前標的＋一組欄位上下限寫進後端（一組就好，不是 DSL、也不下單）；排程复用同一支 chip_zscore，命中列進告警頁，也走既有 Slack。</p>
+  <p class="sc-note">多檔橫向比較工作台，<b>不是</b>個股分頁、不是回測「個股 pattern」宇宙、也不是全市場一次掃描。搜尋加入 ≥2 檔後才向 <code>/api/scanner/chip_zscore</code> 要真實籌碼／價量；<b>一次查詢</b>同時餵散布圖與下方結果表格，沒有第二條資料徑、沒有假資料。股價疊圖是第二張圖，复用同一批掃描標的與既有 <code>/api/stock_ohlc</code>（正規化／絕對價），圖例可關系列，× 只從疊圖拿掉、不改掃描標的與散布圖。熱門股分點主力是另一塊面板，另打既有 <code>/api/scanner/broker_main_force</code>（同一批標的與 asof，不是籌碼散布圖、標題不是全市場、coverage 是 hot_n）。追蹤清單存在這個瀏覽器（localStorage），可增刪、重整後仍在；<b>一鍵套用</b>寫入目前掃描標的，≥2 檔才打同一支 API。標的／軸／窗格寫進網址 <code>?sc=</code>（與 <code>?stock=</code> 同一套 query，可並用 <code>#scanner</code>），複製即可分享或重整還原；過長時先丟掉可選參數再截標的。點圖上的點或表格列會開個股分頁。<b>存成每日告警</b>把目前標的＋一組欄位上下限寫進後端（一組就好，不是 DSL、也不下單）；排程复用同一支 chip_zscore，命中列進告警頁，也走既有 Slack。</p>
   <div class="search">
     <div class="sid-search" id="sc-search">
       <input id="sc-q" placeholder="搜尋代號／名稱，加入比較（复用 /api/stocks）" autocomplete="off"
@@ -523,7 +532,7 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
   </div>
   <p class="hint" id="sc-url-note" hidden></p>
   <p class="hint" id="sc-mobile-note">窄螢幕請用下方表格點進個股；圖上也可點。表頭可排序，篩選只改表格列、不另打 API。軸與窗格／截至日可調，對齊籌碼 z-score 時間模型（預設 20 個交易日）。近 N 日與截至日對齊台股交易日，與外資排行同一套時間模型。疊圖跟同一窗格。複製網址可還原這組掃描。</p>
-  <div id="sc-empty" class="bb-empty">請先搜尋並加入至少 2 檔，才會載入掃描散布圖與結果表格。股價疊圖也要 ≥2 檔。也可從追蹤清單一鍵套用。不是單檔查詢，也不是全市場宇宙。</div>
+  <div id="sc-empty" class="bb-empty">請先搜尋並加入至少 2 檔，才會載入掃描散布圖與結果表格。股價疊圖與熱門股分點主力也要 ≥2 檔。也可從追蹤清單一鍵套用。不是單檔查詢，也不是全市場宇宙。</div>
   <div id="sc-loading" class="empty" hidden>載入中…</div>
   <div id="sc-error" class="bt-error" hidden></div>
   <div class="sc-chart-wrap" id="sc-chart-wrap" hidden>
@@ -567,6 +576,22 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
     </div>
     <div id="sc-list" class="sc-list table-scroll"></div>
     <p id="sc-table-meta" class="hint"></p>
+  </div>
+  <div id="sc-mf-panel" class="sc-mf-panel" hidden>
+    <div class="chart-head">
+      <h3 id="sc-mf-title">熱門股分點動向</h3>
+      <span class="sc-mf-tools">
+        <label for="sc-mf-k" class="hint">Top K</label>
+        <input type="number" id="sc-mf-k" min="1" max="50" value="5" inputmode="numeric" aria-label="主力集中度 Top K" onchange="loadScannerMainForce()">
+      </span>
+    </div>
+    <p class="hint">同一批掃描標的與 asof，另打既有 <code>/api/scanner/broker_main_force</code>。這不是籌碼 z-score 散布圖，也<b>不是</b>全市場；加總範圍是已入庫的熱門前 N（<code>coverage: hot_n</code>）。</p>
+    <p class="hint" id="sc-mf-note"></p>
+    <div id="sc-mf-loading" class="empty" hidden>主力指標載入中…</div>
+    <div id="sc-mf-error" class="bt-error" hidden></div>
+    <div id="sc-mf-empty" class="bb-empty" hidden>路徑 A 空狀態：熱門前 N 尚無列。標題是熱門股，不是全市場。</div>
+    <div id="sc-mf-list" class="sc-list sc-mf-list table-scroll"></div>
+    <p id="sc-mf-meta" class="hint"></p>
   </div>
 </section>
 </div>
@@ -1152,6 +1177,8 @@ let scSortDir = 'asc';
 let scOvHidden = {};
 let scOvCache = null;
 let scOvReq = 0;
+let scMfLastPayload = null;
+let scMfReq = 0;
 let scFilterQ = '';
 let scFilterStatus = 'all';
 
@@ -1695,6 +1722,7 @@ function scClearTable(){
 function scShowEmpty(){
   scHideChart();
   scHideOverlay();
+  scHideMainForce();
   scClearTable();
   const empty = document.getElementById('sc-empty');
   const load = document.getElementById('sc-loading');
@@ -1708,6 +1736,7 @@ function scShowEmpty(){
 function scShowLoading(){
   scHideChart();
   scHideOverlay();
+  scHideMainForce();
   scClearTable();
   const empty = document.getElementById('sc-empty');
   const load = document.getElementById('sc-loading');
@@ -1723,6 +1752,7 @@ function scShowError(msg, opts){
   if(clear){
     scHideChart();
     scHideOverlay();
+    scHideMainForce();
     scClearTable();
   }
   const empty = document.getElementById('sc-empty');
@@ -2057,6 +2087,7 @@ async function loadScanner(){
     syncScannerUrl();
     renderScannerChart();
     loadScannerOverlay();
+    loadScannerMainForce();
   }catch(e){
     scLastPayload = null;
     syncScannerUrl();
@@ -2228,6 +2259,173 @@ async function loadScannerOverlay(){
     const wrap = document.getElementById('sc-ov-wrap');
     if(wrap) wrap.hidden = true;
     if(charts['c-scanner-overlay']){ charts['c-scanner-overlay'].destroy(); delete charts['c-scanner-overlay']; }
+  }
+}
+function scMfTitle(raw){
+  const t = String(raw||'').trim();
+  if(!t || t.indexOf('全市場')>=0) return '熱門股分點動向';
+  return t;
+}
+function scMfReadK(){
+  let k = parseInt((document.getElementById('sc-mf-k')||{}).value, 10);
+  if(!k) k = 5;
+  k = Math.max(1, Math.min(50, k));
+  const el = document.getElementById('sc-mf-k');
+  if(el) el.value = k;
+  return k;
+}
+function scMfFmtConc(v){
+  if(v==null || Number.isNaN(Number(v))) return '–';
+  return (Number(v)*100).toFixed(1)+'%';
+}
+function scMfFmtNet(v){
+  if(v==null || Number.isNaN(Number(v))) return '–';
+  return Number(v).toLocaleString('zh-TW');
+}
+function scHideMainForce(){
+  scMfLastPayload = null;
+  const panel = document.getElementById('sc-mf-panel');
+  if(panel) panel.hidden = true;
+  const list = document.getElementById('sc-mf-list');
+  const note = document.getElementById('sc-mf-note');
+  const meta = document.getElementById('sc-mf-meta');
+  const err = document.getElementById('sc-mf-error');
+  const empty = document.getElementById('sc-mf-empty');
+  const loadEl = document.getElementById('sc-mf-loading');
+  if(list) list.innerHTML = '';
+  if(note) note.textContent = '';
+  if(meta) meta.textContent = '';
+  if(err){ err.hidden = true; err.textContent = ''; }
+  if(empty) empty.hidden = true;
+  if(loadEl) loadEl.hidden = true;
+}
+function renderScannerMainForce(){
+  const payload = scMfLastPayload;
+  const panel = document.getElementById('sc-mf-panel');
+  const titleEl = document.getElementById('sc-mf-title');
+  const note = document.getElementById('sc-mf-note');
+  const empty = document.getElementById('sc-mf-empty');
+  const err = document.getElementById('sc-mf-error');
+  const list = document.getElementById('sc-mf-list');
+  const meta = document.getElementById('sc-mf-meta');
+  if(!panel) return;
+  if(!payload || scPicks.length < 2){
+    scHideMainForce();
+    return;
+  }
+  panel.hidden = false;
+  if(titleEl) titleEl.textContent = scMfTitle(payload.title);
+  const cov = payload.coverage || '';
+  const covNote = payload.coverage_note || '';
+  if(note){
+    const bits = [];
+    if(cov) bits.push('coverage: '+cov);
+    if(covNote) bits.push(covNote);
+    bits.push('與散布圖／表格同一批標的與 asof，不是籌碼 z-score。');
+    if(payload.asof) bits.push('asof '+payload.asof);
+    if(payload.k!=null) bits.push('Top K '+payload.k);
+    if(payload.hot_n!=null) bits.push('熱門前 '+payload.hot_n);
+    if(payload.universe_count!=null) bits.push('當日宇宙 '+payload.universe_count+' 檔');
+    note.textContent = bits.join(' · ');
+  }
+  if(err){ err.hidden = true; err.textContent = ''; }
+  const rows = payload.data || [];
+  if(cov==='empty' && !rows.length){
+    if(empty){
+      empty.hidden = false;
+      empty.textContent = covNote || '路徑 A 空狀態：熱門前 N 尚無列。標題是熱門股，不是全市場。';
+    }
+    if(list) list.innerHTML = '';
+    if(meta) meta.textContent = '';
+    return;
+  }
+  if(!rows.length){
+    if(empty){
+      empty.hidden = false;
+      empty.textContent = covNote || '沒有主力列可顯示。熱門前 N 才有指標，不是全市場。';
+    }
+    if(list) list.innerHTML = '';
+    if(meta) meta.textContent = '';
+    return;
+  }
+  if(empty){
+    if(cov==='empty'){
+      empty.hidden = false;
+      empty.textContent = covNote || '路徑 A 空狀態：熱門前 N 尚無列。標題是熱門股，不是全市場。';
+    } else {
+      empty.hidden = true;
+    }
+  }
+  if(list){
+    const head = '<th>代號</th><th>名稱</th><th>熱門 N</th><th class="num">買超集中度</th><th class="num">賣超集中度</th><th>龍頭分點</th><th class="num">龍頭分點淨額</th><th class="num">分點數</th>';
+    const body = rows.map(row=>{
+      const inHot = !!row.in_hot_n;
+      const cls = 'sc-row'+(inHot?'':' is-thin');
+      const lead = row.lead_broker_name || row.lead_broker_id || '–';
+      const net = row.lead_branch_net;
+      const netCls = 'num'+(net>0?' pos':(net<0?' neg':''));
+      return '<tr class="'+cls+'" data-ticker="'+esc(row.stock_id||'')+'" data-name="'+esc(row.stock_name||'')+'">'
+        +'<td><button type="button" class="ticker-link">'+esc(row.stock_id||'')+'</button></td>'
+        +'<td>'+esc(row.stock_name||'–')+'</td>'
+        +'<td>'+(inHot?'在熱門 N':'非熱門 N')+'</td>'
+        +'<td class="num">'+scMfFmtConc(row.buy_concentration)+'</td>'
+        +'<td class="num">'+scMfFmtConc(row.sell_concentration)+'</td>'
+        +'<td>'+esc(lead)+'</td>'
+        +'<td class="'+netCls+'">'+scMfFmtNet(net)+'</td>'
+        +'<td class="num">'+(row.branch_count==null?'–':Number(row.branch_count).toLocaleString('zh-TW'))+'</td>'
+        +'</tr>';
+    }).join('');
+    list.innerHTML = '<table><thead><tr>'+head+'</tr></thead><tbody>'+body+'</tbody></table>';
+    list.querySelectorAll('tr.sc-row').forEach(tr=>{
+      tr.addEventListener('click', ()=> selectStock(tr.dataset.ticker, tr.dataset.name||''));
+    });
+  }
+  if(meta){
+    const hot = rows.filter(r=>r.in_hot_n).length;
+    meta.textContent = hot+' / '+rows.length+' 檔在熱門 N · coverage '+(cov||'–')
+      +' · 與散布圖同一批標的 · 點列進個股';
+  }
+}
+async function loadScannerMainForce(){
+  const panel = document.getElementById('sc-mf-panel');
+  const loadEl = document.getElementById('sc-mf-loading');
+  const err = document.getElementById('sc-mf-error');
+  if(scPicks.length < 2){
+    scHideMainForce();
+    return;
+  }
+  if(panel) panel.hidden = false;
+  if(loadEl){ loadEl.hidden = false; loadEl.textContent = '主力指標載入中…'; }
+  if(err){ err.hidden = true; err.textContent = ''; }
+  const wa = scReadWindowAsof();
+  const tickers = scPicks.map(p=>p.id).join(',');
+  const qs = new URLSearchParams({tickers:tickers, k:String(scMfReadK())});
+  if(TwRange.isYmd(wa.asof)) qs.set('asof', wa.asof);
+  const req = ++scMfReq;
+  try{
+    const r = await j('/api/scanner/broker_main_force?'+qs.toString());
+    if(req !== scMfReq) return;
+    if(loadEl) loadEl.hidden = true;
+    if(!r || r.error==='missing_tickers'){
+      scMfLastPayload = null;
+      scHideMainForce();
+      return;
+    }
+    scMfLastPayload = r;
+    renderScannerMainForce();
+  }catch(e){
+    if(req !== scMfReq) return;
+    scMfLastPayload = null;
+    if(loadEl) loadEl.hidden = true;
+    if(err){ err.hidden = false; err.textContent = '主力指標載入失敗（'+e+'）。沒有假資料可畫。'; }
+    const list = document.getElementById('sc-mf-list');
+    const note = document.getElementById('sc-mf-note');
+    const meta = document.getElementById('sc-mf-meta');
+    const empty = document.getElementById('sc-mf-empty');
+    if(list) list.innerHTML = '';
+    if(note) note.textContent = '';
+    if(meta) meta.textContent = '';
+    if(empty) empty.hidden = true;
   }
 }
 

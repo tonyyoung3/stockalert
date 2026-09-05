@@ -89,7 +89,7 @@ PTT 股板週報跟 Reddit 投資想法週報都是本機整理、印到 stdout�
 
 籌碼 z-score（#78）是 **query-time**：`GET /api/scanner/chip_zscore?tickers=2330,2454&window=20&asof=YYYY-MM-DD`，預設窗格 **20 個交易日**，樣本標準差（ddof=1）。多檔、樣本不足旗標、NULL 規則見 `docs/chip_zscore.md`。不物化。掃描散布圖 UI（#79）與結果表格（#80）共用同一回應：自選多檔、軸可選價量／z-score，表頭可排序、表格可篩選，點擊進個股。本機追蹤清單（#81）存在瀏覽器 `localStorage` 鍵 `stockalert.sc.watchlist.v1`，可增刪、重整後仍在；一鍵套用寫入目前掃描標的（≥2 檔才打同一支 API）。掃描狀態（#82）寫進網址 `?sc=2330,2454`（可加 `scx` / `scy` / `scw` / `scmp` / `scd`），與既有 `?stock=` 同一套 query、可並用 `#scanner`；複製網址即可分享或在新工作階段還原，≥2 檔才打同一支 API。過長時先省略預設／可選參數，再截標的（沒有短網址服務）。沒有雲端同步、也沒有第二條掃描資料徑。掃描窗格與市場「外資排行」共用 `web/static/tw_range.js` 的「近 N 日／自訂區間」（#83）。日曆是 **#73** 的 `web.tw_calendar.taiwan_today` / `is_tw_trading_day`（Asia/Taipei，禁止裸 `date.today()`）；假日表與 #47 同一套 2025–2026。自訂／截至日落在週末或證交所休市會對齊到前一交易日。個股分點日期走同一個 snap。不另開日期 API。多檔股價疊圖（#84）是掃描工作台的第二張圖：同一批標的，正規化（首日=100）或絕對價，圖例可關、× 可拿掉系列（不改掃描標的與 chip_zscore 散布圖）。系列走既有 `GET /api/stock_ohlc`，沒有新後端。每日告警（#86）把**一組**標的＋欄位上下限存進 `data/scanner_alert_profile.json` 或 `screener.db`／Turso（掃描頁「存成每日告警」，或 `python -m notify.scanner_alert save`）。排程挂在既有 `run_screener.yml`，复用 `query_chip_zscore`，命中寫 `alerts` 列並走既有 Slack；失敗看 `scanner_alert_runs` / Actions / `notify_job`。不是 DSL，也不下單。契約見 `docs/scanner_alert.md`。
 
-熱門股分點主力（#98）也是 **query-time**：`GET /api/scanner/broker_main_force?tickers=2330,2454&asof=YYYY-MM-DD&k=5`，只讀已入庫 `broker_branch_daily`（熱門前 N），**零 FinMind 增量**。回傳買／賣超集中度與龍頭分點淨額，`coverage: hot_n`，標題「熱門股分點動向」，**不是**全市場。該日未入庫的代號回空列。見 `docs/broker_main_force.md`。本票不改掃描 UI。
+熱門股分點主力（#98）也是 **query-time**：`GET /api/scanner/broker_main_force?tickers=2330,2454&asof=YYYY-MM-DD&k=5`，只讀已入庫 `broker_branch_daily`（熱門前 N），**零 FinMind 增量**。回傳買／賣超集中度與龍頭分點淨額，`coverage: hot_n`，標題「熱門股分點動向」，**不是**全市場。該日未入庫的代號回空列。見 `docs/broker_main_force.md`。掃描工作台（#101）用獨立面板展示這支 API，與 chip_zscore 散布圖分開，同一批標的與 asof。
 
 **Cache-local foreign span ≠ Turso foreign span.** GitHub Actions 的 `twse_data.db` cache 裡 `foreign_daily` 常常只有約 85 個交易日，但 Turso 上同一張表可以有約 510 日。設了 `TURSO_*` 時，`institutional_gaps` 以 Turso（並集本機）的 `foreign_daily` 日期當缺口來源，略過 Turso 上 trust/dealer 都已齊的日期；抓完只推這三張 T86 表的補齊區間，不會用本機 cache 的短外資歷史當「已補完」。未設 secrets 時行為不變，只看本機。
 
@@ -218,7 +218,7 @@ gcloud run deploy stockalert \
 | `GET /api/freshness` | 各表 `{table, last_date, days_ago, stale, empty}`，以及整體 `stale` / `empty` |
 | `GET /api/summary` | 原有 KPI，另含同一個 `freshness` 物件 |
 | `GET /api/scanner/chip_zscore` | 多檔籌碼 z-score（`tickers`、`window` 預設 20、`asof`、`min_periods`）。見 `docs/chip_zscore.md`。掃描分頁散布圖讀這支 |
-| `GET /api/scanner/broker_main_force` | 多檔熱門股分點主力（`tickers`、`asof`、`k` 預設 5）。只讀已入庫熱門 N，不是全市場。見 `docs/broker_main_force.md` |
+| `GET /api/scanner/broker_main_force` | 多檔熱門股分點主力（`tickers`、`asof`、`k` 預設 5）。只讀已入庫熱門 N，不是全市場。掃描工作台獨立面板讀這支。見 `docs/broker_main_force.md` |
 | `GET` / `POST /api/scanner/alert_profile` | 一組掃描每日告警條件（標的＋欄位 min/max）。見 `docs/scanner_alert.md` |
 | `GET /health` | JSON：`status`/`ok` 表示**行程活著**（HTTP **一律 200**）。資料過期是 payload 的 `freshness.stale`／`empty`，**不會因此回 503**，方便之後 Cloud Run 探活依欄位延伸。 |
 
@@ -226,7 +226,7 @@ gcloud run deploy stockalert \
 
 頂部分頁：`市場`（預設）｜`個股`｜`掃描`｜`告警`｜`回測`。用顯示／隱藏切換，不必捲完整頁。新鮮度橫幅與各表最後日期留在分頁上方。
 
-網址 hash：`#market` / `#stock` / `#scanner` / `#alerts` / `#backtest`（也接受 `#section-stock` 這種寫法），可與既有 `?stock=2330` 並用。沒有 hash、但有 `?stock=` 時開個股分頁；沒有 hash、但有 `?sc=` 標的時開掃描分頁；純首次進入落在市場總覽，回測表單與結果不佔首屏。回測頁內再切 `大盤策略`｜`個股 pattern`（與日內／隔夜／波段不同層）。**掃描**是多檔橫向比較工作台，不是單檔個股宇宙、也不是回測個股 pattern。自選 ≥2 檔後打一次 `GET /api/scanner/chip_zscore`，同時餵散布圖與結果表格（不另打 API）；軸可選價量／籌碼 z-score；表頭點擊排序（代號、軸／z、收盤、成交量），表格可依代號／名稱與列狀態篩選；點圖或列呼叫 `selectStock` 進個股。本機追蹤清單（`stockalert.sc.watchlist.v1`，與回測預設同一 localStorage 模式）可增刪並一鍵套用到 `sc-picks`，不會另打 API。掃描條件編碼在 `?sc=` / `scx` / `scy` / `scw`（與 `?stock=` 同一套 query；hash 後 `?sc=` 也可讀），複製網址可還原；過長 URL 先丟掉可選參數再截標的，畫面上有短註。少於 2 檔是空狀態；載入中／失敗明示（無假資料）；所選軸為 null 時標「樣本不足」。窄螢幕控制列直向堆疊，並用下方表格當點進個股的降級入口。「存成每日告警」把目前標的＋一組欄位上下限 POST 到 `/api/scanner/alert_profile`（不另打 chip_zscore）；排程 `python -m notify.scanner_alert` 用同一支計算寫告警列／Slack。
+網址 hash：`#market` / `#stock` / `#scanner` / `#alerts` / `#backtest`（也接受 `#section-stock` 這種寫法），可與既有 `?stock=2330` 並用。沒有 hash、但有 `?stock=` 時開個股分頁；沒有 hash、但有 `?sc=` 標的時開掃描分頁；純首次進入落在市場總覽，回測表單與結果不佔首屏。回測頁內再切 `大盤策略`｜`個股 pattern`（與日內／隔夜／波段不同層）。**掃描**是多檔橫向比較工作台，不是單檔個股宇宙、也不是回測個股 pattern。自選 ≥2 檔後打一次 `GET /api/scanner/chip_zscore`，同時餵散布圖與結果表格（不另打 API）；軸可選價量／籌碼 z-score；表頭點擊排序（代號、軸／z、收盤、成交量），表格可依代號／名稱與列狀態篩選；點圖或列呼叫 `selectStock` 進個股。本機追蹤清單（`stockalert.sc.watchlist.v1`，與回測預設同一 localStorage 模式）可增刪並一鍵套用到 `sc-picks`，不會另打 API。掃描條件編碼在 `?sc=` / `scx` / `scy` / `scw`（與 `?stock=` 同一套 query；hash 後 `?sc=` 也可讀），複製網址可還原；過長 URL 先丟掉可選參數再截標的，畫面上有短註。少於 2 檔是空狀態；載入中／失敗明示（無假資料）；所選軸為 null 時標「樣本不足」。窄螢幕控制列直向堆疊，並用下方表格當點進個股的降級入口。「存成每日告警」把目前標的＋一組欄位上下限 POST 到 `/api/scanner/alert_profile`（不另打 chip_zscore）；排程 `python -m notify.scanner_alert` 用同一支計算寫告警列／Slack。熱門股分點主力是另一塊面板：同一批標的與 asof 打 `GET /api/scanner/broker_main_force`，顯示買／賣超集中度與龍頭分點淨額；標題「熱門股分點動向」，`coverage: hot_n`，不是籌碼散布圖、也不是全市場。
 
 窄螢幕（約 375px）控制列改直向堆疊、input 滿寬、表格在區內橫滑；回測的資料集／濾網／進場／出場用 `data-bt-fold` 折疊（手機預設收合），濾網積木是列表、參數為第二層。圖表手勢文案是拖曳／雙指縮放（pinch 原本就開著）。外資排行日期欄在小螢幕改直向、高度至少 44px，避免 iOS 裁切。
 

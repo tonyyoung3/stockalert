@@ -241,14 +241,18 @@ class DashboardAPITests(unittest.TestCase):
         self.assertTrue(r["data"][1]["in_hot_n"])
         self.assertFalse(r["data"][2]["in_hot_n"])
 
-    def test_dashboard_routes_and_docs_without_ui(self):
+    def test_dashboard_routes_and_scanner_ui(self):
         dash = (REPO / "web/dashboard.py").read_text(encoding="utf-8")
         html = dashboard.HTML
         self.assertIn("/api/scanner/broker_main_force", dash)
         self.assertIn("broker_main_force_mod.api_broker_main_force", dash)
-        # No scanner UI this ticket — SWE later. Do not add a second fetch path.
-        self.assertNotIn("/api/scanner/broker_main_force", html)
+        self.assertIn("/api/scanner/broker_main_force?", html)
+        self.assertIn("function loadScannerMainForce(", html)
+        self.assertIn("function renderScannerMainForce(", html)
+        self.assertIn(">熱門股分點動向</h3>", html[html.index('id="sc-mf-panel"'):])
+        self.assertNotIn("全市場", html[html.index('id="sc-mf-title"'):html.index('id="sc-mf-title"')+80])
         self.assertIn("/api/scanner/chip_zscore", html)
+        self.assertEqual(html.count("j('/api/scanner/chip_zscore?"), 1)
 
     def test_existing_broker_branch_paths_intact(self):
         top = self.call("/api/broker_branch/top", date="2026-09-03", k=3)

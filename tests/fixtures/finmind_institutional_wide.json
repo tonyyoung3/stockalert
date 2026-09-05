@@ -1,0 +1,35 @@
+{
+  "_comment": "FinMind TaiwanStockInstitutionalInvestorsBuySellWide. TEST only.",
+  "status": 200,
+  "msg": "success",
+  "data": [
+    {
+      "date": "2026-01-05",
+      "stock_id": "2330",
+      "Foreign_Investor_buy": 5000000,
+      "Foreign_Investor_sell": 2000000,
+      "Foreign_Dealer_Self_buy": 0,
+      "Foreign_Dealer_Self_sell": 0,
+      "Investment_Trust_buy": 900000,
+      "Investment_Trust_sell": 239000,
+      "Dealer_buy": 0,
+      "Dealer_sell": 0,
+      "Dealer_self_buy": 79000,
+      "Dealer_self_sell": 807000,
+      "Dealer_Hedging_buy": 189000,
+      "Dealer_Hedging_sell": 493500
+    },
+    {
+      "date": "2026-01-05",
+      "stock_id": "2317",
+      "Investment_Trust_buy": 10000,
+      "Investment_Trust_sell": 4000,
+      "Dealer_buy": 0,
+      "Dealer_sell": 0,
+      "Dealer_self_buy": 3000,
+      "Dealer_self_sell": 1000,
+      "Dealer_Hedging_buy": 2000,
+      "Dealer_Hedging_sell": 500
+    }
+  ]
+}

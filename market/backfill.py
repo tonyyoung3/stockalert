@@ -23,7 +23,9 @@ foreign_daily. When TURSO_* is set, institutional gaps use Turso
 
 支援中斷續跑:已存在的日期會自動跳過。
 每次請求間隔 4 秒(證交所有流量限制,請勿調低)。
+institutional 缺口優先走 FinMind(T86 在 Actions IP 常回空/HTML)。
 """
+import os
 import sys
 import time
 import logging
@@ -37,7 +39,7 @@ from market.collector import (get_conn, fetch_t86, persist_t86,
                        fetch_stock_month, fetch_stock_day_all,
                        fetch_tpex_stock_day_all, persist_stock_daily,
                        update_stock_master, MIN_COMBINED_STOCK_DAILY,
-                       HEADERS)
+                       HEADERS, T86Tables)
 from web.tw_calendar import is_tw_trading_day, taiwan_today
 
 log = logging.getLogger(__name__)
@@ -289,10 +291,12 @@ def backfill(days: int, do_index=True, do_foreign=True, do_margin=True,
                     log.warning("%s 指數失敗: %s", ds, e)
                 time.sleep(SLEEP)
             # One T86 call fills foreign + trust + dealer. Skip only when all three exist.
+            # Daily: T86 first. FinMind only if T86 JSON/HTML-fails (Actions IPs).
             if do_foreign and (ds not in have_for or ds not in have_trust or ds not in have_dealer):
+                source = "t86"
                 try:
-                    tables = fetch_t86(day)
-                    if tables.foreign:
+                    tables, source = fetch_institutional_day(day, prefer="t86", conn=conn)
+                    if tables.foreign or tables.trust or tables.dealer:
                         with conn:
                             persist_t86(conn, tables)
                         n_for += 1
@@ -300,12 +304,13 @@ def backfill(days: int, do_index=True, do_foreign=True, do_margin=True,
                         have_trust.add(ds)
                         have_dealer.add(ds)
                         log.info(
-                            "%s T86 外資 %d / 投信 %d / 自營商 %d 檔",
-                            ds, len(tables.foreign), len(tables.trust), len(tables.dealer),
+                            "%s %s 外資 %d / 投信 %d / 自營商 %d 檔",
+                            ds, source, len(tables.foreign), len(tables.trust),
+                            len(tables.dealer),
                         )
                 except Exception as e:
-                    log.warning("%s T86 失敗: %s", ds, e)
-                time.sleep(SLEEP)
+                    log.warning("%s 法人失敗: %s", ds, e)
+                time.sleep(SLEEP if source == "t86" else _finmind_sleep())
             if do_margin and ds not in have_mar:
                 try:
                     totals, stocks = fetch_margin(day)
@@ -325,6 +330,76 @@ def backfill(days: int, do_index=True, do_foreign=True, do_margin=True,
 
 
 INSTITUTIONAL_TABLES = ("foreign_daily", "trust_daily", "dealer_daily")
+
+
+def _finmind_sleep() -> float:
+    from market.finmind_institutional import FINMIND_SLEEP
+    return FINMIND_SLEEP
+
+
+def _finmind_token(env: dict[str, str] | None = None) -> str:
+    """Token from an injected env or process env. Does not load .env.
+
+    Unit tests must not flip to FinMind just because a local .env exists.
+    Actions / update_market_data inject FINMIND_TOKEN. Never log the return.
+    """
+    src = env if env is not None else os.environ
+    return (src.get("FINMIND_TOKEN") or "").strip()
+
+
+def fetch_institutional_day(
+    day: date,
+    *,
+    prefer: str = "t86",
+    conn=None,
+    env: dict[str, str] | None = None,
+    t86_fetch=None,
+    finmind_fetch=None,
+) -> tuple[T86Tables, str]:
+    """Fetch one day's trust/dealer (and T86 foreign when T86 works).
+
+    prefer="t86": daily path — T86 first, FinMind if T86 JSON/HTML-fails.
+    prefer="finmind": historical gaps — FinMind first when token is present.
+
+    Returns (tables, source) where source is "t86" or "finmind".
+    Never logs FINMIND_TOKEN.
+    """
+    from market import finmind_institutional as fmi
+
+    token = _finmind_token(env)
+    t86 = t86_fetch or fetch_t86
+    if finmind_fetch is not None:
+        fm = finmind_fetch
+    else:
+        names = fmi.stock_names_from_conn(conn) if conn is not None else None
+        listed = fmi.listed_ids_from_conn(conn) if conn is not None else set()
+        fm = lambda d: fmi.fetch_mapped_day(
+            d, token, names=names, listed_ids=listed or None,
+        )
+
+    if prefer == "finmind" and token:
+        try:
+            tables = fm(day)
+            if tables.trust or tables.dealer:
+                return tables, "finmind"
+            log.warning("%s FinMind 無投信/自營商列, trying T86", day.isoformat())
+        except Exception as e:
+            log.warning("%s FinMind 失敗, trying T86: %s", day.isoformat(), e)
+        return t86(day), "t86"
+
+    try:
+        tables = t86(day)
+        if tables.foreign or tables.trust or tables.dealer:
+            return tables, "t86"
+        if token:
+            log.warning("%s T86 無資料, trying FinMind", day.isoformat())
+            return fm(day), "finmind"
+        return tables, "t86"
+    except Exception as e:
+        if token:
+            log.warning("%s T86 失敗 (%s), trying FinMind", day.isoformat(), e)
+            return fm(day), "finmind"
+        raise
 
 
 def _table_span(conn, table: str) -> tuple[int, str | None, str | None]:
@@ -485,15 +560,23 @@ def backfill_institutional_gaps(
     today: date | None = None,
     dry_run: bool = False,
     remote_dates: dict[str, set[str]] | None = None,
+    env: dict[str, str] | None = None,
+    t86_fetch=None,
+    finmind_fetch=None,
 ) -> int:
-    """Fetch T86 only for foreign dates missing trust or dealer.
+    """Fill trust_daily/dealer_daily for foreign dates that still lack them.
 
-    One T86 call writes foreign+trust+dealer. Rate limit: SLEEP seconds.
+    Historical gaps: FinMind all-stocks-by-start_date is primary when
+    FINMIND_TOKEN is set (Actions cannot reliably scrape TWSE T86).
+    Daily T86 stays the first choice when it returns JSON.
 
     When TURSO_* is configured (or `remote_dates` is injected), missing
     dates come from Turso foreign_daily ∪ local foreign_daily. Dates that
     already have both trust and dealer on Turso, or already have both
     locally, are not re-downloaded.
+
+    After this returns, update_market_data pushes INSTITUTIONAL_TABLES
+    (including trust_daily/dealer_daily) to Turso for the filled span.
     """
     conn = get_conn()
     today = today or taiwan_today()
@@ -517,12 +600,22 @@ def backfill_institutional_gaps(
         loaded = None
     missing = missing_institutional_dates(conn, since=since, remote_dates=loaded)
     source = "turso+local foreign_daily" if loaded is not None else "local foreign_daily"
+    token = _finmind_token(env)
+    prefer = "finmind" if token else "t86"
     log.info(
-        "institutional gaps: %d dates missing vs %s%s",
+        "institutional gaps: %d dates missing vs %s%s; prefer=%s token=%s",
         len(missing),
         source,
         f" (since {since})" if since else " (full foreign span)",
+        prefer,
+        "present" if token else "absent",
     )
+    if prefer == "t86":
+        log.info(
+            "institutional gaps: no FINMIND_TOKEN; T86 only. "
+            "Actions IPs often get empty/HTML from TWSE — set FINMIND_TOKEN "
+            "for historical fill."
+        )
     for line in institutional_coverage(conn, remote_dates=loaded):
         log.info("coverage %s", line)
     if dry_run:
@@ -532,21 +625,33 @@ def backfill_institutional_gaps(
     n = 0
     for ds in missing:
         day = date.fromisoformat(ds)
+        used = prefer
         try:
-            tables = fetch_t86(day)
+            tables, used = fetch_institutional_day(
+                day,
+                prefer=prefer,
+                conn=conn,
+                env=env,
+                t86_fetch=t86_fetch,
+                finmind_fetch=finmind_fetch,
+            )
             if tables.foreign or tables.trust or tables.dealer:
                 with conn:
                     persist_t86(conn, tables)
                 n += 1
                 log.info(
-                    "%s T86 外資 %d / 投信 %d / 自營商 %d 檔",
-                    ds, len(tables.foreign), len(tables.trust), len(tables.dealer),
+                    "%s %s 外資 %d / 投信 %d / 自營商 %d 檔",
+                    ds, used, len(tables.foreign), len(tables.trust),
+                    len(tables.dealer),
                 )
             else:
-                log.warning("%s T86 無資料(foreign_daily 有此日,可能假日或尚未公布)", ds)
+                log.warning(
+                    "%s %s 無資料(foreign_daily 有此日,可能假日或尚未公布)",
+                    ds, used,
+                )
         except Exception as e:
-            log.warning("%s T86 失敗: %s", ds, e)
-        time.sleep(SLEEP)
+            log.warning("%s institutional fetch 失敗: %s", ds, e)
+        time.sleep(SLEEP if used == "t86" else _finmind_sleep())
     log.info("institutional gap fill: wrote %d days", n)
     for line in institutional_coverage(conn, remote_dates=loaded):
         log.info("coverage %s", line)
@@ -564,6 +669,11 @@ if __name__ == "__main__":
         dry = "--dry-run" in args
         args = [a for a in args if a != "--dry-run"]
         days = int(args[0]) if args else None
+        try:
+            from dotenv import load_dotenv
+            load_dotenv()
+        except Exception:
+            pass
         backfill_institutional_gaps(days=days, dry_run=dry)
         raise SystemExit
     if mode == "stock-daily":

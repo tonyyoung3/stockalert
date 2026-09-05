@@ -644,6 +644,24 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
 .bt-kpi .v{font-size:20px;font-weight:700}
 .bt-section-title{font-size:13px;font-weight:600;margin:16px 0 8px}
 .bt-error{padding:12px;background:#fdecea;border:1px solid #f5c2c0;border-radius:4px;color:#a94442}
+.bt-empty{padding:16px 12px;text-align:center;color:#6c757d;border:1px dashed #dee2e6;border-radius:6px;font-size:13px;line-height:1.5;margin-bottom:10px}
+.bt-block{border:1px solid #e4e8ee;border-radius:8px;padding:0;background:#fff;margin-bottom:8px}
+.bt-block>summary.bt-block-sum{cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px;padding:10px 12px;user-select:none}
+.bt-block>summary.bt-block-sum::-webkit-details-marker{display:none}
+.bt-block>summary.bt-block-sum::before{content:"▸";color:#adb5bd;font-size:12px}
+.bt-block[open]>summary.bt-block-sum::before{content:"▾"}
+.bt-block-body{padding:0 12px 12px 28px}
+.bt-if{font-size:12px;color:#6c757d;flex-shrink:0}
+.bt-block-title{font-size:13px;font-weight:600;flex:1;min-width:0}
+.bt-block-del{border:none;background:#f8f9fa;color:#868e96;border-radius:4px;padding:6px 10px;cursor:pointer;font-size:12px;min-height:36px}
+.bt-block-del:hover{background:#fdecea;color:#a94442}
+.bt-block.is-incompat{opacity:.62;background:#f8f9fa}
+.bt-block.is-incompat .bt-block-body{display:none}
+.bt-chips{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 12px}
+.bt-chip{background:#eef3fa;color:#2c4a70;border-radius:999px;padding:4px 10px;font-size:12px;line-height:1.4}
+.bt-add-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:8px}
+.bt-add-row select{flex:1;min-width:180px}
+.bt-add-row button{padding:8px 14px;border:1px solid #4C72B0;background:#fff;color:#4C72B0;border-radius:4px;cursor:pointer;font-size:13px}
 @media(max-width:768px){
   .wrap{padding:12px}
   header{flex-direction:column;align-items:stretch;padding:14px 16px}
@@ -666,6 +684,8 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
   .bt-box label{display:block;margin:4px 0}
   .bt-box label[style]{margin-left:0!important}
   #bt-form button{width:100%;margin-left:0!important;min-height:44px}
+  .bt-add-row{flex-direction:column;align-items:stretch}
+  .bt-block>summary.bt-block-sum{min-height:44px}
   .kpi-value{font-size:22px}
 }
 </style>
@@ -813,7 +833,7 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
 <div id="section-backtest" class="page-section" role="tabpanel" aria-labelledby="tab-backtest" hidden>
 <section class="card" style="margin-bottom:16px">
   <h3 style="margin-bottom:8px">策略回測</h3>
-  <p class="hint" style="margin-bottom:14px">此區與市場圖表分開；首次進入不會自動執行。篩選／進場／出場可折疊（手機預設收合，避免首屏被表單佔滿）。</p>
+  <p class="hint" style="margin-bottom:14px">此區與市場圖表分開；首次進入不會自動執行。用積木組「若…則進場／出場」（濾網 AND，對齊現有引擎）。篩選／進場／出場可折疊（手機預設收合，積木列參數為第二層）。</p>
 
   <div class="bt-grid" id="bt-form">
     <details class="bt-box" data-bt-fold="dataset" open>
@@ -828,87 +848,6 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
       </div>
     </details>
 
-    <details class="bt-box" data-bt-fold="filters" open>
-      <summary class="bt-label">篩選條件(用「前一交易日已知」的資訊,不含未來資訊)</summary>
-      <div class="bt-row">
-        <span class="bt-sub">星期</span>
-        <label><input type="checkbox" class="bt-dow" value="0" checked>一</label>
-        <label><input type="checkbox" class="bt-dow" value="1" checked>二</label>
-        <label><input type="checkbox" class="bt-dow" value="2" checked>三</label>
-        <label><input type="checkbox" class="bt-dow" value="3" checked>四</label>
-        <label><input type="checkbox" class="bt-dow" value="4" checked>五</label>
-      </div>
-      <div class="bt-row">
-        <span class="bt-sub">趨勢濾網</span>
-        <select id="bt-trend">
-          <option value="none" selected>不篩</option>
-          <option value="above_ma20">前收 > MA20</option>
-          <option value="below_ma20">前收 < MA20</option>
-          <option value="above_ma60">前收 > MA60(季線)</option>
-          <option value="below_ma60">前收 < MA60(季線)</option>
-          <option value="above_ma20_today">今收 > MA20(今日)</option>
-          <option value="below_ma20_today">今收 < MA20(今日)</option>
-          <option value="above_ma60_today">今收 > MA60/季線(今日)</option>
-          <option value="below_ma60_today">今收 < MA60/季線(今日)</option>
-        </select>
-        <span class="bt-sub">前一日漲跌</span>
-        <select id="bt-prevday">
-          <option value="none" selected>不篩</option>
-          <option value="up">前一日上漲</option>
-          <option value="down">前一日下跌</option>
-        </select>
-      </div>
-      <div class="bt-row">
-        <span class="bt-sub">當日跳空方向</span>
-        <select id="bt-gapdir">
-          <option value="any" selected>不篩</option>
-          <option value="up">跳空漲</option>
-          <option value="down">跳空跌</option>
-        </select>
-        <span class="bt-sub">最小 |跳空| %</span>
-        <input type="number" id="bt-gapmin" value="0" step="0.1" style="width:70px">
-      </div>
-      <div class="bt-row">
-        <span class="bt-sub">當日漲跌方向(收盤才確定,適合收盤進場規則)</span>
-        <select id="bt-dayretdir">
-          <option value="any" selected>不篩</option>
-          <option value="up">當日上漲</option>
-          <option value="down">當日下跌</option>
-        </select>
-        <span class="bt-sub">最小 |當日漲跌| %</span>
-        <input type="number" id="bt-dayretmin" value="0" step="0.1" style="width:70px">
-      </div>
-      <div class="bt-row">
-        <span class="bt-sub">均線交叉(MA20 vs MA60,收盤才確定)</span>
-        <select id="bt-macross">
-          <option value="none" selected>不篩</option>
-          <option value="golden">黃金交叉(今天)</option>
-          <option value="death">死亡交叉(今天)</option>
-        </select>
-        <span class="bt-sub">N日新高/新低突破(收盤才確定)</span>
-        <select id="bt-breakout">
-          <option value="none" selected>不篩</option>
-          <option value="n_day_high">創N日新高</option>
-          <option value="n_day_low">破N日新低</option>
-        </select>
-        <span class="bt-sub">N=</span>
-        <input type="number" id="bt-breakoutwindow" value="20" step="1" min="2" style="width:60px">
-      </div>
-      <div class="bt-row">
-        <span class="bt-sub">外資/投信台指期未平倉比(前一交易日值,只有近~3年TAIFEX資料)</span>
-        <select id="bt-oiratio">
-          <option value="none" selected>不篩</option>
-          <option value="below_pctile">低於分位門檻(比值相對更負)</option>
-          <option value="above_pctile">高於分位門檻(比值相對較不負)</option>
-        </select>
-        <span class="bt-sub">分位門檻(0-100)</span>
-        <input type="number" id="bt-oipctile" value="25" step="1" min="0" max="100" style="width:60px">
-        <span class="bt-sub">回看天數</span>
-        <input type="number" id="bt-oiwindow" value="60" step="5" min="10" style="width:60px">
-      </div>
-      <p class="hint" id="bt-close-decided-hint" style="display:none">⚠️ 均線交叉 / N日新高新低突破 / 當日漲跌 / 今日均線 這幾種濾網要等收盤才能確定,不能用在「日內模式」(會偷看未來資訊)。切到隔夜或波段模式才能套用。</p>
-    </details>
-
     <details class="bt-box" data-bt-fold="entry" open>
       <summary class="bt-label">模式</summary>
       <label><input type="radio" name="bt-mode" value="intraday" checked onchange="btOnModeChange()"> 日內(當天進出)</label>
@@ -916,8 +855,22 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
       <label style="margin-left:14px"><input type="radio" name="bt-mode" value="swing" onchange="btOnModeChange()"> 波段(收盤進、固定%停損、可多日持有)</label>
     </details>
 
+    <details class="bt-box" data-bt-fold="filters" open>
+      <summary class="bt-label">若…（濾網積木, AND）</summary>
+      <p class="hint">只加入你需要的條件。空白＝不套用濾網。濾網用「前一交易日已知」的資訊（跳空除外,決策時已發生）。</p>
+      <div id="bt-close-decided-hint" class="bt-warn" style="display:none">
+        ⚠️ 「當日漲跌」「今日均線」「N日新高/新低突破」「均線交叉」要等今天收盤才能確定。日內模式進場通常早於收盤,套用等於偷看未來資訊。這些積木已收合且不會送出；請改選隔夜或波段,或刪除後再執行。
+      </div>
+      <div id="bt-filter-empty" class="bt-empty">尚未加入濾網積木。按下方「新增積木」加入第一個條件（例如星期或跳空）。不加油濾網也可以直接跑日內預設進場。</div>
+      <div id="bt-filter-blocks"></div>
+      <div class="bt-add-row">
+        <select id="bt-add-filter" aria-label="選擇要新增的濾網積木"></select>
+        <button type="button" id="bt-add-filter-btn" onclick="btAddFilter()">新增積木</button>
+      </div>
+    </details>
+
     <details class="bt-box" id="bt-intraday-box" data-bt-fold="entry" open>
-      <summary class="bt-label">日內進場／出場</summary>
+      <summary class="bt-label">則進場（日內）</summary>
       <div class="bt-row">
         <span class="bt-sub">進場參考價</span>
         <select id="bt-ref">
@@ -949,6 +902,12 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
           <option value="11">11:00</option>
           <option value="12">12:00</option>
         </select>
+      </div>
+    </details>
+
+    <details class="bt-box" id="bt-intraday-exit-box" data-bt-fold="exit" open>
+      <summary class="bt-label">則出場（日內）</summary>
+      <div class="bt-row">
         <span class="bt-sub">出場時間</span>
         <select id="bt-exithour">
           <option value="10">10:00收盤</option>
@@ -974,7 +933,7 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
     </details>
 
     <details class="bt-box" id="bt-overnight-box" data-bt-fold="exit" style="display:none" open>
-      <summary class="bt-label">隔夜出場</summary>
+      <summary class="bt-label">則進場／出場（隔夜）</summary>
       <div class="bt-row">
         <span class="bt-sub">方向</span>
         <select id="bt-on-direction">
@@ -1000,7 +959,7 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
     </details>
 
     <details class="bt-box" id="bt-swing-box" data-bt-fold="exit" style="display:none" open>
-      <summary class="bt-label">波段進場／出場(收盤進場,固定 % 停損)</summary>
+      <summary class="bt-label">則進場／出場（波段,收盤進場,固定 % 停損）</summary>
       <div class="bt-row">
         <span class="bt-sub">方向</span>
         <select id="bt-swing-direction">
@@ -1017,10 +976,12 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
         <span class="bt-sub" id="bt-swing-tp-label" style="display:none">停利 %(相對進場價)</span>
         <input type="number" id="bt-swing-tppct" value="5" step="0.1" min="0.1" style="width:70px; display:none">
       </div>
-      <p class="hint">同一天停損停利都可能觸發時,保守假設先停損。訊號出現在資料尾端、還沒等到出場資料就用完的交易會被排除(不計入統計),不會用未知結果硬猜。</p>
+      <p class="hint">出場優先序跟引擎：停損＞停利＞時間／持有到期。同一天停損停利都可能觸發時,保守假設先停損。訊號出現在資料尾端、還沒等到出場資料就用完的交易會被排除(不計入統計)。</p>
     </details>
 
     <div class="bt-box" data-bt-fold="cost">
+      <div class="bt-label">執行前規則摘要</div>
+      <div id="bt-summary" class="bt-chips"></div>
       <div class="bt-row">
         <span class="bt-sub">來回成本 %</span>
         <input type="number" id="bt-cost" value="0.03" step="0.01" style="width:80px">
@@ -1765,6 +1726,30 @@ async function loadStock(){
 // ---------------------------------------------------------------- 策略回測
 
 const DOW_NAME = ['週一','週二','週三','週四','週五'];
+const BT_FILTER_CATALOG = [
+  {type:'weekdays', label:'星期', closeDecided:false, defaults:{days:[0,1,2,3,4]}},
+  {type:'trend', label:'趨勢 vs 均線', closeDecided:false, defaults:{value:'above_ma20'}},
+  {type:'prev_day', label:'前一日漲跌', closeDecided:false, defaults:{value:'up'}},
+  {type:'gap', label:'跳空', closeDecided:false, defaults:{dir:'any', abs_min_pct:0.5}},
+  {type:'day_return', label:'當日漲跌', closeDecided:true, defaults:{dir:'up', min_pct:1}},
+  {type:'ma_cross', label:'均線交叉', closeDecided:true, defaults:{value:'golden'}},
+  {type:'breakout', label:'N日新高/新低', closeDecided:true, defaults:{kind:'n_day_high', window:20}},
+  {type:'oi_ratio', label:'外資/投信 OI 比分位', closeDecided:false, defaults:{mode:'below_pctile', pctile:25, window:60}}
+];
+let btFilters = [];
+let btFilterSeq = 1;
+
+function btMode(){
+  const el = document.querySelector('input[name="bt-mode"]:checked');
+  return el ? el.value : 'intraday';
+}
+function btCatalog(type){ return BT_FILTER_CATALOG.find(c=>c.type===type); }
+function btIsCloseDecided(block){
+  const spec = btCatalog(block.type);
+  if(spec && spec.closeDecided) return true;
+  return block.type==='trend' && String((block.params||{}).value||'').indexOf('_today')>=0;
+}
+function btBlockIncompat(block){ return btMode()==='intraday' && btIsCloseDecided(block); }
 
 function btOnDatasetChange(){
   const ds = document.getElementById('bt-dataset').value;
@@ -1783,41 +1768,32 @@ function btOnDatasetChange(){
     intradayRadio.disabled = false;
     holdHourOpt.disabled = false;
   }
+  btRenderSummary();
 }
 
 function btOnModeChange(){
-  const mode = document.querySelector('input[name="bt-mode"]:checked').value;
+  const mode = btMode();
   document.getElementById('bt-intraday-box').style.display = mode==='intraday' ? 'block' : 'none';
+  const intraExit = document.getElementById('bt-intraday-exit-box');
+  if(intraExit) intraExit.style.display = mode==='intraday' ? 'block' : 'none';
   document.getElementById('bt-overnight-box').style.display = mode==='overnight' ? 'block' : 'none';
   document.getElementById('bt-swing-box').style.display = mode==='swing' ? 'block' : 'none';
-
-  // 「收盤才確定」的濾網(均線交叉/N日突破/當日漲跌/今日均線)在日內模式下會偷看未來
-  // 資訊,直接停用對應控制項並提示,而不是等送出去才被後端擋掉
-  const closeDecided = mode === 'intraday';
-  document.getElementById('bt-close-decided-hint').style.display = closeDecided ? 'block' : 'none';
-  ['bt-macross','bt-breakout','bt-breakoutwindow','bt-dayretdir','bt-dayretmin'].forEach(id=>{
-    document.getElementById(id).disabled = closeDecided;
-  });
-  document.querySelectorAll('#bt-trend option[value$="_today"]').forEach(opt=>{ opt.disabled = closeDecided; });
-  if(closeDecided){
-    document.getElementById('bt-macross').value = 'none';
-    document.getElementById('bt-breakout').value = 'none';
-    document.getElementById('bt-dayretdir').value = 'any';
-    document.getElementById('bt-dayretmin').value = '0';
-    const trendSel = document.getElementById('bt-trend');
-    if(trendSel.value.endsWith('_today')) trendSel.value = 'none';
-  }
+  const hasIncompat = mode==='intraday' && btFilters.some(btBlockIncompat);
+  document.getElementById('bt-close-decided-hint').style.display = hasIncompat ? 'block' : 'none';
+  btRenderFilters();
 }
 
 function btOnStopToggle(){
   document.getElementById('bt-stop-box').style.display =
     document.getElementById('bt-stop-on').checked ? 'flex' : 'none';
+  btRenderSummary();
 }
 
 function btOnSwingTpToggle(){
   const show = document.getElementById('bt-swing-tpon').checked;
   document.getElementById('bt-swing-tp-label').style.display = show ? 'inline' : 'none';
   document.getElementById('bt-swing-tppct').style.display = show ? 'inline-block' : 'none';
+  btRenderSummary();
 }
 
 function btOnHoldToChange(){
@@ -1825,58 +1801,244 @@ function btOnHoldToChange(){
   document.getElementById('bt-holdhour-label').style.display = show ? 'inline' : 'none';
   document.getElementById('bt-holdhour').style.display = show ? 'inline-block' : 'none';
 }
-document.getElementById('bt-holdto').addEventListener('change', btOnHoldToChange);
+document.getElementById('bt-holdto').addEventListener('change', function(){ btOnHoldToChange(); btRenderSummary(); });
 
-function btBuildRule(){
-  const dow = [...document.querySelectorAll('.bt-dow:checked')].map(el=>parseInt(el.value));
-  const mode = document.querySelector('input[name="bt-mode"]:checked').value;
-  const rule = {
+function btSel(opts, cur){
+  return opts.map(o=>'<option value="'+o[0]+'"'+(o[0]===cur?' selected':'')+'>'+o[1]+'</option>').join('');
+}
+function btFilterTitle(block){
+  const p = block.params || {};
+  if(block.type==='weekdays'){
+    const days = p.days||[];
+    if(!days.length || days.length===5) return '週一～週五';
+    return '週'+days.map(d=>'一二三四五'[d]).join('、');
+  }
+  if(block.type==='trend'){
+    const m={above_ma20:'前收 > MA20',below_ma20:'前收 < MA20',above_ma60:'前收 > MA60',below_ma60:'前收 < MA60',
+      above_ma20_today:'今收 > MA20',below_ma20_today:'今收 < MA20',above_ma60_today:'今收 > MA60',below_ma60_today:'今收 < MA60'};
+    return m[p.value]||'趨勢 vs 均線';
+  }
+  if(block.type==='prev_day') return p.value==='down' ? '前一日下跌' : '前一日上漲';
+  if(block.type==='gap'){
+    const d={up:'跳空漲',down:'跳空跌',any:'跳空'};
+    return (d[p.dir]||'跳空')+(p.abs_min_pct>0 ? ' |跳空|≥'+p.abs_min_pct+'%' : '');
+  }
+  if(block.type==='day_return'){
+    const d={up:'當日上漲',down:'當日下跌',any:'當日漲跌'};
+    return (d[p.dir]||'當日漲跌')+(p.min_pct>0 ? ' |漲跌|≥'+p.min_pct+'%' : '');
+  }
+  if(block.type==='ma_cross') return p.value==='death' ? '死亡交叉' : '黃金交叉';
+  if(block.type==='breakout') return (p.kind==='n_day_low'?'破':'創')+(p.window||20)+'日新'+(p.kind==='n_day_low'?'低':'高');
+  if(block.type==='oi_ratio') return '外資/投信 OI 比'+(p.mode==='above_pctile'?'高於':'低於')+(p.window||60)+'日'+(p.pctile||25)+'%分位';
+  return (btCatalog(block.type)||{}).label || block.type;
+}
+function btFilterFields(block){
+  const p = block.params || {};
+  const intra = btMode()==='intraday';
+  if(block.type==='weekdays'){
+    return [0,1,2,3,4].map(d=>{
+      const on = (p.days||[]).indexOf(d)>=0;
+      return '<label><input type="checkbox" data-k="days" value="'+d+'"'+(on?' checked':'')+'>'+'一二三四五'[d]+'</label>';
+    }).join(' ');
+  }
+  if(block.type==='trend'){
+    const opts=[['above_ma20','前收 > MA20'],['below_ma20','前收 < MA20'],['above_ma60','前收 > MA60'],['below_ma60','前收 < MA60'],
+      ['above_ma20_today','今收 > MA20(今日)'],['below_ma20_today','今收 < MA20(今日)'],
+      ['above_ma60_today','今收 > MA60(今日)'],['below_ma60_today','今收 < MA60(今日)']];
+    return '<span class="bt-sub">條件</span><select data-k="value">'+opts.map(o=>{
+      const dis = intra && o[0].indexOf('_today')>=0;
+      return '<option value="'+o[0]+'"'+(o[0]===p.value?' selected':'')+(dis?' disabled':'')+'>'+o[1]+'</option>';
+    }).join('')+'</select>';
+  }
+  if(block.type==='prev_day'){
+    return '<span class="bt-sub">方向</span><select data-k="value">'+btSel([['up','前一日上漲'],['down','前一日下跌']], p.value)+'</select>';
+  }
+  if(block.type==='gap'){
+    return '<span class="bt-sub">方向</span><select data-k="dir">'+btSel([['any','不限方向'],['up','跳空漲'],['down','跳空跌']], p.dir)
+      +'</select><span class="bt-sub">最小 |跳空| %</span><input type="number" data-k="abs_min_pct" value="'+(p.abs_min_pct??0)+'" step="0.1" style="width:70px">';
+  }
+  if(block.type==='day_return'){
+    return '<span class="bt-sub">方向</span><select data-k="dir">'+btSel([['any','不限方向'],['up','當日上漲'],['down','當日下跌']], p.dir)
+      +'</select><span class="bt-sub">最小 |當日漲跌| %</span><input type="number" data-k="min_pct" value="'+(p.min_pct??0)+'" step="0.1" style="width:70px">';
+  }
+  if(block.type==='ma_cross'){
+    return '<span class="bt-sub">交叉</span><select data-k="value">'+btSel([['golden','黃金交叉(今天)'],['death','死亡交叉(今天)']], p.value)+'</select>';
+  }
+  if(block.type==='breakout'){
+    return '<span class="bt-sub">種類</span><select data-k="kind">'+btSel([['n_day_high','創N日新高'],['n_day_low','破N日新低']], p.kind)
+      +'</select><span class="bt-sub">N=</span><input type="number" data-k="window" value="'+(p.window||20)+'" min="2" step="1" style="width:60px">';
+  }
+  if(block.type==='oi_ratio'){
+    return '<span class="bt-sub">分位</span><select data-k="mode">'+btSel([['below_pctile','低於分位(更負)'],['above_pctile','高於分位(較不負)']], p.mode)
+      +'</select><span class="bt-sub">門檻</span><input type="number" data-k="pctile" value="'+(p.pctile??25)+'" min="0" max="100" step="1" style="width:60px">'
+      +'<span class="bt-sub">回看天數</span><input type="number" data-k="window" value="'+(p.window||60)+'" min="10" step="5" style="width:60px">';
+  }
+  return '';
+}
+function btFillAddMenu(){
+  const used = new Set(btFilters.map(b=>b.type));
+  const intra = btMode()==='intraday';
+  const sel = document.getElementById('bt-add-filter');
+  if(!sel) return;
+  sel.innerHTML = BT_FILTER_CATALOG.map(c=>{
+    const taken = used.has(c.type);
+    const blocked = intra && c.closeDecided;
+    const note = taken ? '（已加入）' : (blocked ? '（日內不可用）' : '');
+    return '<option value="'+c.type+'"'+(taken||blocked?' disabled':'')+'>'+c.label+note+'</option>';
+  }).join('');
+  const btn = document.getElementById('bt-add-filter-btn');
+  if(btn) btn.disabled = ![...sel.options].some(o=>!o.disabled);
+}
+function btRenderFilters(){
+  const host = document.getElementById('bt-filter-blocks');
+  const empty = document.getElementById('bt-filter-empty');
+  if(!host) return;
+  const mobile = window.matchMedia('(max-width:768px)').matches;
+  const hasIncompat = btMode()==='intraday' && btFilters.some(btBlockIncompat);
+  document.getElementById('bt-close-decided-hint').style.display = hasIncompat ? 'block' : 'none';
+  empty.style.display = btFilters.length ? 'none' : 'block';
+  host.innerHTML = btFilters.map(block=>{
+    const incompat = btBlockIncompat(block);
+    const spec = btCatalog(block.type) || {label:block.type};
+    const open = (!mobile && !incompat) ? ' open' : '';
+    return '<details class="bt-block'+(incompat?' is-incompat':'')+'" data-id="'+block.id+'"'+open+'>'
+      + '<summary class="bt-block-sum"><span class="bt-if">若</span>'
+      + '<span class="bt-block-title">'+btFilterTitle(block)+(incompat?'（日內已收合,不套用）':'')+'</span>'
+      + '<button type="button" class="bt-block-del" data-del="'+block.id+'">刪除</button></summary>'
+      + '<div class="bt-block-body"><div class="bt-row">'+btFilterFields(block)+'</div></div></details>';
+  }).join('');
+  btFillAddMenu();
+  btRenderSummary();
+}
+function btAddFilter(){
+  const sel = document.getElementById('bt-add-filter');
+  const type = sel && sel.value;
+  const spec = btCatalog(type);
+  if(!spec || btFilters.some(b=>b.type===type)) return;
+  if(btMode()==='intraday' && spec.closeDecided) return;
+  btFilters.push({id:btFilterSeq++, type:type, params:Object.assign({}, spec.defaults)});
+  btRenderFilters();
+}
+function btRemoveFilter(id){
+  btFilters = btFilters.filter(b=>b.id!==id);
+  btRenderFilters();
+}
+function btReadBlockParams(el, block){
+  if(block.type==='weekdays'){
+    block.params.days = [...el.querySelectorAll('input[data-k="days"]:checked')].map(i=>parseInt(i.value,10));
+    return;
+  }
+  el.querySelectorAll('[data-k]').forEach(inp=>{
+    const k = inp.getAttribute('data-k');
+    if(inp.type==='number') block.params[k] = parseFloat(inp.value)||0;
+    else block.params[k] = inp.value;
+  });
+}
+document.getElementById('bt-filter-blocks').addEventListener('click', ev=>{
+  const btn = ev.target.closest('[data-del]');
+  if(!btn) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  btRemoveFilter(+btn.getAttribute('data-del'));
+});
+document.getElementById('bt-filter-blocks').addEventListener('change', ev=>{
+  const card = ev.target.closest('.bt-block');
+  if(!card) return;
+  const block = btFilters.find(b=>b.id===+card.dataset.id);
+  if(!block) return;
+  btReadBlockParams(card, block);
+  const title = card.querySelector('.bt-block-title');
+  if(title) title.textContent = btFilterTitle(block)+(btBlockIncompat(block)?'（日內已收合,不套用）':'');
+  const hasIncompat = btMode()==='intraday' && btFilters.some(btBlockIncompat);
+  document.getElementById('bt-close-decided-hint').style.display = hasIncompat ? 'block' : 'none';
+  card.classList.toggle('is-incompat', btBlockIncompat(block));
+  btFillAddMenu();
+  btRenderSummary();
+});
+document.getElementById('bt-form').addEventListener('change', ev=>{
+  if(ev.target.closest('#bt-filter-blocks')) return;
+  btRenderSummary();
+});
+document.getElementById('bt-form').addEventListener('input', ev=>{
+  if(ev.target.closest('#bt-filter-blocks')) return;
+  if(ev.target.id==='bt-cost' || ev.target.tagName==='INPUT') btRenderSummary();
+});
+
+function btBuildBlocks(){
+  const mode = btMode();
+  const filters = btFilters.filter(b=>!btBlockIncompat(b)).map(b=>({type:b.type, params:Object.assign({}, b.params)}));
+  const blocks = {
+    version:1,
     dataset: document.getElementById('bt-dataset').value,
     mode: mode,
-    filters: {
-      weekdays: dow,
-      trend: document.getElementById('bt-trend').value,
-      prev_day: document.getElementById('bt-prevday').value,
-      gap_dir: document.getElementById('bt-gapdir').value,
-      gap_abs_min_pct: parseFloat(document.getElementById('bt-gapmin').value)||0,
-      day_ret_dir: document.getElementById('bt-dayretdir').value,
-      day_ret_min_pct: parseFloat(document.getElementById('bt-dayretmin').value)||0,
-      ma_cross: document.getElementById('bt-macross').value,
-      breakout: document.getElementById('bt-breakout').value,
-      breakout_window: parseInt(document.getElementById('bt-breakoutwindow').value)||20,
-      oi_ratio_mode: document.getElementById('bt-oiratio').value,
-      oi_ratio_pctile: parseFloat(document.getElementById('bt-oipctile').value)||25,
-      oi_ratio_window: parseInt(document.getElementById('bt-oiwindow').value)||60,
-    },
-    cost_pct: parseFloat(document.getElementById('bt-cost').value)||0,
+    filters: filters,
+    cost_pct: parseFloat(document.getElementById('bt-cost').value)||0
   };
   if(mode==='intraday'){
-    rule.entry = {
+    blocks.entry = {
       reference: document.getElementById('bt-ref').value,
       offset_pct: parseFloat(document.getElementById('bt-offset').value)||0,
       trigger: document.getElementById('bt-trigger').value,
       direction: document.getElementById('bt-direction').value,
-      earliest_hour: parseInt(document.getElementById('bt-earliest').value),
+      earliest_hour: parseInt(document.getElementById('bt-earliest').value,10)
     };
-    rule.exit_hour = parseInt(document.getElementById('bt-exithour').value);
-    rule.stop = {
-      enabled: document.getElementById('bt-stop-on').checked,
-      reference: document.getElementById('bt-stopref').value,
-      offset_pct: parseFloat(document.getElementById('bt-stopoffset').value)||0,
+    blocks.exit = {
+      exit_hour: parseInt(document.getElementById('bt-exithour').value,10),
+      stop_enabled: document.getElementById('bt-stop-on').checked,
+      stop_reference: document.getElementById('bt-stopref').value,
+      stop_offset_pct: parseFloat(document.getElementById('bt-stopoffset').value)||0
     };
   } else if(mode==='overnight'){
-    rule.direction = document.getElementById('bt-on-direction').value;
-    rule.hold_to = document.getElementById('bt-holdto').value;
-    rule.hold_to_hour = parseInt(document.getElementById('bt-holdhour').value);
-    rule.skip_weekend = document.getElementById('bt-skipweekend').checked;
+    blocks.entry = {direction: document.getElementById('bt-on-direction').value};
+    blocks.exit = {
+      hold_to: document.getElementById('bt-holdto').value,
+      hold_to_hour: parseInt(document.getElementById('bt-holdhour').value,10),
+      skip_weekend: document.getElementById('bt-skipweekend').checked
+    };
   } else {
-    rule.direction = document.getElementById('bt-swing-direction').value;
-    rule.stop_pct = parseFloat(document.getElementById('bt-swing-stoppct').value)||2;
-    rule.max_hold_days = parseInt(document.getElementById('bt-swing-maxhold').value)||60;
-    rule.take_profit_on = document.getElementById('bt-swing-tpon').checked;
-    rule.take_profit_pct = parseFloat(document.getElementById('bt-swing-tppct').value)||0;
+    blocks.entry = {direction: document.getElementById('bt-swing-direction').value};
+    blocks.exit = {
+      stop_pct: parseFloat(document.getElementById('bt-swing-stoppct').value)||2,
+      max_hold_days: parseInt(document.getElementById('bt-swing-maxhold').value,10)||60,
+      take_profit_on: document.getElementById('bt-swing-tpon').checked,
+      take_profit_pct: parseFloat(document.getElementById('bt-swing-tppct').value)||0
+    };
   }
-  return rule;
+  return blocks;
+}
+function btBuildRule(){ return btBuildBlocks(); }
+function btChipLabels(blocks){
+  const chips = [];
+  chips.push(blocks.dataset==='15y_daily' ? '15年日K' : '2年小時K');
+  chips.push({intraday:'日內', overnight:'隔夜', swing:'波段'}[blocks.mode]||blocks.mode);
+  (blocks.filters||[]).forEach(b=> chips.push('若 '+btFilterTitle(b)));
+  const entry = blocks.entry||{};
+  const ex = blocks.exit||{};
+  const dir = entry.direction==='short' ? '做空' : '做多';
+  if(blocks.mode==='intraday'){
+    const ref = {first_hour_high:'第一小時高點', first_hour_low:'第一小時低點', day_open:'開盤價', prev_close:'前收'}[entry.reference]||entry.reference;
+    const trig = entry.trigger==='touch_from_below' ? '向下觸及' : '向上觸及';
+    chips.push('則進場 '+dir+' '+ref+' '+trig);
+    chips.push('則出場 '+(ex.exit_hour||13)+':00 收盤');
+    if(ex.stop_enabled) chips.push('停損開');
+  } else if(blocks.mode==='overnight'){
+    const hold = {next_open:'隔日開盤', next_close:'隔日收盤', next_hour:'隔日'+(ex.hold_to_hour||10)+':00'}[ex.hold_to]||'隔日出場';
+    chips.push('則進場 '+dir+' 收盤');
+    chips.push('則出場 '+hold);
+    if(ex.skip_weekend) chips.push('跳過週末');
+  } else {
+    chips.push('則進場 '+dir+' 收盤');
+    chips.push('停損 '+(ex.stop_pct||2)+'%');
+    if(ex.take_profit_on) chips.push('停利 '+(ex.take_profit_pct||5)+'%');
+    chips.push('最長持有 '+(ex.max_hold_days||60)+' 日');
+  }
+  chips.push('成本 '+(blocks.cost_pct||0)+'%');
+  return chips;
+}
+function btRenderSummary(){
+  const box = document.getElementById('bt-summary');
+  if(!box) return;
+  box.innerHTML = btChipLabels(btBuildBlocks()).map(t=>'<span class="bt-chip">'+t+'</span>').join('');
 }
 
 async function runBacktest(){
@@ -1885,7 +2047,7 @@ async function runBacktest(){
   let data;
   try{
     const resp = await fetch('/api/backtest', {method:'POST', credentials:'same-origin',
-      headers:{'Content-Type':'application/json'}, body: JSON.stringify(btBuildRule())});
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify(btBuildBlocks())});
     data = await resp.json();
   }catch(e){ box.innerHTML = '<div class="bt-error">請求失敗:'+e+'</div>'; return; }
   renderBacktestResult(data);
@@ -2099,6 +2261,7 @@ function renderBacktestResult(d){
 
 btOnHoldToChange();
 btOnModeChange();
+btRenderFilters();
 
 function loadAll(){ loadSummary(); loadKline(); loadTaiex(); loadMargin(); loadNet(); loadTaifexOi(); loadTop();
   loadAlerts(); loadPerformance();

@@ -199,6 +199,14 @@ class DashboardNavTests(unittest.TestCase):
         self.assertIn(">個股</a>", html)
         self.assertIn(">告警</a>", html)
         self.assertIn(">回測</a>", html)
+        self.assertIn("新增積木", html)
+        self.assertIn("尚未加入濾網積木", html)
+        self.assertIn("執行前規則摘要", html)
+        self.assertIn("id=\"bt-summary\"", html)
+        self.assertIn("function btBuildBlocks(", html)
+        self.assertIn("function btAddFilter(", html)
+        self.assertNotIn('id="bt-trend"', html)
+        self.assertNotIn('id="bt-macross"', html)
         self.assertIn("id=\"section-market\"", html)
         self.assertIn("id=\"section-stock\"", html)
         self.assertIn("id=\"section-alerts\"", html)
@@ -272,6 +280,19 @@ class DashboardNavTests(unittest.TestCase):
         self.assertIn(">個股</a>", html)
         self.assertIn(">告警</a>", html)
         self.assertIn(">回測</a>", html)
+        self.assertIn("參數為第二層", html)
+        self.assertIn("偷看未來資訊", html)
+
+    def test_backtest_blocks_ui_replaces_fixed_filter_wall(self):
+        html = dashboard.HTML
+        self.assertIn("尚未加入濾網積木", html)
+        self.assertIn("新增積木", html)
+        self.assertIn("執行前規則摘要", html)
+        self.assertIn("id=\"bt-filter-empty\"", html)
+        self.assertIn("id=\"bt-close-decided-hint\"", html)
+        self.assertIn("沒有任何交易被觸發", html)
+        self.assertIn("credentials:'same-origin'", html)
+        self.assertIn("JSON.stringify(btBuildBlocks())", html)
 
     def test_readme_documents_nav_and_days_scope(self):
         text = Path(__file__).resolve().parents[1].joinpath("README.md").read_text(encoding="utf-8")
@@ -281,6 +302,9 @@ class DashboardNavTests(unittest.TestCase):
         self.assertIn("?stock=", text)
         self.assertIn("375px", text)
         self.assertIn("雙指縮放", text)
+        self.assertIn("回測規則積木", text)
+        self.assertIn("blocks_to_rule", text)
+        self.assertIn("weekdays", text)
 
 
 if __name__ == "__main__":

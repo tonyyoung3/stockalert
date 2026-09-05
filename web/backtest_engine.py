@@ -784,6 +784,12 @@ def _trade_rows(s: pd.DataFrame) -> list:
 # ==================================================================
 
 def run_backtest(conn: sqlite3.Connection, rule: dict) -> dict:
+    # Tiny compat: accept v1 blocks JSON (filters as a list) or the legacy flat rule.
+    from web.strategy_blocks import BlocksError, coerce_rule
+    try:
+        rule = coerce_rule(rule)
+    except BlocksError as exc:
+        return {"error": str(exc)}
     ds = rule.get("dataset", "2y_hourly")
     if ds not in DATASETS:
         return {"error": f"未知資料集 {ds}"}

@@ -82,6 +82,25 @@ class CalendarTests(unittest.TestCase):
     def test_first_session_after_holiday_becomes_expected_after_close(self):
         self.assertEqual(freshness.expected_tw_trade_date(CNY_REOPEN_AFTER_CLOSE), date(2026, 2, 23))
 
+    def test_taiwan_today_uses_taipei_not_utc_date(self):
+        """UTC 16:00 is Taipei midnight — date.today() on a UTC host is a day behind."""
+        utc_fri_1559 = datetime(2026, 9, 4, 15, 59, tzinfo=timezone.utc)
+        utc_fri_1600 = datetime(2026, 9, 4, 16, 0, tzinfo=timezone.utc)
+        utc_sat_0000 = datetime(2026, 9, 5, 0, 0, tzinfo=timezone.utc)
+        self.assertEqual(freshness.taiwan_today(utc_fri_1559), date(2026, 9, 4))
+        self.assertEqual(freshness.taiwan_today(utc_fri_1600), date(2026, 9, 5))
+        self.assertEqual(freshness.taiwan_today(utc_sat_0000), date(2026, 9, 5))
+        naive_utc = datetime(2026, 9, 4, 16, 0)
+        self.assertEqual(freshness.taiwan_today(naive_utc), date(2026, 9, 5))
+
+    def test_expected_trade_date_at_taipei_midnight(self):
+        # Saturday 00:00 Taipei (UTC Fri 16:00) still expects Friday's session.
+        utc_sat_start = datetime(2026, 9, 4, 16, 0, tzinfo=timezone.utc)
+        self.assertEqual(freshness.expected_tw_trade_date(utc_sat_start), date(2026, 9, 4))
+        # Friday 23:59 Taipei (UTC Fri 15:59) is still Friday after 16:00 local.
+        utc_fri_end = datetime(2026, 9, 4, 15, 59, tzinfo=timezone.utc)
+        self.assertEqual(freshness.expected_tw_trade_date(utc_fri_end), date(2026, 9, 4))
+
     def test_table_status_empty_is_stale(self):
         row = freshness.table_status("foreign_daily", None, date(2026, 9, 4), date(2026, 9, 4))
         self.assertTrue(row["empty"])

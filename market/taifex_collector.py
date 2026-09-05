@@ -36,6 +36,7 @@ import requests
 
 from data.paths import repo_file
 from data.sqlite_util import configure_local
+from web.tw_calendar import taiwan_today
 
 DB_PATH = repo_file("twse_data.db")
 BASE = "https://www.taifex.com.tw/cht/3"
@@ -208,7 +209,7 @@ def _month_iter(start: date, end: date):
 def backfill(days: int):
     """逐月回補。已有資料的月份(期貨與選擇權皆有)自動跳過。"""
     conn = get_conn()
-    end = date.today()
+    end = taiwan_today()
     start = end - timedelta(days=days)
     limit = end - timedelta(days=MAX_LOOKBACK_DAYS)
     if start < limit:
@@ -247,7 +248,7 @@ def backfill(days: int):
 
 def test_run(n_days=10):
     """抓最近幾天,直接印出台指相關資料,不寫入 DB —— 用來確認解析正確。"""
-    d2 = date.today()
+    d2 = taiwan_today()
     d1 = d2 - timedelta(days=n_days)
     print(f"查詢區間 {d1} ~ {d2}\n")
 
@@ -303,7 +304,7 @@ if __name__ == "__main__":
     if cmd == "test":
         test_run(n or 10)
     elif cmd == "recent":
-        d2 = date.today()
+        d2 = taiwan_today()
         d1 = d2 - timedelta(days=n or 30)
         nf, no = collect_range(d1, d2)
         log.info("寫入:期貨 %d 列、選擇權 %d 列", nf, no)

@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from datetime import date, datetime, timedelta, timezone
 
-from web.tw_calendar import is_tw_trading_day
+from web.tw_calendar import is_tw_trading_day, taiwan_now as _taiwan_now
 
 TW = timezone(timedelta(hours=8))
 INCLUDE_TODAY_AFTER_HOUR = 16
@@ -30,10 +30,13 @@ KEY_TABLES = ("foreign_daily", "stock_daily", "taifex", "alerts")
 
 
 def taiwan_now(now: datetime | None = None) -> datetime:
-    now = now or datetime.now(timezone.utc)
-    if now.tzinfo is None:
-        now = now.replace(tzinfo=timezone.utc)
-    return now.astimezone(TW)
+    """Asia/Taipei now. Patch this in tests; taiwan_today follows it."""
+    return _taiwan_now(now)
+
+
+def taiwan_today(now: datetime | None = None) -> date:
+    """Asia/Taipei calendar date. Never use date.today() for TW business days."""
+    return taiwan_now(now).date()
 
 
 def previous_tw_trading_day(today: date) -> date:

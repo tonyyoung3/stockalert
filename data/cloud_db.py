@@ -25,6 +25,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from data.paths import REPO_ROOT
+from web.tw_calendar import taiwan_today
 
 log = logging.getLogger(__name__)
 
@@ -275,7 +276,7 @@ def _push_paths(
     remote = remote or connect_remote()
     since = None
     if days is not None:
-        since = ((today or date.today()) - timedelta(days=days)).isoformat()
+        since = ((today or taiwan_today()) - timedelta(days=days)).isoformat()
     out = {}
     for path in files:
         out[path.name] = push_file(path, remote, since, tables=tables)

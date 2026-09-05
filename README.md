@@ -62,7 +62,14 @@ PTT 股板週報跟 Reddit 投資想法週報都是本機整理、印到 stdout�
 
 這就是每日台股價格下載，不是另開一條 Yahoo 全市場 pipeline。篩選器（21:00 台灣時間）仍用 yfinance + `taiwan_stocks.txt`；Yahoo Close=NaN 時回填同一組官方上市/上櫃收盤價（PR #22 / #23）。上櫃抓空或失敗會讓這輪 job 變紅，既有 Slack 失敗通知會帶 log。
 
-資料先寫進 `twse_data.db`、`us_data.db`，用 Actions cache 接下一次、artifact 留 90 天，**不要 commit**。設了 `TURSO_DATABASE_URL` 跟 `TURSO_AUTH_TOKEN` 時，同一輪會把最近 N 天的列推到 Turso（一個 DB 裡同時放台股表跟美股表）。篩選排程另外把 `screener.db` 的 alerts / performance 全量推上去（表很小，且 performance 有 FK）。沒設 secrets 就只留本機檔，排程不會失敗。增量欄位依序認 `trade_date` / `alert_date` / `check_date`。
+資料落地（**不要把 `*.db` commit 進 git**）：
+
+| 檔案 | 本機 | GitHub Actions | Cloud Run / 正式網站 |
+| --- | --- | --- | --- |
+| `twse_data.db` / `us_data.db` | repo 根目錄 | cache 接下一次 + artifact 留 90 天 | 同一顆 Turso（`python -m data.cloud_db push`） |
+| `screener.db`（`alerts` / `performance`） | repo 根目錄（`SCREENER_DB` 可改路徑） | cache 接下一次 + artifact 留 90 天；**排程不再 `git commit` 回主幹** | 同一顆 Turso（`python -m data.cloud_db push-alerts` 全量 upsert，不刪遠端舊列） |
+
+設了 `TURSO_DATABASE_URL` 跟 `TURSO_AUTH_TOKEN` 時，市場更新會把最近 N 天的列推到 Turso（一個 DB 裡同時放台股表跟美股表）。篩選排程另外把 alerts / performance 推上去（表很小，且 performance 有 FK）。沒設 secrets 就只留本機檔／Actions artifact，排程不會失敗。增量欄位依序認 `trade_date` / `alert_date` / `check_date`。儀表板本機讀 sqlite；設了 Turso 變數就讀雲端，不必把 db 帶進映像。
 
 排程失敗時，若 repo 已有 `SLACK_BOT_TOKEN` 跟 `SLACK_CHANNEL`，會把最後約 80 行 log 跟完整 `market-update.log` 打到同一個頻道，並附 Actions 連結。沒設 Slack secrets 就只紅在 Actions。
 
@@ -280,10 +287,13 @@ Header **顯示範圍**（全域 `days`）只影響加權 K 線／走勢、外�
 - 出場：持有 N 個交易日收盤；可選％停損／停利。觸價語意：做多時當日**低點**觸及停損、**高點**觸及停利；同一日兩者都可能觸及時，保守假設先停損。進出場假設在摘要區**一行可見**。
 - API：`POST /api/backtest/stock`（同一套 HTTP Basic Auth；與 `/api/backtest` 共用每 IP 限流，匿名更嚴）。
 - 空狀態／無觸發／錯誤分開顯示。結果標 `個股 · {代號} · {pattern中文名}` 與 `日K；非大盤回測`。
+- 樣本門檻：`compute_stats` 預設 **n < 20**（`BACKTEST_MIN_TRADES` 可改）標 `樣本不足`，並降權勝率／EV／t／p／拔靴；UI 顯示「–」而不是漂亮小數。
 
 非目標：組合部位、分點濾網、DSL、一次做完所有 pattern、實盤。
 
 告警預填（**#52，本波不做**）：之後告警「回測此訊號」只預填標的＋支援的 pattern，**不自動執行**；尚不支援的 pattern 只預填代號並提示。
+
+儀表板 HTML/JS 在 `web/static/`（不再整包塞進 `dashboard.py`）。`GET /` 與 `GET /static/…` 帶 `ETag` + `Cache-Control: private, max-age=300, must-revalidate`；`If-None-Match` 命中回 304。台股「今天」一律走 `web.tw_calendar.taiwan_today`（Asia/Taipei），不要用機器的 `date.today()`。
 
 本機模擬 PaaS：
 

@@ -4,6 +4,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from alertsdb import store as db
+from web.tw_calendar import taiwan_today
 
 
 class DbTests(unittest.TestCase):
@@ -32,7 +33,7 @@ class DbTests(unittest.TestCase):
         self.assertIsNotNone(db.save_alert("2330", "inside_day", "2026-07-02", 101.0))
 
     def test_pending_alerts_are_all_old_unchecked(self):
-        today = date.today()
+        today = taiwan_today()
         old = str(today - timedelta(days=40))
         recent = str(today - timedelta(days=10))
         just_old_enough = str(today - timedelta(days=28))

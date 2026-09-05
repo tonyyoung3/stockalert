@@ -23,7 +23,22 @@ Settlement-only days (市場無交易，僅辦理結算交割) are closed: no tr
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
+
+TW = timezone(timedelta(hours=8))
+
+
+def taiwan_now(now: datetime | None = None) -> datetime:
+    """Wall clock in Asia/Taipei. Naive `now` is treated as UTC."""
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    return now.astimezone(TW)
+
+
+def taiwan_today(now: datetime | None = None) -> date:
+    """Asia/Taipei calendar date. Use this instead of date.today() for TW market days."""
+    return taiwan_now(now).date()
 
 HOLIDAY_YEARS = (2025, 2026)
 SOURCE_URL = "https://www.twse.com.tw/zh/trading/holiday.html"

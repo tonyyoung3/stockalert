@@ -14,6 +14,7 @@ from datetime import date, timedelta
 
 from alertsdb import get_pending_horizon_jobs, init_db, save_performance
 from data.prices import download_history, horizon_exit, parse_date, to_yahoo_symbol
+from web.tw_calendar import taiwan_today
 
 DEFAULT_HORIZONS = (5, 20, 60)
 
@@ -50,7 +51,7 @@ def run_checks(horizons: tuple[int, ...] = DEFAULT_HORIZONS, today: date | None 
     tickers = list(dict.fromkeys(row["ticker"] for row, _ in jobs))
     oldest = min(parse_date(row["alert_date"]) for row, _ in jobs)
     start = oldest - timedelta(days=5)
-    end = (today or date.today()) + timedelta(days=1)
+    end = (today or taiwan_today()) + timedelta(days=1)
     print(f"Checking {len(jobs)} job(s) across {len(tickers)} ticker(s)...\n")
     frames = download_history(tickers, start=start, end=end)
 

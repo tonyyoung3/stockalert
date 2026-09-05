@@ -307,6 +307,73 @@ class DashboardNavTests(unittest.TestCase):
         self.assertNotIn("全市場", broker_branch.market_title("empty"))
         self.assertNotIn("全市場", broker_branch.market_title("hot_n"))
 
+    def test_html_broker_branch_drill_issue_56(self):
+        html = dashboard.HTML
+        card = html[html.index("id=\"broker-branch-card\""):html.index("id=\"section-stock\"")]
+        self.assertIn("id=\"bb-drill\"", card)
+        self.assertIn("id=\"bb-drill-title\"", card)
+        self.assertIn("id=\"bb-drill-empty\"", card)
+        self.assertIn("id=\"bb-drill-list\"", card)
+        self.assertIn("id=\"bb-drill-hint\"", card)
+        self.assertIn("此切片未支援", card)
+        self.assertIn("熱門前 N 檔內的當日貢獻標的", card)
+        self.assertIn("function openBbDrill(", html)
+        self.assertIn("function closeBbDrill(", html)
+        self.assertIn("function renderBbDrillList(", html)
+        self.assertIn("/api/broker_branch/broker?broker_id=", html)
+        self.assertIn("BB_DRILL_UNSUPPORTED", html)
+        self.assertIn("BB_DRILL_EMPTY", html)
+        self.assertIn("BB_DRILL_ERROR", html)
+        self.assertIn("renderBbList('bb-buy', top.buy||[], {clickable:true})", html)
+        self.assertIn("renderBbList('bb-sell', top.sell||[], {clickable:true})", html)
+        self.assertIn("renderBbList('sbb-buy', buy)", html)
+        self.assertIn("renderBbList('sbb-sell', sell)", html)
+        self.assertIn("if(bbSelectedDays()>1)", html)
+        self.assertIn("loadBrokerBranch();", html)
+        self.assertIn("買超分點 Top", card)
+        self.assertIn("賣超分點 Top", card)
+        self.assertIn("熱門股分點動向", card)
+        self.assertNotIn("全市場分點", card)
+        self.assertNotIn("全市場分點買賣超", card)
+        self.assertNotIn("selectStock(", card)
+        self.assertNotIn("ticker-link", card)
+        stock = html[html.index('id="section-stock"'):html.index('id="section-alerts"')]
+        self.assertNotIn("/api/broker_branch/broker", stock)
+        self.assertNotIn("id=\"bb-drill\"", stock)
+
+    def test_pm_locked_copy_gates_issue_56(self):
+        """PM copy/gates for #56: hot-N drill, unsupported/empty, no fake ranks."""
+        html = dashboard.HTML
+        card = html[html.index("id=\"broker-branch-card\""):html.index("id=\"section-stock\"")]
+        self.assertIn(">熱門股分點動向</h3>", card)
+        self.assertIn("依成交額前 N 檔彙總，非全市場", card)
+        self.assertIn("此切片未支援", card)
+        self.assertIn("BB_DRILL_UNSUPPORTED = '此切片未支援。下鑽只看當日已入庫熱門前 N 檔", html)
+        self.assertIn("BB_DRILL_EMPTY = '此分點在熱門前 N 檔內沒有貢獻標的", html)
+        self.assertIn("BB_DRILL_ERROR = '無法載入此分點標的列表", html)
+        self.assertIn("熱門股貢獻標的", html)
+        self.assertIn("買進(張)", html)
+        self.assertIn("賣出(張)", html)
+        self.assertIn("淨額(張)", html)
+        self.assertIn("分點（名稱＋代號）", html)
+        self.assertIn("/api/broker_branch/top", html)
+        self.assertIn("/api/broker_branch/broker?broker_id=", html)
+        self.assertIn("empty_awaiting_token", html)
+        self.assertIn("尚未接上 FinMind token", card)
+        self.assertIn(".bb-row-click", html)
+        self.assertIn(".bb-drill[hidden]", html)
+        self.assertIn(".bb-lists{grid-template-columns:1fr}", html)
+        self.assertNotIn("全市場分點", card)
+        self.assertNotIn("全市場分點買賣超", card)
+        self.assertNotIn("api.finmindtrade.com", html)
+        self.assertNotIn("live_ingest: true", html)
+        self.assertNotIn("selectStock(", card)
+        from market import broker_branch
+        self.assertEqual(broker_branch.market_title("empty"), "熱門股分點動向")
+        self.assertEqual(broker_branch.market_title("hot_n"), "熱門股分點動向")
+        self.assertNotIn("全市場", broker_branch.market_title("empty"))
+        self.assertNotIn("全市場", broker_branch.market_title("hot_n"))
+
     def test_html_stock_broker_branch_shell_issue_57(self):
         html = dashboard.HTML
         stock = html[html.index('id="section-stock"'):html.index('id="section-alerts"')]

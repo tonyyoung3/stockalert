@@ -661,11 +661,19 @@ tr:hover td{background:#f8f9fa}
 .bb-empty{padding:20px 14px;text-align:center;color:#495057;background:#f4f7fb;border:1px dashed #adb5bd;border-radius:6px;font-size:14px;font-weight:600;line-height:1.55;margin-bottom:4px}
 .bb-lists{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:16px;min-width:0}
 .bb-lists[hidden],.bb-warn[hidden],.bb-empty[hidden]{display:none!important}
+.bb-drill[hidden]{display:none!important}
 .bb-list-wrap{min-width:0}
 .bb-list-wrap h3{margin-bottom:8px}
 .bb-list{max-height:420px;overflow:auto;-webkit-overflow-scrolling:touch}
 .bb-name{font-weight:600}
 .bb-id{color:#6c757d;font-variant-numeric:tabular-nums}
+.bb-row-click{cursor:pointer}
+.bb-row-click.is-active td{background:#eef3fa}
+.bb-drill{margin-top:16px;padding-top:14px;border-top:1px solid #e4e8ee}
+.bb-drill-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
+.bb-drill-head h3{margin:0;font-size:15px}
+.bb-drill-close{border:1px solid #dee2e6;background:#fff;border-radius:4px;padding:6px 12px;cursor:pointer;font-size:13px;min-height:36px}
+.bb-stock-link{color:#4C72B0;background:none;border:none;padding:0;font:inherit;font-weight:600;cursor:pointer;text-align:left}
 .assumptions{font-size:12px;color:#6c757d;margin-top:10px;line-height:1.45}
 .pat{font-size:12px;color:#495057}
 footer{text-align:center;color:#adb5bd;font-size:12px;padding:12px}
@@ -726,6 +734,8 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
   .top-range input[type="date"]{width:100%;min-width:0;height:44px;min-height:44px;font-size:16px}
   .bb-lists{grid-template-columns:1fr}
   .bb-list{max-height:280px}
+  .bb-drill-close{min-height:44px;width:100%}
+  .bb-drill-head{flex-direction:column;align-items:stretch}
   select,input:not([type="checkbox"]):not([type="radio"]){font-size:16px}
   .reset-btn,.search button,.page-nav a{min-height:44px}
   .bt-row{flex-direction:column;align-items:stretch}
@@ -866,6 +876,16 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
       <h3 id="bb-sell-h">賣超分點 Top</h3>
       <div class="bb-list table-scroll" id="bb-sell"></div>
     </div>
+  </div>
+  <p class="bb-sub" id="bb-drill-hint" hidden>點買超／賣超分點列，可看該分點在熱門前 N 檔內的當日貢獻標的。近 N 日累計此切片未支援。</p>
+  <div class="bb-drill" id="bb-drill" hidden>
+    <div class="bb-drill-head">
+      <h3 id="bb-drill-title">分點貢獻標的</h3>
+      <button type="button" class="bb-drill-close" id="bb-drill-close" onclick="closeBbDrill()">關閉</button>
+    </div>
+    <p class="bb-sub" id="bb-drill-sub">只看已入庫熱門前 N 檔貢獻標的。來源 FinMind 分點（約 21:00），不是證交所 T86 外資排行。</p>
+    <div class="bb-empty" id="bb-drill-empty" hidden></div>
+    <div class="bb-list table-scroll" id="bb-drill-list"></div>
   </div>
 </section>
 </div>
@@ -1816,11 +1836,24 @@ async function loadTop(){
 const BB_TITLE = '熱門股分點動向';
 const BB_EMPTY_TOKEN = '尚未接上 FinMind token。熱門股分點動向需接上 token 後才會依成交額前 N 檔彙總，不會假裝沒有行情。這不是 T86 外資排行。';
 const BB_EMPTY_NODATA = '熱門股分點尚無資料（依成交額前 N 檔彙總，非全市場）。不是 T86 外資、也不是空白圖表。';
+const BB_DRILL_UNSUPPORTED = '此切片未支援。下鑽只看當日已入庫熱門前 N 檔，近 N 日累計請改選「當日」。';
+const BB_DRILL_EMPTY = '此分點在熱門前 N 檔內沒有貢獻標的。不是空白圖表，也不是 T86 外資。';
+const BB_DRILL_ERROR = '無法載入此分點標的列表。來源 FinMind 分點，不是 T86 外資排行。';
+const BB_DRILL_NEED_BROKER = '請先點買超／賣超分點列。';
+
+let bbLastTop = null;
+let bbDrill = {id:'', name:''};
+let bbDrillSeq = 0;
 
 function bbRangeParams(){
   const preset = document.getElementById('bb-preset');
   const days = preset && preset.value ? preset.value : '1';
   return '?days='+encodeURIComponent(days);
+}
+function bbSelectedDays(){
+  const preset = document.getElementById('bb-preset');
+  const n = preset && preset.value ? parseInt(preset.value, 10) : 1;
+  return (n > 1) ? n : 1;
 }
 function onBbPreset(){ loadBrokerBranch(); }
 function bbSafeTitle(title){
@@ -1847,24 +1880,170 @@ function renderBbFresh(fresh, top){
   el.textContent = line;
   el.className = 'bb-fresh' + (f.empty || f.stale ? (f.empty ? ' is-empty' : ' is-stale') : '');
 }
-function renderBbList(id, rows){
+function renderBbList(id, rows, opts){
+  opts = opts || {};
   const el = document.getElementById(id);
   if(!el) return;
   if(!(rows||[]).length){
     el.innerHTML = '<p class="empty">此區間沒有列</p>';
     return;
   }
+  const clickable = !!opts.clickable;
   const body = rows.map((row,i)=>{
     const bid = row[0], name = row[1], net = row[2];
     const z = zhang(net);
     const cls = z>0 ? 'pos' : (z<0 ? 'neg' : '');
     const sign = z>0 ? '+' : '';
-    return '<tr><td class="num">'+(i+1)+'</td>'
+    const extra = clickable
+      ? ' class="bb-row-click" tabindex="0" data-id="'+esc(bid)+'" data-name="'+esc(name)+'"'
+      : '';
+    return '<tr'+extra+'><td class="num">'+(i+1)+'</td>'
       +'<td><span class="bb-name">'+esc(name)+'</span> <span class="bb-id">'+esc(bid)+'</span></td>'
       +'<td class="num '+cls+'">'+sign+Number(z).toLocaleString('zh-TW')+'</td></tr>';
   }).join('');
   el.innerHTML = '<table><thead><tr><th>#</th><th>分點（名稱＋代號）</th><th class="num">淨額(張)</th></tr></thead><tbody>'
     +body+'</tbody></table>';
+}
+function bindBbRankClicks(){
+  ['bb-buy','bb-sell'].forEach(id=>{
+    const el = document.getElementById(id);
+    if(!el || el.dataset.bbBound) return;
+    el.dataset.bbBound = '1';
+    el.addEventListener('click', ev=>{
+      const tr = ev.target.closest('tr[data-id]');
+      if(!tr) return;
+      openBbDrill(tr.dataset.id, tr.dataset.name||'');
+    });
+    el.addEventListener('keydown', ev=>{
+      if(ev.key!=='Enter' && ev.key!==' ') return;
+      const tr = ev.target.closest('tr[data-id]');
+      if(!tr) return;
+      ev.preventDefault();
+      openBbDrill(tr.dataset.id, tr.dataset.name||'');
+    });
+  });
+}
+function bindBbDrillClicks(){
+  const el = document.getElementById('bb-drill-list');
+  if(!el || el.dataset.bbBound) return;
+  el.dataset.bbBound = '1';
+  el.addEventListener('click', ev=>{
+    const btn = ev.target.closest('[data-stock-id]');
+    if(!btn) return;
+    ev.preventDefault();
+    selectStock(btn.dataset.stockId, btn.dataset.stockName||'');
+  });
+}
+function markBbActive(brokerId){
+  document.querySelectorAll('#bb-buy tr[data-id], #bb-sell tr[data-id]').forEach(tr=>{
+    tr.classList.toggle('is-active', !!brokerId && tr.dataset.id===brokerId);
+  });
+}
+function setBbDrillEmpty(msg){
+  const emptyEl = document.getElementById('bb-drill-empty');
+  const listEl = document.getElementById('bb-drill-list');
+  if(emptyEl){ emptyEl.hidden = false; emptyEl.textContent = msg || BB_DRILL_EMPTY; }
+  if(listEl) listEl.innerHTML = '';
+}
+function renderBbDrillList(rows){
+  const el = document.getElementById('bb-drill-list');
+  const emptyEl = document.getElementById('bb-drill-empty');
+  if(emptyEl) emptyEl.hidden = true;
+  if(!el) return;
+  if(!(rows||[]).length){
+    setBbDrillEmpty(BB_DRILL_EMPTY);
+    return;
+  }
+  const body = rows.map((row,i)=>{
+    const sid = row[0], name = row[1];
+    const buy = zhang(row[2]), sell = zhang(row[3]), net = zhang(row[4]);
+    const cls = net>0 ? 'pos' : (net<0 ? 'neg' : '');
+    const sign = net>0 ? '+' : '';
+    return '<tr><td class="num">'+(i+1)+'</td>'
+      +'<td><button type="button" class="bb-stock-link" data-stock-id="'+esc(sid)+'" data-stock-name="'+esc(name)+'">'
+      +'<span class="bb-name">'+esc(name)+'</span> <span class="bb-id">'+esc(sid)+'</span></button></td>'
+      +'<td class="num">'+Number(buy).toLocaleString('zh-TW')+'</td>'
+      +'<td class="num">'+Number(sell).toLocaleString('zh-TW')+'</td>'
+      +'<td class="num '+cls+'">'+sign+Number(net).toLocaleString('zh-TW')+'</td></tr>';
+  }).join('');
+  el.innerHTML = '<table><thead><tr><th>#</th><th>標的（名稱＋代號）</th>'
+    +'<th class="num">買進(張)</th><th class="num">賣出(張)</th><th class="num">淨額(張)</th>'
+    +'</tr></thead><tbody>'+body+'</tbody></table>';
+}
+function closeBbDrill(){
+  bbDrill = {id:'', name:''};
+  bbDrillSeq += 1;
+  const panel = document.getElementById('bb-drill');
+  if(panel) panel.hidden = true;
+  const emptyEl = document.getElementById('bb-drill-empty');
+  const listEl = document.getElementById('bb-drill-list');
+  if(emptyEl){ emptyEl.hidden = true; emptyEl.textContent = ''; }
+  if(listEl) listEl.innerHTML = '';
+  markBbActive('');
+}
+function bbDrillDateParam(){
+  const day = (bbLastTop && (bbLastTop.trade_date || bbLastTop.end)) || '';
+  return day ? '&date='+encodeURIComponent(day) : '';
+}
+function bbDrillHeading(name, brokerId){
+  name = (name||'').trim();
+  brokerId = (brokerId||'').trim();
+  if(name && brokerId && name!==brokerId) return name+'（'+brokerId+'）熱門股貢獻標的';
+  return (name||brokerId||'分點')+' 熱門股貢獻標的';
+}
+async function openBbDrill(brokerId, brokerName){
+  brokerId = (brokerId||'').trim();
+  if(!brokerId){
+    setBbDrillEmpty(BB_DRILL_NEED_BROKER);
+    return;
+  }
+  bbDrill = {id:brokerId, name:brokerName||brokerId};
+  const panel = document.getElementById('bb-drill');
+  const titleEl = document.getElementById('bb-drill-title');
+  const subEl = document.getElementById('bb-drill-sub');
+  if(panel) panel.hidden = false;
+  if(titleEl) titleEl.textContent = bbDrillHeading(bbDrill.name, brokerId);
+  markBbActive(brokerId);
+  bindBbDrillClicks();
+  const n = (bbLastTop && (bbLastTop.hot_n || bbLastTop.hot_n_default || bbLastTop.universe_count)) || 80;
+  const day = (bbLastTop && (bbLastTop.trade_date || bbLastTop.end)) || '';
+  if(bbSelectedDays()>1){
+    if(subEl){
+      subEl.textContent = '近 N 日累計排行可看，下鑽標的列表此切片未支援（只看當日熱門前 '+n+' 檔）。';
+    }
+    setBbDrillEmpty(BB_DRILL_UNSUPPORTED);
+    return;
+  }
+  if(subEl){
+    subEl.textContent = '只看已入庫熱門前 '+n+' 檔貢獻標的'
+      +(day ? ' · '+day : '')
+      +'。來源 FinMind 分點（約 21:00），不是證交所 T86 外資排行。';
+  }
+  const seq = ++bbDrillSeq;
+  setBbDrillEmpty('載入中…');
+  try {
+    const drill = await j('/api/broker_branch/broker?broker_id='+encodeURIComponent(brokerId)+bbDrillDateParam());
+    if(seq !== bbDrillSeq) return;
+    const name = (drill && drill.broker_name) || brokerName || brokerId;
+    bbDrill.name = name;
+    if(titleEl) titleEl.textContent = bbDrillHeading(name, (drill && drill.broker_id) || brokerId);
+    if(subEl){
+      const dn = (drill && (drill.hot_n || drill.hot_n_default)) || n;
+      const dday = (drill && drill.trade_date) || day;
+      subEl.textContent = '只看已入庫熱門前 '+dn+' 檔貢獻標的'
+        +(dday ? ' · '+dday : '')
+        +'。來源 FinMind 分點（約 21:00），不是證交所 T86 外資排行。';
+    }
+    const rows = (drill && drill.data) || [];
+    if(!rows.length){
+      setBbDrillEmpty(BB_DRILL_EMPTY);
+      return;
+    }
+    renderBbDrillList(rows);
+  } catch(e){
+    if(seq !== bbDrillSeq) return;
+    setBbDrillEmpty(BB_DRILL_ERROR);
+  }
 }
 async function loadBrokerBranch(){
   const emptyEl = document.getElementById('bb-empty');
@@ -1879,6 +2058,7 @@ async function loadBrokerBranch(){
       j('/api/broker_branch/top'+bbRangeParams()),
       j('/api/broker_branch/freshness'),
     ]);
+    bbLastTop = top || null;
     if(titleEl) titleEl.textContent = bbSafeTitle(top && top.title);
     renderBbFresh(fresh, top);
     const n = (top && (top.hot_n || top.hot_n_default)) || 80;
@@ -1896,20 +2076,30 @@ async function loadBrokerBranch(){
       warnEl.hidden = !fixture;
     }
     const hasRows = ((top && top.buy)||[]).length || ((top && top.sell)||[]).length;
+    const hintEl = document.getElementById('bb-drill-hint');
     if(!hasRows){
       if(emptyEl){ emptyEl.hidden = false; emptyEl.textContent = bbEmptyCopy(top, fresh); }
       if(listsEl) listsEl.hidden = true;
+      if(hintEl) hintEl.hidden = true;
+      closeBbDrill();
       return;
     }
     if(emptyEl) emptyEl.hidden = true;
     if(listsEl) listsEl.hidden = false;
-    renderBbList('bb-buy', top.buy||[]);
-    renderBbList('bb-sell', top.sell||[]);
+    if(hintEl) hintEl.hidden = false;
+    renderBbList('bb-buy', top.buy||[], {clickable:true});
+    renderBbList('bb-sell', top.sell||[], {clickable:true});
+    bindBbRankClicks();
+    if(bbDrill.id) openBbDrill(bbDrill.id, bbDrill.name);
   } catch(e){
+    bbLastTop = null;
     if(titleEl) titleEl.textContent = BB_TITLE;
     if(emptyEl){ emptyEl.hidden = false; emptyEl.textContent = BB_EMPTY_TOKEN; }
     if(listsEl) listsEl.hidden = true;
     if(warnEl) warnEl.hidden = true;
+    const hintEl = document.getElementById('bb-drill-hint');
+    if(hintEl) hintEl.hidden = true;
+    closeBbDrill();
     const freshEl = document.getElementById('bb-fresh');
     if(freshEl) freshEl.textContent = '分點新鮮度無法載入（21:00 截止，不併入 T86 /api/freshness）。';
   }

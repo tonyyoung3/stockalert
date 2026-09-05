@@ -29,7 +29,8 @@
 
 Fixture 僅 TEST/DEV（`python -m market.broker_branch load-fixture --dev`），不可當 production merge，也不可當 Turso 正式行情。
 
-#57 個股 tab UI 殼：選股後讀 `/api/broker_branch/stock`，未選股／token／該檔無列都要誠實空狀態。#56 下鑽等 live 列入庫後再派。
+#57 個股 tab UI 殼：選股後讀 `/api/broker_branch/stock`，未選股／token／該檔無列都要誠實空狀態。
+#56 市場卡下鑽：點當日分點列 → `GET /api/broker_branch/broker` 熱門前 N 貢獻標的；近 N 日累計「此切片未支援」。不另開 ingest。
 
 ### 不做（除非上面走不通）
 

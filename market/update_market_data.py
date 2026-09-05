@@ -193,6 +193,13 @@ def run_jobs(args: argparse.Namespace) -> list[str]:
         try:
             n = backfill.backfill_institutional_gaps(days=None, today=today)
             log.info("institutional gaps wrote %s days", n)
+        except backfill.InstitutionalGapError as exc:
+            log.error(
+                "institutional_gaps non-success: wrote=%s failed=%s missing=%s",
+                exc.wrote, exc.failed, exc.missing,
+            )
+            log.exception("institutional_gaps incomplete")
+            failed.append("institutional_gaps")
         except Exception:
             log.exception("institutional_gaps failed")
             failed.append("institutional_gaps")

@@ -75,7 +75,15 @@ PTT 股板週報跟 Reddit 投資想法週報都是本機整理、印到 stdout�
 
 第一次或 cache 被清掉時，到 Actions → *Update market data* → Run workflow，把 `days` 設成 `730` 回補約兩年。
 
-投信／自營商表是後來才加的。若 `foreign_daily` 已有歷史、另外兩張還是空的，不要重抓外資：本機跑 `python -m market.backfill institutional`（只抓 `foreign_daily` 有、`trust_daily`／`dealer_daily` 缺的日期；已有列的日期跳過），或 Actions 同一支 workflow 勾 `institutional_gaps`。T86 間隔約 4 秒。上櫃三大法人不在 `foreign_daily`，這兩張也不收 OTC。
+投信／自營商表是後來才加的。若 `foreign_daily` 已有歷史、另外兩張還是空的，不要重抓外資：本機跑 `python -m market.backfill institutional`（只抓 `foreign_daily` 有、`trust_daily`／`dealer_daily` 缺的日期；已有列的日期跳過），或 Actions 同一支 workflow 勾 `institutional_gaps`。**GitHub Actions 不能穩定爬證交所 T86 深歷史**（Actions IP 常拿到空身／HTML，`Expecting value: line 1 column 1`，#91 曾偵測 425 個缺日卻寫入 0 天）。有 `FINMIND_TOKEN` 時缺口走 FinMind `TaiwanStockInstitutionalInvestorsBuySell`（全市場 `start_date`，一天一請求；Sponsor 約 6000 次／時，本客戶端間隔 1 秒）。**無 token 絕不打 FinMind。** T86 空身／JSON 失敗不算成功（`status=empty|error`，job 紅，log 有 `wrote=` / `failed=` / `missing=`）。投信 = `Investment_Trust`；自營商 = `Dealer`+`Dealer_self`+`Dealer_Hedging`（與 T86 合計含避險相同）。免費方案必須帶 `data_id`（逐檔），全市場 400 日缺口不切實際，見 `market/finmind_institutional.py` 的 `PER_STOCK_PACING`。上櫃三大法人不在 `foreign_daily`，這兩張也不收 OTC（FinMind 列會用本機 `foreign_daily` 代號過濾）。
+
+來源切換（log 鍵：`source=` / `source_switch` / `status=` / `reason=`）：
+
+| 路徑 | 優先 | 何時切到另一邊 | 空／失敗 |
+| --- | --- | --- | --- |
+| 當日 catch-up | T86 | T86 JSON／空身 **且** 有 `FINMIND_TOKEN` → FinMind | 不算寫入成功 |
+| `institutional_gaps` | FinMind（有 token） | FinMind 空／錯 → T86 | 任一缺日未寫入 → job 失敗（`InstitutionalGapError`） |
+| `institutional_gaps` 無 token | T86 only | 不打 FinMind | 同上；#91 那種 425 缺日 0 寫入會紅 |
 
 掃描用寬表 `stock_chips_daily` 是 **SQL VIEW**（不是實體表）：`stock_daily` LEFT JOIN 三大法人日表，鍵是 `(trade_date, stock_id)`。VIEW 不用刷新，底表仍由 `update_market_data` 寫入。欄位、單位、增量與 Turso 見 `docs/stock_chips_daily.md`（#77 / epic #76）。儀表板讀徑繼續打底表，不要改走這個 VIEW。
 
@@ -85,7 +93,7 @@ PTT 股板週報跟 Reddit 投資想法週報都是本機整理、印到 stdout�
 
 **Cache-local foreign span ≠ Turso foreign span.** GitHub Actions 的 `twse_data.db` cache 裡 `foreign_daily` 常常只有約 85 個交易日，但 Turso 上同一張表可以有約 510 日。設了 `TURSO_*` 時，`institutional_gaps` 以 Turso（並集本機）的 `foreign_daily` 日期當缺口來源，略過 Turso 上 trust/dealer 都已齊的日期；抓完只推這三張 T86 表的補齊區間，不會用本機 cache 的短外資歷史當「已補完」。未設 secrets 時行為不變，只看本機。
 
-補歷史（merge 後由 DE 觸發；約 4 秒／日，勿在 unit CI 跑）：
+補歷史（merge 後由 DE 觸發；FinMind 約 1 秒／日，勿在 unit CI 跑）：
 
 ```bash
 gh workflow run "Update market data" --ref main -f institutional_gaps=true

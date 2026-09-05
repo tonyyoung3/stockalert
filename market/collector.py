@@ -420,6 +420,10 @@ class T86Tables(NamedTuple):
 
 EMPTY_T86 = T86Tables([], [], [])
 
+
+class T86FetchError(RuntimeError):
+    """TWSE T86 HTTP/JSON failure. Actions IPs often get empty/HTML, not JSON."""
+
 # Fallback indexes when the payload has no fields[] (or a short test fixture).
 _T86_IDX = {
     "foreign_buy": 2, "foreign_sell": 3, "foreign_net": 4,
@@ -516,7 +520,12 @@ def parse_t86(data: dict, day: date) -> T86Tables:
 
 
 def fetch_t86(day: date) -> T86Tables:
-    """One HTTP call: TWSE T86 → foreign + trust + dealer rows."""
+    """One HTTP call: TWSE T86 → foreign + trust + dealer rows.
+
+    Raises T86FetchError when TWSE returns empty/HTML (not JSON). GitHub
+    Actions IPs commonly hit this for historical T86; callers should fall
+    back to FinMind for gap fill.
+    """
     url = "https://www.twse.com.tw/rwd/zh/fund/T86"
     params = {
         "date": day.strftime("%Y%m%d"),
@@ -525,7 +534,16 @@ def fetch_t86(day: date) -> T86Tables:
     }
     r = requests.get(url, params=params, headers=HEADERS, timeout=30)
     r.raise_for_status()
-    return parse_t86(r.json(), day)
+    raw = getattr(r, "text", None)
+    if isinstance(raw, str) and not raw.strip():
+        raise T86FetchError(f"T86 empty body for {day.isoformat()}")
+    try:
+        return parse_t86(r.json(), day)
+    except ValueError as exc:
+        # JSONDecodeError: "Expecting value: line 1 column 1" — HTML/empty.
+        raise T86FetchError(
+            f"T86 JSON parse failed for {day.isoformat()} ({type(exc).__name__})"
+        ) from exc
 
 
 def fetch_foreign(day: date) -> list[tuple]:
@@ -542,6 +560,8 @@ def persist_t86(conn: sqlite3.Connection, tables: T86Tables) -> int:
     if tables.trust:
         conn.executemany(
             "INSERT OR REPLACE INTO trust_daily VALUES (?,?,?,?,?,?)", tables.trust)
+        if not tables.foreign:
+            update_stock_master(conn, [(r[1], r[2]) for r in tables.trust if r[2]], tables.trust[0][0])
     if tables.dealer:
         conn.executemany(
             "INSERT OR REPLACE INTO dealer_daily VALUES (?,?,?,?,?,?)", tables.dealer)

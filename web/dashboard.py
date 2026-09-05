@@ -1950,8 +1950,9 @@ function renderSbbFresh(fresh, stock){
 }
 function sbbEmptyCopy(stock, fresh){
   const mode = (stock && stock.data_mode) || (fresh && fresh.data_mode) || '';
-  const token = !!(stock && stock.token_present) || !!(fresh && fresh.token_present);
-  if(!token || mode==='empty_awaiting_token') return BB_EMPTY_TOKEN;
+  // Empty table / no ingest → same token copy as the market card.
+  // Table has rows (dev_fixture or later live) but this ticker is absent → hot-N miss.
+  if(!mode || mode==='empty_awaiting_token') return BB_EMPTY_TOKEN;
   return SBB_EMPTY_NODATA;
 }
 async function loadStockBrokerBranch(){

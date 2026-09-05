@@ -300,8 +300,56 @@ class DashboardNavTests(unittest.TestCase):
         self.assertIn("則進場（隔夜,收盤）", html)
         self.assertIn("則出場（隔夜）", html)
         self.assertIn("則進場（波段,收盤）", html)
-        self.assertNotIn("localStorage", html)
         self.assertNotIn("inside_day", dashboard.HTML[dashboard.HTML.find("BT_FILTER_CATALOG"):dashboard.HTML.find("let btFilters")])
+
+    def test_backtest_local_presets_ui_wiring(self):
+        from web.strategy_presets import (
+            ERR_APPLY,
+            ERR_CAP,
+            ERR_EMPTY_JSON,
+            ERR_JSON,
+            ERR_MISSING,
+            ERR_NAME,
+            ERR_NOT_OBJECT,
+            ERR_NOT_V1,
+            ERR_STORAGE,
+            ERR_STORE,
+            ERR_STORE_NOT_RULE,
+            PRESET_CAP,
+            PRESET_STORAGE_KEY,
+        )
+
+        html = dashboard.HTML
+        self.assertIn(PRESET_STORAGE_KEY, html)
+        self.assertIn(f"BT_PRESET_CAP = {PRESET_CAP}", html)
+        self.assertIn("localStorage.getItem(BT_PRESET_KEY)", html)
+        self.assertIn("localStorage.setItem(BT_PRESET_KEY", html)
+        self.assertIn("id=\"bt-preset-select\"", html)
+        self.assertIn("id=\"bt-preset-name\"", html)
+        self.assertIn("id=\"bt-preset-json\"", html)
+        self.assertIn("id=\"bt-preset-msg\"", html)
+        self.assertIn("onclick=\"btLoadPreset()\"", html)
+        self.assertIn("onclick=\"btOverwritePreset()\"", html)
+        self.assertIn("onclick=\"btDeletePreset()\"", html)
+        self.assertIn("onclick=\"btSavePreset()\"", html)
+        self.assertIn("onclick=\"btExportPresetJson()\"", html)
+        self.assertIn("onclick=\"btImportPresetJson()\"", html)
+        self.assertIn("function btApplyBlocks(", html)
+        self.assertIn("function btParseBlocksJson(", html)
+        self.assertIn("function btValidateBlocksDoc(", html)
+        self.assertIn("role=\"status\"", html)
+        self.assertIn(ERR_JSON, html)
+        self.assertIn(ERR_EMPTY_JSON, html)
+        self.assertIn(ERR_NOT_OBJECT, html)
+        self.assertIn(ERR_NOT_V1, html)
+        self.assertIn(ERR_NAME, html)
+        self.assertIn(ERR_CAP, html)
+        self.assertIn(ERR_MISSING, html)
+        self.assertIn(ERR_STORE, html)
+        self.assertIn(ERR_STORAGE, html)
+        self.assertIn(ERR_APPLY, html)
+        self.assertIn(ERR_STORE_NOT_RULE, html)
+        self.assertIn("el.textContent = text", html)
 
     def test_readme_documents_nav_and_days_scope(self):
         text = Path(__file__).resolve().parents[1].joinpath("README.md").read_text(encoding="utf-8")
@@ -314,8 +362,9 @@ class DashboardNavTests(unittest.TestCase):
         self.assertIn("回測規則積木", text)
         self.assertIn("blocks_to_rule", text)
         self.assertIn("weekdays", text)
-        self.assertIn("#43 localStorage", text)
-        self.assertIn("#42 merge 後的下一票", text)
+        self.assertIn("stockalert.bt.presets.v1", text)
+        self.assertIn("最多 20 筆", text)
+        self.assertIn("不會白屏", text)
 
 
 if __name__ == "__main__":

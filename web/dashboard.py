@@ -662,6 +662,10 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
 .bt-add-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:8px}
 .bt-add-row select{flex:1;min-width:180px}
 .bt-add-row button{padding:8px 14px;border:1px solid #4C72B0;background:#fff;color:#4C72B0;border-radius:4px;cursor:pointer;font-size:13px}
+.bt-ok{margin-top:8px;padding:8px 10px;background:#e8f5e9;border:1px solid #c3e6cb;border-radius:4px;font-size:12.5px;color:#1e7e34}
+#bt-preset-json{width:100%;min-height:140px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;margin:8px 0;box-sizing:border-box;padding:8px;border:1px solid #dee2e6;border-radius:4px;resize:vertical}
+#bt-preset-json-wrap{margin-top:8px}
+#bt-preset-json-wrap>summary{cursor:pointer;color:#6c757d;font-size:12px}
 @media(max-width:768px){
   .wrap{padding:12px}
   header{flex-direction:column;align-items:stretch;padding:14px 16px}
@@ -833,9 +837,34 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
 <div id="section-backtest" class="page-section" role="tabpanel" aria-labelledby="tab-backtest" hidden>
 <section class="card" style="margin-bottom:16px">
   <h3 style="margin-bottom:8px">策略回測</h3>
-  <p class="hint" style="margin-bottom:14px">此區與市場圖表分開；首次進入不會自動執行。用積木組「若…則進場／出場」（濾網 AND，對齊現有引擎）。篩選／進場／出場可折疊（手機預設收合，積木列參數為第二層）。</p>
+  <p class="hint" style="margin-bottom:14px">此區與市場圖表分開；首次進入不會自動執行。用積木組「若…則進場／出場」（濾網 AND，對齊現有引擎）。篩選／進場／出場可折疊（手機預設收合，積木列參數為第二層）。規則可存成本機預設（這個瀏覽器、最多 20 筆）或匯出／貼上 JSON。</p>
 
   <div class="bt-grid" id="bt-form">
+    <details class="bt-box" data-bt-fold="presets" open>
+      <summary class="bt-label">本機預設</summary>
+      <div class="bt-row">
+        <span class="bt-sub">已存</span>
+        <select id="bt-preset-select" aria-label="已存預設"></select>
+        <button type="button" id="bt-preset-load" onclick="btLoadPreset()">載入</button>
+        <button type="button" id="bt-preset-overwrite" onclick="btOverwritePreset()">覆蓋</button>
+        <button type="button" id="bt-preset-delete" onclick="btDeletePreset()">刪除</button>
+      </div>
+      <div class="bt-row">
+        <span class="bt-sub">名稱</span>
+        <input type="text" id="bt-preset-name" maxlength="40" placeholder="例如：日內跳空回檔" style="min-width:180px;flex:1">
+        <button type="button" id="bt-preset-save" onclick="btSavePreset()">儲存</button>
+      </div>
+      <details id="bt-preset-json-wrap">
+        <summary>匯出／貼上 JSON</summary>
+        <textarea id="bt-preset-json" rows="7" spellcheck="false" aria-label="積木規則 JSON"></textarea>
+        <div class="bt-row">
+          <button type="button" id="bt-preset-export" onclick="btExportPresetJson()">匯出目前規則</button>
+          <button type="button" id="bt-preset-import" onclick="btImportPresetJson()">套用貼上的 JSON</button>
+        </div>
+      </details>
+      <div id="bt-preset-msg" role="status" style="display:none"></div>
+      <p class="hint">存在這個瀏覽器（最多 20 筆），不會上傳。重新整理後可再載入；載入後的編譯結果與儲存時相同。</p>
+    </details>
     <details class="bt-box" data-bt-fold="dataset" open>
       <summary class="bt-label">資料集</summary>
       <select id="bt-dataset" onchange="btOnDatasetChange()">
@@ -1763,7 +1792,7 @@ function btIsCloseDecided(block){
 }
 function btBlockIncompat(block){ return btMode()==='intraday' && btIsCloseDecided(block); }
 
-function btOnDatasetChange(){
+function btApplyDatasetConstraints(){
   const ds = document.getElementById('bt-dataset').value;
   const warn = document.getElementById('bt-stale-warning');
   const intradayRadio = document.querySelector('input[name="bt-mode"][value="intraday"]');
@@ -1774,12 +1803,15 @@ function btOnDatasetChange(){
     intradayRadio.disabled = true;
     if(intradayRadio.checked) overnightRadio.checked = true;
     holdHourOpt.disabled = true;
-    btOnModeChange();
   } else {
     warn.style.display = 'none';
     intradayRadio.disabled = false;
     holdHourOpt.disabled = false;
   }
+}
+function btOnDatasetChange(){
+  btApplyDatasetConstraints();
+  btOnModeChange();
   btRenderSummary();
 }
 
@@ -2020,6 +2052,276 @@ function btBuildBlocks(){
   return blocks;
 }
 function btBuildRule(){ return btBuildBlocks(); }
+
+const BT_PRESET_KEY = 'stockalert.bt.presets.v1';
+const BT_PRESET_CAP = 20;
+const BT_PRESET_NAME_MAX = 40;
+const BT_ERR_JSON = '無法解析 JSON，請檢查格式。';
+const BT_ERR_EMPTY_JSON = '請貼上 JSON。';
+const BT_ERR_NOT_OBJECT = '規則必須是 JSON 物件。';
+const BT_ERR_NOT_V1 = '這不是有效的 v1 積木規則。';
+const BT_ERR_NAME = '請輸入預設名稱。';
+const BT_ERR_CAP = '本機預設最多 20 筆，請先刪除或覆蓋既有名稱。';
+const BT_ERR_MISSING = '找不到這個預設。';
+const BT_ERR_STORE = '本機預設資料已損毀，已忽略。請重新儲存或貼上 JSON。';
+const BT_ERR_STORAGE = '無法寫入本機預設（瀏覽器可能停用儲存空間）。';
+const BT_ERR_APPLY = '載入預設失敗，畫面維持不變。';
+const BT_ERR_STORE_NOT_RULE = '這是預設清單，不是單一積木規則。請貼上含 version / mode / filters 的 JSON。';
+const BT_MODES = ['intraday','overnight','swing'];
+const BT_DATASETS = ['2y_hourly','15y_daily'];
+
+function btPresetStatus(text, kind){
+  const el = document.getElementById('bt-preset-msg');
+  if(!el) return;
+  if(!text){ el.style.display='none'; el.textContent=''; el.className=''; return; }
+  el.style.display='block';
+  el.className = kind==='ok' ? 'bt-ok' : 'bt-error';
+  el.textContent = text;
+}
+function btParseJsonText(text){
+  if(text==null || !String(text).trim()) return {ok:false, error:BT_ERR_EMPTY_JSON};
+  try { return {ok:true, value:JSON.parse(text)}; }
+  catch(e){ return {ok:false, error:BT_ERR_JSON}; }
+}
+function btLooksLikeBlocks(obj){
+  if(!obj || typeof obj!=='object' || Array.isArray(obj)) return false;
+  if(obj.filters && !Array.isArray(obj.filters)) return false;
+  if(Array.isArray(obj.filters)) return true;
+  if(obj.version===1 && BT_MODES.indexOf(obj.mode)>=0) return true;
+  if(BT_DATASETS.indexOf(obj.dataset)>=0 && BT_MODES.indexOf(obj.mode)>=0) return true;
+  return false;
+}
+function btValidateBlocksDoc(obj){
+  if(!obj || typeof obj!=='object' || Array.isArray(obj)) return {ok:false, error:BT_ERR_NOT_OBJECT};
+  if(!btLooksLikeBlocks(obj)) return {ok:false, error:BT_ERR_NOT_V1};
+  const ver = obj.version==null ? 1 : obj.version;
+  if(ver!==1) return {ok:false, error:'不支援的積木 schema version='+ver};
+  const dataset = obj.dataset || '2y_hourly';
+  const mode = obj.mode || 'intraday';
+  if(BT_DATASETS.indexOf(dataset)<0) return {ok:false, error:'未知資料集 '+dataset};
+  if(BT_MODES.indexOf(mode)<0) return {ok:false, error:'未知模式 '+mode};
+  const filters = obj.filters==null ? [] : obj.filters;
+  if(!Array.isArray(filters)) return {ok:false, error:'filters 必須是積木陣列'};
+  const seen = {};
+  for(let i=0;i<filters.length;i++){
+    const b = filters[i];
+    if(!b || typeof b!=='object' || !b.type) return {ok:false, error:'每個濾網積木需要 type'};
+    if(!btCatalog(b.type)) return {ok:false, error:'未知濾網積木 type='+b.type};
+    if(seen[b.type]) return {ok:false, error:'v1 每個濾網種類只能一塊（AND），重複了 '+b.type};
+    seen[b.type] = true;
+  }
+  if(mode==='intraday' && filters.some(btIsCloseDecided)){
+    return {ok:false, error:'「當日漲跌」「今日均線」「N日新高/新低突破」「均線交叉」這幾種濾網要等今天收盤才能確定,用在日內模式(進場時機通常早於收盤)等於偷看未來資訊。這些濾網只適用於隔夜或波段模式。'};
+  }
+  return {ok:true, blocks:obj};
+}
+function btExtractBlocks(obj){
+  if(!obj || typeof obj!=='object' || Array.isArray(obj)) return {ok:false, error:BT_ERR_NOT_OBJECT};
+  if(Array.isArray(obj.presets) && BT_MODES.indexOf(obj.mode)<0) return {ok:false, error:BT_ERR_STORE_NOT_RULE};
+  if(obj.blocks && btLooksLikeBlocks(obj.blocks)) return btValidateBlocksDoc(obj.blocks);
+  return btValidateBlocksDoc(obj);
+}
+function btParseBlocksJson(text){
+  const parsed = btParseJsonText(text);
+  if(!parsed.ok) return parsed;
+  return btExtractBlocks(parsed.value);
+}
+function btEmptyStore(){ return {version:1, presets:[]}; }
+function btReadStore(){
+  let raw;
+  try { raw = localStorage.getItem(BT_PRESET_KEY); }
+  catch(e){ return btEmptyStore(); }
+  if(!raw) return btEmptyStore();
+  const parsed = btParseJsonText(raw);
+  if(!parsed.ok){
+    btPresetStatus(BT_ERR_STORE, 'err');
+    return btEmptyStore();
+  }
+  const obj = parsed.value;
+  if(!obj || typeof obj!=='object' || !Array.isArray(obj.presets)){
+    btPresetStatus(BT_ERR_STORE, 'err');
+    return btEmptyStore();
+  }
+  const cleaned = [];
+  const seen = {};
+  obj.presets.forEach(item=>{
+    if(!item || typeof item!=='object') return;
+    const name = String(item.name||'').trim().slice(0, BT_PRESET_NAME_MAX);
+    if(!name || seen[name]) return;
+    const checked = btValidateBlocksDoc(item.blocks);
+    if(!checked.ok) return;
+    seen[name] = true;
+    cleaned.push({id:String(item.id||name), name:name, blocks:checked.blocks});
+  });
+  return {version:1, presets:cleaned.slice(0, BT_PRESET_CAP)};
+}
+function btWriteStore(store){
+  try {
+    localStorage.setItem(BT_PRESET_KEY, JSON.stringify(store));
+    return true;
+  } catch(e){
+    btPresetStatus(BT_ERR_STORAGE, 'err');
+    return false;
+  }
+}
+function btRenderPresetSelect(){
+  const sel = document.getElementById('bt-preset-select');
+  if(!sel) return;
+  const prev = sel.value;
+  const store = btReadStore();
+  sel.innerHTML = '';
+  if(!store.presets.length){
+    const opt = document.createElement('option');
+    opt.value = '';
+    opt.textContent = '（尚無預設）';
+    sel.appendChild(opt);
+    return;
+  }
+  store.presets.forEach(p=>{
+    const opt = document.createElement('option');
+    opt.value = p.name;
+    opt.textContent = p.name;
+    sel.appendChild(opt);
+  });
+  if([...sel.options].some(o=>o.value===prev)) sel.value = prev;
+}
+function btSelectedPresetName(){
+  const sel = document.getElementById('bt-preset-select');
+  return sel && sel.value ? sel.value : '';
+}
+function btNameField(){
+  const el = document.getElementById('bt-preset-name');
+  return el ? String(el.value||'').trim().slice(0, BT_PRESET_NAME_MAX) : '';
+}
+function btSetValue(id, value){
+  const el = document.getElementById(id);
+  if(!el || value==null || value==='') return;
+  el.value = value;
+}
+function btApplyBlocks(blocks){
+  if(!blocks || typeof blocks!=='object') throw new Error(BT_ERR_NOT_V1);
+  const dataset = BT_DATASETS.indexOf(blocks.dataset)>=0 ? blocks.dataset : '2y_hourly';
+  let mode = BT_MODES.indexOf(blocks.mode)>=0 ? blocks.mode : 'intraday';
+  document.getElementById('bt-dataset').value = dataset;
+  btApplyDatasetConstraints();
+  if(dataset==='15y_daily' && mode==='intraday') mode = 'overnight';
+  const radio = document.querySelector('input[name="bt-mode"][value="'+mode+'"]');
+  if(radio && !radio.disabled) radio.checked = true;
+  const cost = blocks.cost_pct;
+  document.getElementById('bt-cost').value = (cost==null || cost==='') ? '0.03' : cost;
+  const entry = blocks.entry || {};
+  const ex = blocks.exit || {};
+  const applied = btMode();
+  if(applied==='intraday'){
+    btSetValue('bt-ref', entry.reference || 'first_hour_high');
+    document.getElementById('bt-offset').value = entry.offset_pct==null ? '0' : entry.offset_pct;
+    btSetValue('bt-trigger', entry.trigger || 'touch_from_below');
+    btSetValue('bt-direction', entry.direction || 'long');
+    btSetValue('bt-earliest', entry.earliest_hour==null ? '10' : String(entry.earliest_hour));
+    btSetValue('bt-exithour', ex.exit_hour==null ? '13' : String(ex.exit_hour));
+    document.getElementById('bt-stop-on').checked = !!ex.stop_enabled;
+    btSetValue('bt-stopref', ex.stop_reference || 'day_open');
+    document.getElementById('bt-stopoffset').value = ex.stop_offset_pct==null ? '0' : ex.stop_offset_pct;
+  } else if(applied==='overnight'){
+    btSetValue('bt-on-direction', entry.direction || 'long');
+    btSetValue('bt-holdto', ex.hold_to || 'next_open');
+    btSetValue('bt-holdhour', ex.hold_to_hour==null ? '10' : String(ex.hold_to_hour));
+    document.getElementById('bt-skipweekend').checked = ex.skip_weekend!==false;
+  } else {
+    btSetValue('bt-swing-direction', entry.direction || 'long');
+    document.getElementById('bt-swing-stoppct').value = ex.stop_pct==null ? '2' : ex.stop_pct;
+    document.getElementById('bt-swing-maxhold').value = ex.max_hold_days==null ? '60' : ex.max_hold_days;
+    document.getElementById('bt-swing-tpon').checked = !!ex.take_profit_on;
+    document.getElementById('bt-swing-tppct').value = ex.take_profit_pct==null ? '5' : ex.take_profit_pct;
+  }
+  const incoming = Array.isArray(blocks.filters) ? blocks.filters : [];
+  btFilters = incoming.filter(b=>b && btCatalog(b.type)).map(b=>{
+    const spec = btCatalog(b.type);
+    return {id:btFilterSeq++, type:b.type, params:Object.assign({}, spec.defaults, b.params||{})};
+  });
+  btOnStopToggle();
+  btOnSwingTpToggle();
+  btOnHoldToChange();
+  btOnModeChange();
+}
+function btSaveNamed(name, overwriteOnly){
+  if(!name){ btPresetStatus(BT_ERR_NAME, 'err'); return false; }
+  const built = btBuildBlocks();
+  const checked = btValidateBlocksDoc(built);
+  if(!checked.ok){ btPresetStatus(checked.error, 'err'); return false; }
+  const store = btReadStore();
+  const existing = store.presets.find(p=>p.name===name);
+  if(overwriteOnly && !existing){ btPresetStatus(BT_ERR_MISSING, 'err'); return false; }
+  if(!existing && store.presets.length>=BT_PRESET_CAP){ btPresetStatus(BT_ERR_CAP, 'err'); return false; }
+  if(existing) existing.blocks = checked.blocks;
+  else store.presets.push({id:name, name:name, blocks:checked.blocks});
+  if(!btWriteStore(store)) return false;
+  btRenderPresetSelect();
+  const sel = document.getElementById('bt-preset-select');
+  if(sel) sel.value = name;
+  const nameEl = document.getElementById('bt-preset-name');
+  if(nameEl) nameEl.value = name;
+  btPresetStatus(overwriteOnly || existing ? '已覆蓋「'+name+'」。' : '已儲存「'+name+'」。', 'ok');
+  return true;
+}
+function btSavePreset(){ btSaveNamed(btNameField(), false); }
+function btOverwritePreset(){
+  const name = btSelectedPresetName() || btNameField();
+  btSaveNamed(name, true);
+}
+function btLoadPreset(){
+  const name = btSelectedPresetName();
+  if(!name){ btPresetStatus(BT_ERR_MISSING, 'err'); return; }
+  const item = btReadStore().presets.find(p=>p.name===name);
+  if(!item){ btPresetStatus(BT_ERR_MISSING, 'err'); return; }
+  const checked = btValidateBlocksDoc(item.blocks);
+  if(!checked.ok){ btPresetStatus(checked.error, 'err'); return; }
+  try {
+    btApplyBlocks(checked.blocks);
+  } catch(e){
+    btPresetStatus(BT_ERR_APPLY, 'err');
+    return;
+  }
+  const nameEl = document.getElementById('bt-preset-name');
+  if(nameEl) nameEl.value = name;
+  btPresetStatus('已載入「'+name+'」。', 'ok');
+}
+function btDeletePreset(){
+  const name = btSelectedPresetName();
+  if(!name){ btPresetStatus(BT_ERR_MISSING, 'err'); return; }
+  if(!confirm('確定刪除「'+name+'」？')) return;
+  const store = btReadStore();
+  const next = store.presets.filter(p=>p.name!==name);
+  if(next.length===store.presets.length){ btPresetStatus(BT_ERR_MISSING, 'err'); return; }
+  store.presets = next;
+  if(!btWriteStore(store)) return;
+  btRenderPresetSelect();
+  btPresetStatus('已刪除「'+name+'」。', 'ok');
+}
+function btExportPresetJson(){
+  try {
+    const text = JSON.stringify(btBuildBlocks(), null, 2);
+    const ta = document.getElementById('bt-preset-json');
+    const wrap = document.getElementById('bt-preset-json-wrap');
+    if(ta) ta.value = text;
+    if(wrap) wrap.open = true;
+    btPresetStatus('已匯出目前規則 JSON，可複製帶走。', 'ok');
+  } catch(e){
+    btPresetStatus(BT_ERR_APPLY, 'err');
+  }
+}
+function btImportPresetJson(){
+  const ta = document.getElementById('bt-preset-json');
+  const parsed = btParseBlocksJson(ta ? ta.value : '');
+  if(!parsed.ok){ btPresetStatus(parsed.error, 'err'); return; }
+  try {
+    btApplyBlocks(parsed.blocks);
+  } catch(e){
+    btPresetStatus(BT_ERR_APPLY, 'err');
+    return;
+  }
+  btPresetStatus('已套用貼上的 JSON。', 'ok');
+}
 function btChipLabels(blocks){
   const chips = [];
   chips.push(blocks.dataset==='15y_daily' ? '15年日K' : '2年小時K');
@@ -2275,6 +2577,15 @@ function renderBacktestResult(d){
 btOnHoldToChange();
 btOnModeChange();
 btRenderFilters();
+try { btRenderPresetSelect(); } catch(e) { btPresetStatus(BT_ERR_STORE, 'err'); }
+const btPresetSel = document.getElementById('bt-preset-select');
+if(btPresetSel){
+  btPresetSel.addEventListener('change', function(){
+    const name = btSelectedPresetName();
+    const el = document.getElementById('bt-preset-name');
+    if(el && name) el.value = name;
+  });
+}
 
 function loadAll(){ loadSummary(); loadKline(); loadTaiex(); loadMargin(); loadNet(); loadTaifexOi(); loadTop();
   loadAlerts(); loadPerformance();
@@ -2289,7 +2600,7 @@ function initBtFolds(){
   const mobile = window.matchMedia('(max-width:768px)').matches;
   document.querySelectorAll('details[data-bt-fold]').forEach(el=>{
     const key = el.dataset.btFold;
-    if(key==='dataset'){ el.open = true; return; }
+    if(key==='dataset' || key==='presets'){ el.open = true; return; }
     if(key==='filters' || key==='entry' || key==='exit') el.open = !mobile;
   });
   btApplyMobileBlockFolds();

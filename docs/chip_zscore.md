@@ -1,6 +1,6 @@
 # Chip z-score — 掃描用可配置窗格（#78 / epic #76）
 
-**狀態：query-time 契約，已合。** 掃描散布圖 UI 見 #79（`web/static/index.html` 掃描分頁）。
+**狀態：query-time 契約，已合。** 掃描散布圖 UI 見 #79；結果表格見 #80（同一 `chip_zscore` 回應，`web/static/index.html` 掃描分頁）。
 
 在 `stock_chips_daily`（#77 VIEW）上算三大法人買賣超的 **z-score**，給多檔掃描排序，之後當散布圖軸（#79）。**不是**新表、也不是 VIEW：每次查詢用 SQL 取窗格列，Python 算樣本標準差。
 
@@ -142,7 +142,7 @@ s = \sqrt{\frac{1}{n-1}\sum_i (x_i - \overline{x})^2}
 
 ## 不做
 
-- 掃描表格 UI（#80）；散布圖 UI 在 #79
+- 自選清單 UI（#81）；URL 狀態（#82）。散布圖 #79、結果表格 #80 已讀本 API
 - 改儀表板既有 SQL 或 `KEY_TABLES`
 - 物化 z-score 表
 - 上櫃三大法人（VIEW 裡本來就是 NULL；z 亦為 NULL）

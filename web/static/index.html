@@ -164,6 +164,16 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
 .sc-list table{font-size:13px}
 .sc-list tr.sc-row{cursor:pointer}
 .sc-list tr.sc-row.is-thin td{color:#7a5c00;background:#fff8e8}
+.sc-table-panel{margin-top:8px}
+.sc-table-panel[hidden]{display:none!important}
+.sc-table-tools{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.sc-table-tools input,.sc-table-tools select{min-height:36px}
+.sc-list th.sc-th{padding:0;vertical-align:bottom}
+.sc-list button.sc-sort{display:block;width:100%;border:none;background:transparent;color:inherit;font:inherit;text-align:inherit;cursor:pointer;padding:8px 10px;min-height:36px}
+.sc-list th.num button.sc-sort{text-align:right}
+.sc-list button.sc-sort:hover,.sc-list button.sc-sort:focus-visible{background:#f0f4fa;color:#1a1a2e}
+.sc-list button.sc-sort.is-active{color:#1a1a2e;font-weight:700}
+.sc-filter-empty{padding:16px 10px;text-align:center;color:#6c757d}
 #sc-error[hidden],#sc-insufficient[hidden],#sc-empty[hidden],#sc-loading[hidden]{display:none!important}
 @media(max-width:768px){
   .wrap{padding:12px}
@@ -199,6 +209,8 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
   .sc-field select,.sc-field input,.sc-run,#sc-search input,#sc-add{width:100%;min-height:44px}
   .sc-chart-wrap{height:280px;min-height:240px}
   .sc-pick button{min-width:44px;min-height:44px}
+  .sc-table-tools{flex-direction:column;align-items:stretch}
+  .sc-table-tools input,.sc-table-tools select,.sc-list button.sc-sort{width:100%;min-height:44px}
 }
 </style>
 </head>
@@ -394,7 +406,7 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
       <button class="reset-btn" type="button" onclick="resetZoom('c-scanner')">重置</button>
     </span>
   </div>
-  <p class="sc-note">多檔橫向比較工作台，<b>不是</b>個股分頁、不是回測「個股 pattern」宇宙、也不是全市場一次掃描。搜尋加入 ≥2 檔後才向 <code>/api/scanner/chip_zscore</code> 要真實籌碼／價量；沒有假資料。點圖上的點或下方列會開個股分頁。</p>
+  <p class="sc-note">多檔橫向比較工作台，<b>不是</b>個股分頁、不是回測「個股 pattern」宇宙、也不是全市場一次掃描。搜尋加入 ≥2 檔後才向 <code>/api/scanner/chip_zscore</code> 要真實籌碼／價量；<b>一次查詢</b>同時餵散布圖與下方結果表格，沒有第二條資料徑、沒有假資料。點圖上的點或表格列會開個股分頁。</p>
   <div class="search">
     <div class="sid-search" id="sc-search">
       <input id="sc-q" placeholder="搜尋代號／名稱，加入比較（复用 /api/stocks）" autocomplete="off"
@@ -425,17 +437,32 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
       <label for="sc-asof">截至日 asof</label>
       <input type="date" id="sc-asof" aria-label="掃描截至日" onchange="loadScanner()">
     </div>
-    <button type="button" class="sc-run" id="sc-run" onclick="loadScanner()">更新散布圖</button>
+    <button type="button" class="sc-run" id="sc-run" onclick="loadScanner()">更新掃描</button>
   </div>
-  <p class="hint" id="sc-mobile-note">窄螢幕請用下方清單點進個股；圖上也可點。軸與窗格／截至日可調，對齊籌碼 z-score 時間模型（預設 20 個交易日）。</p>
-  <div id="sc-empty" class="bb-empty">請先搜尋並加入至少 2 檔，才會載入掃描散布圖。不是單檔查詢，也不是全市場宇宙。</div>
+  <p class="hint" id="sc-mobile-note">窄螢幕請用下方表格點進個股；圖上也可點。表頭可排序，篩選只改表格列、不另打 API。軸與窗格／截至日可調，對齊籌碼 z-score 時間模型（預設 20 個交易日）。</p>
+  <div id="sc-empty" class="bb-empty">請先搜尋並加入至少 2 檔，才會載入掃描散布圖與結果表格。不是單檔查詢，也不是全市場宇宙。</div>
   <div id="sc-loading" class="empty" hidden>載入中…</div>
   <div id="sc-error" class="bt-error" hidden></div>
   <div class="sc-chart-wrap" id="sc-chart-wrap" hidden>
     <canvas id="c-scanner"></canvas>
   </div>
   <div id="sc-insufficient" class="bb-warn" hidden></div>
-  <div id="sc-list" class="sc-list table-scroll"></div>
+  <div id="sc-table-panel" class="sc-table-panel" hidden>
+    <div class="chart-head">
+      <h3>掃描結果</h3>
+      <span class="sc-table-tools">
+        <input id="sc-filter-q" type="search" placeholder="篩選代號／名稱" autocomplete="off"
+               aria-label="篩選掃描結果代號或名稱" oninput="onScannerFilter()">
+        <select id="sc-filter-status" aria-label="篩選列狀態" onchange="onScannerFilter()">
+          <option value="all">全部列</option>
+          <option value="plot">可畫圖</option>
+          <option value="thin">樣本不足</option>
+        </select>
+      </span>
+    </div>
+    <div id="sc-list" class="sc-list table-scroll"></div>
+    <p id="sc-table-meta" class="hint"></p>
+  </div>
 </section>
 </div>
 
@@ -1004,6 +1031,10 @@ let scActive = -1;
 let scTimer = null;
 let scLastPayload = null;
 let scAxesReady = false;
+let scSortKey = 'stock_id';
+let scSortDir = 'asc';
+let scFilterQ = '';
+let scFilterStatus = 'all';
 
 function scAxisLabel(key){
   const hit = SC_AXES.find(a=>a.key===key);
@@ -1045,7 +1076,7 @@ function addScannerPick(item){
   if(!item || !item.id) return;
   if(scPicks.some(p=>p.id===item.id)) return;
   if(scPicks.length >= SC_MAX){
-    scShowError('最多比較 '+SC_MAX+' 檔（API 上限 200，散布圖先收斂）。');
+    scShowError('最多比較 '+SC_MAX+' 檔（API 上限 200，散布圖先收斂）。', {clear:false});
     return;
   }
   scPicks.push({id:item.id, name:item.name||item.id});
@@ -1127,20 +1158,44 @@ function scHideChart(){
   const wrap = document.getElementById('sc-chart-wrap');
   if(wrap) wrap.hidden = true;
 }
+function scClearTable(){
+  const panel = document.getElementById('sc-table-panel');
+  const list = document.getElementById('sc-list');
+  const meta = document.getElementById('sc-table-meta');
+  if(panel) panel.hidden = true;
+  if(list) list.innerHTML = '';
+  if(meta) meta.textContent = '';
+}
 function scShowEmpty(){
   scHideChart();
+  scClearTable();
   const empty = document.getElementById('sc-empty');
   const load = document.getElementById('sc-loading');
   const err = document.getElementById('sc-error');
   const thin = document.getElementById('sc-insufficient');
-  const list = document.getElementById('sc-list');
   if(empty) empty.hidden = false;
   if(load) load.hidden = true;
   if(err){ err.hidden = true; err.textContent = ''; }
   if(thin){ thin.hidden = true; thin.textContent = ''; }
-  if(list) list.innerHTML = '';
 }
-function scShowError(msg){
+function scShowLoading(){
+  scHideChart();
+  scClearTable();
+  const empty = document.getElementById('sc-empty');
+  const load = document.getElementById('sc-loading');
+  const err = document.getElementById('sc-error');
+  const thin = document.getElementById('sc-insufficient');
+  if(empty) empty.hidden = true;
+  if(err){ err.hidden = true; err.textContent = ''; }
+  if(thin){ thin.hidden = true; thin.textContent = ''; }
+  if(load){ load.hidden = false; load.textContent = '載入中…'; }
+}
+function scShowError(msg, opts){
+  const clear = !opts || opts.clear !== false;
+  if(clear){
+    scHideChart();
+    scClearTable();
+  }
   const empty = document.getElementById('sc-empty');
   const load = document.getElementById('sc-loading');
   const err = document.getElementById('sc-error');
@@ -1158,6 +1213,162 @@ function scFmt(key, v){
   if(String(key).slice(-2)==='_z') return Number(v).toFixed(3);
   return Number(v).toLocaleString('zh-TW', {maximumFractionDigits:2});
 }
+function scRowStatus(row, xKey, yKey){
+  const x = scAxisValue(row, xKey);
+  const y = scAxisValue(row, yKey);
+  if(x==null || y==null || Number.isNaN(x) || Number.isNaN(y)) return '樣本不足';
+  if(row.insufficient_sample) return '列數不足窗格';
+  return '可比較';
+}
+function scRowIsThin(row, xKey, yKey){
+  return scRowStatus(row, xKey, yKey) !== '可比較';
+}
+function scTableCols(xKey, yKey){
+  const cols = [
+    {key:'stock_id', label:'代號', num:false},
+    {key:'stock_name', label:'名稱', num:false}
+  ];
+  const seen = new Set(['stock_id','stock_name']);
+  function add(key, label, num){
+    if(seen.has(key)) return;
+    seen.add(key);
+    cols.push({key:key, label:label, num:num});
+  }
+  add(xKey, scAxisLabel(xKey), true);
+  add(yKey, scAxisLabel(yKey), true);
+  add('close', '收盤價', true);
+  add('volume', '成交量', true);
+  cols.push({key:'status', label:'狀態', num:false});
+  return cols;
+}
+function scCellValue(row, key, xKey, yKey){
+  if(key==='status') return scRowStatus(row, xKey, yKey);
+  if(key==='stock_id' || key==='stock_name') return row[key] || '';
+  return scAxisValue(row, key);
+}
+function scCompareRows(a, b, key, xKey, yKey){
+  if(key==='status'){
+    const rank = {'可比較':0,'列數不足窗格':1,'樣本不足':2};
+    return (rank[scRowStatus(a,xKey,yKey)]||0) - (rank[scRowStatus(b,xKey,yKey)]||0);
+  }
+  const av = scCellValue(a, key, xKey, yKey);
+  const bv = scCellValue(b, key, xKey, yKey);
+  const an = av==null || av==='';
+  const bn = bv==null || bv==='';
+  if(an && bn) return 0;
+  if(an) return 1;
+  if(bn) return -1;
+  if(typeof av==='number' && typeof bv==='number') return av - bv;
+  return String(av).localeCompare(String(bv), 'zh-Hant', {numeric:true, sensitivity:'base'});
+}
+function scSortRows(rows, xKey, yKey){
+  return rows.slice().sort((a,b)=>{
+    if(scSortKey!=='status'){
+      const av = scCellValue(a, scSortKey, xKey, yKey);
+      const bv = scCellValue(b, scSortKey, xKey, yKey);
+      const an = av==null || av==='';
+      const bn = bv==null || bv==='';
+      if(an && bn) return 0;
+      if(an) return 1;
+      if(bn) return -1;
+    }
+    const cmp = scCompareRows(a, b, scSortKey, xKey, yKey);
+    return scSortDir==='desc' ? -cmp : cmp;
+  });
+}
+function scVisibleCols(xKey, yKey){
+  const cols = scTableCols(xKey, yKey);
+  if(!cols.some(c=>c.key===scSortKey)){
+    scSortKey = 'stock_id';
+    scSortDir = 'asc';
+  }
+  return cols;
+}
+function scFilterRows(rows, xKey, yKey){
+  const q = (scFilterQ || '').trim().toLowerCase();
+  return rows.filter(row=>{
+    if(scFilterStatus==='plot' && scRowIsThin(row, xKey, yKey)) return false;
+    if(scFilterStatus==='thin' && !scRowIsThin(row, xKey, yKey)) return false;
+    if(!q) return true;
+    const id = String(row.stock_id||'').toLowerCase();
+    const name = String(row.stock_name||'').toLowerCase();
+    return id.indexOf(q)>=0 || name.indexOf(q)>=0;
+  });
+}
+function onScannerFilter(){
+  scFilterQ = ((document.getElementById('sc-filter-q')||{}).value || '');
+  scFilterStatus = ((document.getElementById('sc-filter-status')||{}).value || 'all');
+  renderScannerTable();
+}
+function sortScannerTable(key){
+  if(!key) return;
+  if(scSortKey===key) scSortDir = scSortDir==='asc' ? 'desc' : 'asc';
+  else {
+    scSortKey = key;
+    scSortDir = (key==='stock_id' || key==='stock_name' || key==='status') ? 'asc' : 'desc';
+  }
+  renderScannerTable();
+}
+function renderScannerTable(){
+  const payload = scLastPayload;
+  const panel = document.getElementById('sc-table-panel');
+  const list = document.getElementById('sc-list');
+  const meta = document.getElementById('sc-table-meta');
+  if(!payload || scPicks.length < 2){
+    scClearTable();
+    return;
+  }
+  const xKey = (document.getElementById('sc-x')||{}).value || 'foreign_net_z';
+  const yKey = (document.getElementById('sc-y')||{}).value || 'close';
+  const cols = scVisibleCols(xKey, yKey);
+  const rows = payload.data || [];
+  const shown = scSortRows(scFilterRows(rows, xKey, yKey), xKey, yKey);
+  if(panel) panel.hidden = false;
+  if(list){
+    const head = cols.map(col=>{
+      const active = col.key===scSortKey;
+      const aria = active ? (scSortDir==='desc'?'descending':'ascending') : 'none';
+      const mark = active ? (scSortDir==='desc'?' ↓':' ↑') : '';
+      const cls = 'sc-th'+(col.num?' num':'');
+      return '<th class="'+cls+'" data-sort="'+esc(col.key)+'" aria-sort="'+aria+'">'
+        +'<button type="button" class="sc-sort'+(active?' is-active':'')+'" data-sort="'+esc(col.key)+'">'
+        +esc(col.label)+mark+'</button></th>';
+    }).join('');
+    const body = shown.length
+      ? shown.map(row=>{
+          const thin = scRowIsThin(row, xKey, yKey);
+          const st = scRowStatus(row, xKey, yKey);
+          const cls = 'sc-row'+(thin?' is-thin':'');
+          const cells = cols.map(col=>{
+            if(col.key==='stock_id'){
+              return '<td><button type="button" class="ticker-link">'+esc(row.stock_id||'')+'</button></td>';
+            }
+            if(col.key==='stock_name') return '<td>'+esc(row.stock_name||'–')+'</td>';
+            if(col.key==='status') return '<td>'+st+'</td>';
+            const v = scAxisValue(row, col.key);
+            return '<td class="num">'+scFmt(col.key, v)+'</td>';
+          }).join('');
+          return '<tr class="'+cls+'" data-ticker="'+esc(row.stock_id||'')+'" data-name="'+esc(row.stock_name||'')+'">'+cells+'</tr>';
+        }).join('')
+      : '<tr><td class="sc-filter-empty" colspan="'+cols.length+'">沒有符合篩選的列。清掉篩選可看同一批掃描結果。</td></tr>';
+    list.innerHTML = '<table><thead><tr>'+head+'</tr></thead><tbody>'+body+'</tbody></table>';
+    list.querySelectorAll('button.sc-sort[data-sort]').forEach(btn=>{
+      btn.addEventListener('click', ev=>{
+        ev.stopPropagation();
+        sortScannerTable(btn.getAttribute('data-sort'));
+      });
+    });
+    list.querySelectorAll('tr.sc-row').forEach(tr=>{
+      tr.addEventListener('click', ()=> selectStock(tr.dataset.ticker, tr.dataset.name||''));
+    });
+  }
+  if(meta){
+    const asof = payload.asof || '–';
+    meta.textContent = shown.length+' / '+rows.length+' 檔 · asof '+asof
+      +' · window '+payload.window+' · min_periods '+payload.min_periods
+      +' · 與散布圖同一批資料 · 點表頭排序、點列進個股';
+  }
+}
 function renderScannerChart(){
   initScannerAxes();
   const payload = scLastPayload;
@@ -1165,7 +1376,6 @@ function renderScannerChart(){
   const load = document.getElementById('sc-loading');
   const err = document.getElementById('sc-error');
   const thin = document.getElementById('sc-insufficient');
-  const list = document.getElementById('sc-list');
   const wrap = document.getElementById('sc-chart-wrap');
   if(load) load.hidden = true;
   if(!payload || scPicks.length < 2){
@@ -1197,31 +1407,11 @@ function renderScannerChart(){
       thin.textContent = '';
     }
   }
-  if(list){
-    const asof = payload.asof || '–';
-    list.innerHTML = '<table><thead><tr><th>代號</th><th>名稱</th><th class="num">'+esc(scAxisLabel(xKey))+'</th><th class="num">'+esc(scAxisLabel(yKey))+'</th><th>狀態</th></tr></thead><tbody>'
-      + rows.map(row=>{
-        const x = scAxisValue(row, xKey);
-        const y = scAxisValue(row, yKey);
-        const noAxis = x==null || y==null;
-        const st = noAxis ? '樣本不足' : (row.insufficient_sample ? '列數不足窗格' : '可比較');
-        const cls = 'sc-row'+(noAxis || row.insufficient_sample ? ' is-thin':'');
-        return '<tr class="'+cls+'" data-ticker="'+esc(row.stock_id||'')+'" data-name="'+esc(row.stock_name||'')+'">'
-          +'<td><button type="button" class="ticker-link">'+esc(row.stock_id||'')+'</button></td>'
-          +'<td>'+esc(row.stock_name||'–')+'</td>'
-          +'<td class="num">'+scFmt(xKey, x)+'</td>'
-          +'<td class="num">'+scFmt(yKey, y)+'</td>'
-          +'<td>'+st+'</td></tr>';
-      }).join('')
-      + '</tbody></table><p class="hint">asof '+esc(asof)+' · window '+esc(payload.window)+' · min_periods '+esc(payload.min_periods)+' · 點列或圖進個股</p>';
-    list.querySelectorAll('tr.sc-row').forEach(tr=>{
-      tr.addEventListener('click', ()=> selectStock(tr.dataset.ticker, tr.dataset.name||''));
-    });
-  }
+  renderScannerTable();
   if(!plot.length){
     scHideChart();
-    if(!missing.length && err){
-      scShowError('沒有可畫的點。');
+    if(!missing.length && !rows.length){
+      scShowError('沒有可畫的點。', {clear:false});
     }
     return;
   }
@@ -1314,12 +1504,7 @@ async function loadScanner(){
     scShowEmpty();
     return;
   }
-  const empty = document.getElementById('sc-empty');
-  const load = document.getElementById('sc-loading');
-  const err = document.getElementById('sc-error');
-  if(empty) empty.hidden = true;
-  if(err){ err.hidden = true; err.textContent = ''; }
-  if(load){ load.hidden = false; load.textContent = '載入中…'; }
+  scShowLoading();
   const windowN = Math.max(2, Math.min(252, parseInt((document.getElementById('sc-window')||{}).value, 10) || 20));
   let minP = parseInt((document.getElementById('sc-min-periods')||{}).value, 10);
   if(!minP) minP = windowN;
@@ -1343,7 +1528,6 @@ async function loadScanner(){
     renderScannerChart();
   }catch(e){
     scLastPayload = null;
-    scHideChart();
     scShowError('掃描資料載入失敗（'+e+'）。沒有假資料可畫。');
   }
 }

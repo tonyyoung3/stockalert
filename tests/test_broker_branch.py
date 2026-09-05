@@ -63,15 +63,24 @@ class TokenAndTitleTests(unittest.TestCase):
         status = broker_branch.ingest_status({})
         self.assertFalse(status["token_present"])
         self.assertFalse(status["live_ingest"])
-        self.assertEqual(status["slice_decision"], "pending_owner")
+        self.assertEqual(status["path"], "A")
+        self.assertEqual(status["slice_decision"], "hot_n")
         self.assertIn("FINMIND_TOKEN", status["blocker"])
+        self.assertIn("Path A", status["blocker"])
         self.assertEqual(status["not"], "t86_foreign")
 
     def test_token_present_still_no_live_ingest_in_this_pr(self):
         status = broker_branch.ingest_status({"FINMIND_TOKEN": "secret"})
         self.assertTrue(status["token_present"])
         self.assertFalse(status["live_ingest"])
+        self.assertEqual(status["path"], "A")
+        self.assertEqual(status["slice_decision"], "hot_n")
         self.assertIsNone(status["blocker"])
+
+    def test_readme_labels_hot_names_not_full_market(self):
+        text = Path(__file__).resolve().parents[1].joinpath("README.md").read_text()
+        self.assertIn("熱門股", text)
+        self.assertRegex(text, r"不是.{0,6}全市場")
 
     def test_title_never_says_full_market_for_hot_n_or_empty(self):
         for coverage in ("empty", "hot_n", "single_stock", "not_applicable"):
@@ -206,7 +215,9 @@ class DashboardStubTests(unittest.TestCase):
         r = self.call("/api/broker_branch/top")
         self.assertEqual(r["kind"], "broker_branch")
         self.assertEqual(r["not"], "t86_foreign")
-        self.assertEqual(r["data_mode"], "empty_awaiting_owner_decision")
+        self.assertEqual(r["data_mode"], "empty_awaiting_token")
+        self.assertEqual(r["path"], "A")
+        self.assertEqual(r["slice_decision"], "hot_n")
         self.assertFalse(r["live_ingest"])
         self.assertFalse(r["token_present"])
         self.assertEqual(r["buy"], [])

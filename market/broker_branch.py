@@ -1,14 +1,9 @@
 #!/usr/bin/env python3
 """Broker-branch (分點買賣超) contract helpers — not a live FinMind ingest.
 
-Owner has not decided token or slice (epic #53 / issue #54).
-See docs/broker_branch.md.
-
-This module:
-- documents schema / ranking SQL used by empty tables in collector.init_db
-- reports the token blocker honestly
-- loads a TEST/DEV fixture only when explicitly asked
-It does not call FinMind.
+Path A is locked (#54 / #53): 熱門前 N powers market Top; same tables
+for single-stock reads. Titles say 熱門股, never 全市場.
+Live ingest waits on FINMIND_TOKEN. See docs/broker_branch.md.
 """
 from __future__ import annotations
 
@@ -39,13 +34,15 @@ TITLE_HOT_N = "熱門股分點動向"
 TITLE_FULL_MARKET = "全市場分點買賣超"
 TITLE_STOCK = "個股分點買賣超"
 
-DATA_MODE_EMPTY = "empty_awaiting_owner_decision"
+DATA_MODE_EMPTY = "empty_awaiting_token"
 DATA_MODE_FIXTURE = "dev_fixture"
+PATH = "A"
+SLICE_DECISION = "hot_n"
 
 BLOCKER = (
     "FINMIND_TOKEN absent from GitHub secrets and local env. "
-    "Owner has not decided token + 大盤 vs 個股. "
-    "No live ingest in this PR."
+    "Path A is locked (熱門前 N market Top; same tables for stock reads). "
+    "No live FinMind merge without a token."
 )
 
 SCHEMA_SQL = """
@@ -95,7 +92,8 @@ def ingest_status(env: dict[str, str] | None = None) -> dict:
         "dataset": DATASET,
         "token_present": present,
         "live_ingest": False,
-        "slice_decision": "pending_owner",
+        "path": PATH,
+        "slice_decision": SLICE_DECISION,
         "blocker": None if present else BLOCKER,
         "hot_n_default": DEFAULT_HOT_N,
         "expected_after_hour": EXPECTED_AFTER_HOUR,
@@ -208,7 +206,7 @@ def _envelope(
         "coverage_note": (
             "加總範圍是已入庫的熱門前 N 檔，不是全市場。"
             if coverage == "hot_n"
-            else "尚無正式 ingest。空狀態或本機 fixture，不是全市場。"
+            else "路徑 A 空狀態：請接 FINMIND_TOKEN。標題是熱門股，不是全市場。"
         ),
         "trade_date": trade_date,
         "data_mode": mode,

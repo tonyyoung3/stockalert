@@ -349,7 +349,7 @@ class DashboardNavTests(unittest.TestCase):
         self.assertNotIn("全市場分點買賣超", card)
         self.assertNotIn("selectStock(", card)
         self.assertNotIn("ticker-link", card)
-        stock = html[html.index('id="section-stock"'):html.index('id="section-alerts"')]
+        stock = html[html.index('id="section-stock"'):html.index('id="section-scanner"')]
         self.assertNotIn("/api/broker_branch/broker", stock)
         self.assertNotIn("id=\"bb-drill\"", stock)
 
@@ -388,7 +388,7 @@ class DashboardNavTests(unittest.TestCase):
 
     def test_html_stock_broker_branch_shell_issue_57(self):
         html = dashboard.HTML
-        stock = html[html.index('id="section-stock"'):html.index('id="section-alerts"')]
+        stock = html[html.index('id="section-stock"'):html.index('id="section-scanner"')]
         self.assertIn('id="stock-broker-branch-card"', stock)
         self.assertIn(">券商分點買賣超</h3>", stock)
         self.assertIn("買超分點 Top", stock)
@@ -426,7 +426,7 @@ class DashboardNavTests(unittest.TestCase):
     def test_pm_locked_copy_gates_issue_57(self):
         """PM copy/gates for #57: stock-tab card, token empty, hot-N empty, no 全市場."""
         html = dashboard.HTML
-        stock = html[html.index('id="section-stock"'):html.index('id="section-alerts"')]
+        stock = html[html.index('id="section-stock"'):html.index('id="section-scanner"')]
         card = stock[stock.index('id="stock-broker-branch-card"'):]
         self.assertIn(">券商分點買賣超</h3>", card)
         self.assertIn("該檔讀已入庫熱門前 N 列", card)

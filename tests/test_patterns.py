@@ -9,6 +9,8 @@ from signals.patterns import (
     check_upper_shadow_reversal,
     classify_pattern,
     last_bar_date,
+    matches_pattern,
+    pattern_on_trailing_window,
 )
 
 
@@ -112,6 +114,15 @@ class PatternTests(unittest.TestCase):
         expected = df.index[-1].date()
         self.assertEqual(last_bar_date(df), expected)
         self.assertIsInstance(last_bar_date(df), date)
+
+    def test_matches_pattern_keeps_live_semantics(self):
+        self.assertTrue(matches_pattern(_upper_shadow_only(), "upper_shadow_reversal"))
+        self.assertEqual(
+            matches_pattern(_inside_day(), "inside_day"),
+            check_inside_day(_inside_day()),
+        )
+        i = len(_upper_shadow_only()) - 1
+        self.assertTrue(pattern_on_trailing_window(_upper_shadow_only(), i, "upper_shadow_reversal"))
 
     def test_last_bar_date_converts_tz(self):
         df = _base_df()

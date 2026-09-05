@@ -67,6 +67,7 @@ class CredentialHelperTests(unittest.TestCase):
         self.assertTrue(dashboard.path_requires_auth("/index.html"))
         self.assertTrue(dashboard.path_requires_auth("/api/summary"))
         self.assertTrue(dashboard.path_requires_auth("/api/backtest"))
+        self.assertTrue(dashboard.path_requires_auth("/api/backtest/stock"))
         self.assertTrue(dashboard.path_requires_auth("/api/broker_branch/top"))
         self.assertTrue(dashboard.path_requires_auth("/api/broker_branch/freshness"))
         self.assertFalse(dashboard.path_requires_auth("/favicon.ico"))
@@ -232,6 +233,41 @@ class DashboardAuthHTTPTests(unittest.TestCase):
         self.assertIn("credentials:'same-origin'", dashboard.HTML)
         self.assertNotIn(AUTH_PASSWORD, dashboard.HTML)
         self.assertNotIn("DASHBOARD_PASSWORD", dashboard.HTML)
+
+    def test_stock_backtest_post_protected(self):
+        payload = json.dumps({"stock_id": "2330", "pattern": "inside_day"}).encode("utf-8")
+        with patch.dict(os.environ, AUTH_ENV, clear=False):
+            with _serve() as base:
+                status, headers, body = _request(
+                    base + "/api/backtest/stock",
+                    method="POST",
+                    headers={"Content-Type": "application/json"},
+                    data=payload,
+                )
+                self.assertEqual(status, 401)
+                self.assertEqual(json.loads(body.decode("utf-8")), {"error": "unauthorized"})
+                self.assertEqual(
+                    headers.get("www-authenticate"),
+                    'Basic realm="stockalert"',
+                )
+
+                fake_conn = MagicMock()
+                with patch.object(dashboard.market_db, "connect", return_value=fake_conn):
+                    with patch(
+                        "web.stock_backtest.run_stock_backtest",
+                        return_value={"n": 0, "no_trigger": True},
+                    ):
+                        status, _, body = _request(
+                            base + "/api/backtest/stock",
+                            method="POST",
+                            headers={
+                                "Content-Type": "application/json",
+                                "Authorization": _basic(AUTH_USER, AUTH_PASSWORD),
+                            },
+                            data=payload,
+                        )
+                self.assertEqual(status, 200)
+                self.assertTrue(json.loads(body.decode("utf-8"))["no_trigger"])
 
     def test_readme_documents_basic_auth_and_local_only_when_unset(self):
         text = Path(__file__).resolve().parents[1].joinpath("README.md").read_text(

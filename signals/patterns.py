@@ -15,6 +15,16 @@ shadow_ratio = float(os.environ.get("SHADOW_RATIO", "1.5"))  # 上影線至少�
 upper_shadow_min_pct = float(os.environ.get("UPPER_SHADOW_MIN_PCT", "0.02"))  # 前一天上影線至少佔收盤價的 N%
 min_daily_gain = float(os.environ.get("MIN_DAILY_GAIN", "0.01"))  # 當天漲幅至少 N%
 
+# Live screener downloads ~2 calendar months. Replay uses the same trailing
+# length so volume-mean confirmation stays comparable to Slack / harness.
+MIN_PATTERN_BARS = 22
+LIVE_TRAILING_BARS = 44
+REPLAY_PATTERNS = ("upper_shadow_reversal", "inside_day")
+PATTERN_LABELS = {
+    "upper_shadow_reversal": "上影線反轉",
+    "inside_day": "Inside Day",
+}
+
 
 def _check_reversal_pattern(df, day1_idx, day2_idx):
     """檢查指定兩天的上影線反轉模式 (輔助函數)"""
@@ -97,3 +107,29 @@ def classify_pattern(df) -> str | None:
     if check_upper_shadow_reversal(df):
         return "upper_shadow_reversal"
     return None
+
+
+def matches_pattern(df, pattern: str) -> bool:
+    """Run the live ``check_*`` for ``pattern`` on the last bar of ``df``.
+
+    Historical replay calls this on each bar's trailing window so Slack /
+    harness semantics stay unchanged. Unknown names are not a match.
+    """
+    if pattern == "inside_day":
+        return check_inside_day(df)
+    if pattern == "upper_shadow_reversal":
+        return check_upper_shadow_reversal(df)
+    return False
+
+
+def trailing_window(df, end_loc: int, max_bars: int = LIVE_TRAILING_BARS):
+    """Bars ``end_loc`` and earlier only (no future), capped at ``max_bars``."""
+    if end_loc < 0 or end_loc >= len(df):
+        return df.iloc[0:0]
+    start = max(0, end_loc + 1 - max_bars)
+    return df.iloc[start : end_loc + 1]
+
+
+def pattern_on_trailing_window(df, end_loc: int, pattern: str) -> bool:
+    """Same live checks, evaluated on the trailing window ending at ``end_loc``."""
+    return matches_pattern(trailing_window(df, end_loc), pattern)

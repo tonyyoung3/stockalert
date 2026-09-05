@@ -199,6 +199,7 @@ class DashboardNavTests(unittest.TestCase):
         self.assertIn("role=\"tablist\"", html)
         self.assertIn(">市場</a>", html)
         self.assertIn(">個股</a>", html)
+        self.assertIn(">掃描</a>", html)
         self.assertIn(">告警</a>", html)
         self.assertIn(">回測</a>", html)
         self.assertIn("新增積木", html)
@@ -211,11 +212,13 @@ class DashboardNavTests(unittest.TestCase):
         self.assertNotIn('id="bt-macross"', html)
         self.assertIn("id=\"section-market\"", html)
         self.assertIn("id=\"section-stock\"", html)
+        self.assertIn("id=\"section-scanner\"", html)
         self.assertIn("id=\"section-alerts\"", html)
         self.assertIn("id=\"section-backtest\"", html)
         self.assertIn("id=\"stock-lookup\"", html)
         self.assertIn("href=\"#market\"", html)
         self.assertIn("href=\"#stock\"", html)
+        self.assertIn("href=\"#scanner\"", html)
         self.assertIn("href=\"#alerts\"", html)
         self.assertIn("href=\"#backtest\"", html)
         self.assertIn(
@@ -233,12 +236,19 @@ class DashboardNavTests(unittest.TestCase):
             "aria-labelledby=\"tab-alerts\" hidden>",
             html,
         )
+        self.assertIn(
+            "id=\"section-scanner\" class=\"page-section\" role=\"tabpanel\" "
+            "aria-labelledby=\"tab-scanner\" hidden>",
+            html,
+        )
         self.assertNotIn(
             "id=\"section-market\" class=\"page-section\" role=\"tabpanel\" "
             "aria-labelledby=\"tab-market\" hidden>",
             html,
         )
-        self.assertLess(html.index('id="section-market"'), html.index('id="section-backtest"'))
+        self.assertLess(html.index('id="section-market"'), html.index('id="section-scanner"'))
+        self.assertLess(html.index('id="section-scanner"'), html.index('id="section-backtest"'))
+        self.assertIn("PAGE_SECTIONS = ['market','stock','scanner','alerts','backtest']", html)
 
     def test_html_clarifies_global_days_vs_foreign_ranking(self):
         html = dashboard.HTML
@@ -339,7 +349,7 @@ class DashboardNavTests(unittest.TestCase):
         self.assertNotIn("全市場分點買賣超", card)
         self.assertNotIn("selectStock(", card)
         self.assertNotIn("ticker-link", card)
-        stock = html[html.index('id="section-stock"'):html.index('id="section-alerts"')]
+        stock = html[html.index('id="section-stock"'):html.index('id="section-scanner"')]
         self.assertNotIn("/api/broker_branch/broker", stock)
         self.assertNotIn("id=\"bb-drill\"", stock)
 
@@ -378,7 +388,7 @@ class DashboardNavTests(unittest.TestCase):
 
     def test_html_stock_broker_branch_shell_issue_57(self):
         html = dashboard.HTML
-        stock = html[html.index('id="section-stock"'):html.index('id="section-alerts"')]
+        stock = html[html.index('id="section-stock"'):html.index('id="section-scanner"')]
         self.assertIn('id="stock-broker-branch-card"', stock)
         self.assertIn(">券商分點買賣超</h3>", stock)
         self.assertIn("買超分點 Top", stock)
@@ -416,7 +426,7 @@ class DashboardNavTests(unittest.TestCase):
     def test_pm_locked_copy_gates_issue_57(self):
         """PM copy/gates for #57: stock-tab card, token empty, hot-N empty, no 全市場."""
         html = dashboard.HTML
-        stock = html[html.index('id="section-stock"'):html.index('id="section-alerts"')]
+        stock = html[html.index('id="section-stock"'):html.index('id="section-scanner"')]
         card = stock[stock.index('id="stock-broker-branch-card"'):]
         self.assertIn(">券商分點買賣超</h3>", card)
         self.assertIn("該檔讀已入庫熱門前 N 列", card)
@@ -481,6 +491,7 @@ class DashboardNavTests(unittest.TestCase):
         self.assertIn("bindSuggestPick", html)
         self.assertIn(">市場</a>", html)
         self.assertIn(">個股</a>", html)
+        self.assertIn(">掃描</a>", html)
         self.assertIn(">告警</a>", html)
         self.assertIn(">回測</a>", html)
         self.assertIn("參數為第二層", html)
@@ -575,6 +586,69 @@ class DashboardNavTests(unittest.TestCase):
         self.assertIn("不自動執行", text)
         self.assertIn("回測此訊號", text)
         self.assertIn("與日內／隔夜／波段不同層", text)
+        self.assertIn("#scanner", text)
+        self.assertIn("掃描", text)
+        self.assertIn("/api/scanner/chip_zscore", text)
+
+
+class DashboardScannerScatterTests(unittest.TestCase):
+    def test_scanner_tab_is_separate_workbench(self):
+        html = dashboard.HTML
+        self.assertIn('id="tab-scanner"', html)
+        self.assertIn(">掃描</a>", html)
+        self.assertIn('id="section-scanner"', html)
+        self.assertIn('id="scanner-workbench"', html)
+        self.assertIn("多檔橫向比較工作台", html)
+        self.assertIn("不是</b>個股分頁", html)
+        self.assertIn("不是回測「個股 pattern」宇宙", html)
+        self.assertIn("也不是全市場一次掃描", html)
+        self.assertNotIn(
+            'id="section-scanner"',
+            html[html.find('class="bt-universe"'):html.find('id="bt-index-panel"')],
+        )
+        nav = html[html.find('class="page-nav"'):html.find('id="section-market"')]
+        self.assertIn(">掃描</a>", nav)
+        self.assertNotIn("個股 pattern", nav)
+
+    def test_scanner_wires_chip_zscore_search_and_selectstock(self):
+        html = dashboard.HTML
+        self.assertIn("/api/scanner/chip_zscore?", html)
+        self.assertIn("function loadScanner(", html)
+        self.assertIn("function renderScannerChart(", html)
+        self.assertIn("function addScannerPick(", html)
+        self.assertIn("function submitScannerSearch(", html)
+        self.assertIn("fetchStockHits(q)", html)
+        self.assertIn("/api/stocks", html)
+        self.assertIn("selectStock(pt.stock_id, pt.stock_name||'')", html)
+        self.assertIn("selectStock(tr.dataset.ticker, tr.dataset.name||'')", html)
+        self.assertIn('id="sc-x"', html)
+        self.assertIn('id="sc-y"', html)
+        self.assertIn('id="sc-window"', html)
+        self.assertIn('id="sc-min-periods"', html)
+        self.assertIn('id="sc-asof"', html)
+        self.assertIn('id="sc-empty"', html)
+        self.assertIn('id="sc-loading"', html)
+        self.assertIn('id="sc-error"', html)
+        self.assertIn('id="sc-insufficient"', html)
+        self.assertIn("至少 2 檔", html)
+        self.assertIn("載入中…", html)
+        self.assertIn("樣本不足", html)
+        self.assertIn("沒有假資料", html)
+        self.assertIn("credentials: 'same-origin'", html)
+        self.assertIn("{key:'foreign_net_z', label:'外資買賣超 z'}", html)
+        self.assertIn("{key:'trust_net_z', label:'投信買賣超 z'}", html)
+        self.assertIn("{key:'dealer_net_z', label:'自營商買賣超 z'}", html)
+        self.assertIn("{key:'close', label:'收盤價'}", html)
+        self.assertIn("{key:'volume', label:'成交量'}", html)
+        self.assertIn("{key:'turnover', label:'成交金額'}", html)
+        self.assertIn("type:'scatter'", html)
+        self.assertIn("窄螢幕請用下方清單點進個股", html)
+        self.assertIn("scPicks.length < 2", html)
+        src = Path(__file__).resolve().parents[1].joinpath("web/dashboard.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("stock_chips_daily", src)
+        self.assertIn("/api/scanner/chip_zscore", src)
 
 
 class DashboardStockBacktestUITests(unittest.TestCase):

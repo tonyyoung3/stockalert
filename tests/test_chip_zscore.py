@@ -280,4 +280,5 @@ class ChipZScoreDashboardAPITests(unittest.TestCase):
         self.assertNotIn("stock_chips_daily", fresh)
         self.assertIn("stock_chips_daily", (REPO / "web/chip_zscore.py").read_text())
         self.assertIn("/api/scanner/chip_zscore", dash)
-        self.assertNotIn("/api/scanner/chip_zscore", dashboard.HTML)
+        self.assertIn("/api/scanner/chip_zscore", dashboard.HTML)
+        self.assertIn("function loadScanner(", dashboard.HTML)

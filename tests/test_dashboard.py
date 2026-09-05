@@ -642,13 +642,81 @@ class DashboardScannerScatterTests(unittest.TestCase):
         self.assertIn("{key:'volume', label:'成交量'}", html)
         self.assertIn("{key:'turnover', label:'成交金額'}", html)
         self.assertIn("type:'scatter'", html)
-        self.assertIn("窄螢幕請用下方清單點進個股", html)
+        self.assertIn("窄螢幕請用下方表格點進個股", html)
         self.assertIn("scPicks.length < 2", html)
         src = Path(__file__).resolve().parents[1].joinpath("web/dashboard.py").read_text(
             encoding="utf-8"
         )
         self.assertNotIn("stock_chips_daily", src)
         self.assertIn("/api/scanner/chip_zscore", src)
+
+
+class DashboardScannerTableTests(unittest.TestCase):
+    """#80: sortable/filterable results table on the same chip_zscore payload."""
+
+    def test_table_is_companion_to_scatter_same_payload(self):
+        html = dashboard.HTML
+        self.assertIn('id="sc-list"', html)
+        self.assertIn('id="sc-table-panel"', html)
+        self.assertIn(">掃描結果</h3>", html)
+        self.assertIn("function renderScannerTable(", html)
+        self.assertIn("function sortScannerTable(", html)
+        self.assertIn("function onScannerFilter(", html)
+        self.assertIn("一次查詢", html)
+        self.assertIn("與散布圖同一批資料", html)
+        self.assertIn("沒有第二條資料徑", html)
+        self.assertIn("scLastPayload", html)
+        self.assertIn("renderScannerTable()", html)
+        self.assertEqual(html.count("j('/api/scanner/chip_zscore?"), 1)
+        load = html[html.index("async function loadScanner("):html.index("async function loadAlerts(")]
+        self.assertIn("scLastPayload = r", load)
+        self.assertIn("renderScannerChart()", load)
+        self.assertNotIn("renderScannerTable()", load)
+        self.assertEqual(load.count("/api/scanner/chip_zscore"), 1)
+        chart = html[html.index("function renderScannerChart("):html.index("async function loadScanner(")]
+        self.assertIn("renderScannerTable()", chart)
+        table = html[html.index("function renderScannerTable("):html.index("function renderScannerChart(")]
+        self.assertIn("const payload = scLastPayload", table)
+        self.assertNotIn("/api/scanner/chip_zscore", table)
+        self.assertNotIn("await j(", table)
+        sort = html[html.index("function sortScannerTable("):html.index("function renderScannerTable(")]
+        self.assertIn("renderScannerTable()", sort)
+        self.assertNotIn("/api/scanner/chip_zscore", sort)
+        self.assertNotIn("await j(", sort)
+
+    def test_sortable_key_columns_and_filter(self):
+        html = dashboard.HTML
+        self.assertIn("{key:'stock_id', label:'代號'", html)
+        self.assertIn("{key:'stock_name', label:'名稱'", html)
+        self.assertIn("add('close', '收盤價', true)", html)
+        self.assertIn("add('volume', '成交量', true)", html)
+        self.assertIn("add(xKey, scAxisLabel(xKey), true)", html)
+        self.assertIn("add(yKey, scAxisLabel(yKey), true)", html)
+        self.assertIn("data-sort=", html)
+        self.assertIn("aria-sort=", html)
+        self.assertIn("button.sc-sort", html)
+        self.assertIn("scSortKey", html)
+        self.assertIn("scSortDir", html)
+        self.assertIn('id="sc-filter-q"', html)
+        self.assertIn('id="sc-filter-status"', html)
+        self.assertIn("篩選代號／名稱", html)
+        self.assertIn(">可畫圖</option>", html)
+        self.assertIn(">樣本不足</option>", html)
+        self.assertIn("沒有符合篩選的列", html)
+        self.assertIn("selectStock(tr.dataset.ticker, tr.dataset.name||'')", html)
+        self.assertIn("function scShowLoading(", html)
+        self.assertIn("function scClearTable(", html)
+        self.assertIn("scShowLoading()", html)
+        self.assertIn("scClearTable()", html)
+        for state_id in ("sc-empty", "sc-loading", "sc-error", "sc-insufficient"):
+            self.assertIn(f'id="{state_id}"', html)
+        self.assertIn("才會載入掃描散布圖與結果表格", html)
+        self.assertIn("載入中…", html)
+        self.assertIn("掃描資料載入失敗", html)
+        src = Path(__file__).resolve().parents[1].joinpath("web/dashboard.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("stock_chips_daily", src)
 
 
 class DashboardStockBacktestUITests(unittest.TestCase):

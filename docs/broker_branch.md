@@ -166,7 +166,7 @@ CREATE INDEX IF NOT EXISTS idx_broker_branch_broker_date
 | 與 18:00 市場 job 的關係 | `stock_daily` 先到，熱門前 N 才選得出來。分點 job **不可**掛在 18:00 那輪裡打 FinMind。 |
 | 失敗 | 與 `update_market_data.yml` 相同：`python -m notify.notify_job` + Slack secrets。標題「熱門股分點動向更新失敗」。 |
 | Freshness | 分點**自己的**欄位／API（21:00 切）。**不要**併進現有 `/api/freshness` 四張關鍵表。 |
-| 本機 | `FINMIND_TOKEN=… python -m market.broker_branch ingest`（可加 `--date`、`--n`、`--days`） |
+| 本機 | 把 token 寫進 `.env`（不要 commit），再跑 `python -m market.broker_branch ingest`（可加 `--date`、`--n`、`--days`） |
 
 ---
 

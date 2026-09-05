@@ -37,7 +37,7 @@ def taiwan_now(now: datetime | None = None) -> datetime:
 
 
 def taiwan_today(now: datetime | None = None) -> date:
-    """Asia/Taipei calendar date. Use this instead of date.today() for TW market days."""
+    """Asia/Taipei calendar date (#73). Use this instead of date.today() for TW market days."""
     return taiwan_now(now).date()
 
 HOLIDAY_YEARS = (2025, 2026)
@@ -123,8 +123,8 @@ def last_n_trading_days(n: int, end: date | None = None) -> tuple[date, date]:
     """Inclusive (start, end) covering ``n`` TWSE trading days ending at ``end``.
 
     ``end`` snaps with ``on_or_before_trading_day``. ``n`` is clamped to 1–730.
-    Used by the dashboard JS helper (``web/static/tw_range.js``) as the shared
-    「近 N 日」model for scanner window + ranking custom range.
+    Default ``end`` is ``taiwan_today`` (#73). Dashboard JS ``TwRange`` (#83)
+    mirrors this for scanner window + 市場排行 近 N／自訂區間.
     """
     try:
         n = int(n)

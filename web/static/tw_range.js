@@ -1,6 +1,9 @@
 /* Shared 「近 N 日／自訂區間」model (#83).
- * Taipei trading-day calendar matches web/tw_calendar.py (TWSE 2025–2026).
- * Used by scanner window/asof and 外資排行 (and 個股分點 date snap).
+ * Calendar is the #73 helper: web/tw_calendar.py
+ *   taiwan_today / taiwan_now (Asia/Taipei; no date.today())
+ *   is_tw_trading_day (weekends + TWSE closures; #47 table)
+ * Used by scanner window/asof and 市場外資排行 (個股分點 date snap).
+ * Not #84 overlay charts.
  */
 (function (root, factory) {
   var api = factory();

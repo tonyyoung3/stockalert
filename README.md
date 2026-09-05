@@ -79,7 +79,7 @@ PTT 股板週報跟 Reddit 投資想法週報都是本機整理、印到 stdout�
 
 掃描用寬表 `stock_chips_daily` 是 **SQL VIEW**（不是實體表）：`stock_daily` LEFT JOIN 三大法人日表，鍵是 `(trade_date, stock_id)`。VIEW 不用刷新，底表仍由 `update_market_data` 寫入。欄位、單位、增量與 Turso 見 `docs/stock_chips_daily.md`（#77 / epic #76）。儀表板讀徑繼續打底表，不要改走這個 VIEW。
 
-籌碼 z-score（#78）是 **query-time**：`GET /api/scanner/chip_zscore?tickers=2330,2454&window=20&asof=YYYY-MM-DD`，預設窗格 **20 個交易日**，樣本標準差（ddof=1）。多檔、樣本不足旗標、NULL 規則見 `docs/chip_zscore.md`。不物化。掃描散布圖 UI（#79）與結果表格（#80）共用同一回應：自選多檔、軸可選價量／z-score，表頭可排序、表格可篩選，點擊進個股。本機追蹤清單（#81）存在瀏覽器 `localStorage` 鍵 `stockalert.sc.watchlist.v1`，可增刪、重整後仍在；一鍵套用寫入目前掃描標的（≥2 檔才打同一支 API）。掃描狀態（#82）寫進網址 `?sc=2330,2454`（可加 `scx` / `scy` / `scw` / `scmp` / `scd`），與既有 `?stock=` 同一套 query、可並用 `#scanner`；複製網址即可分享或在新工作階段還原，≥2 檔才打同一支 API。過長時先省略預設／可選參數，再截標的（沒有短網址服務）。沒有雲端同步、也沒有第二條掃描資料徑。掃描窗格與外資排行「近 N 日／自訂區間」共用 `web/static/tw_range.js`（#83）：近 N 日是**台股交易日**，自訂／截至日若落在週末或證交所休市會對齊到前一交易日（假日表與 `web/tw_calendar.py` 同一套 2025–2026）。個股分點日期也走同一個 snap。不另開日期 API。
+籌碼 z-score（#78）是 **query-time**：`GET /api/scanner/chip_zscore?tickers=2330,2454&window=20&asof=YYYY-MM-DD`，預設窗格 **20 個交易日**，樣本標準差（ddof=1）。多檔、樣本不足旗標、NULL 規則見 `docs/chip_zscore.md`。不物化。掃描散布圖 UI（#79）與結果表格（#80）共用同一回應：自選多檔、軸可選價量／z-score，表頭可排序、表格可篩選，點擊進個股。本機追蹤清單（#81）存在瀏覽器 `localStorage` 鍵 `stockalert.sc.watchlist.v1`，可增刪、重整後仍在；一鍵套用寫入目前掃描標的（≥2 檔才打同一支 API）。掃描狀態（#82）寫進網址 `?sc=2330,2454`（可加 `scx` / `scy` / `scw` / `scmp` / `scd`），與既有 `?stock=` 同一套 query、可並用 `#scanner`；複製網址即可分享或在新工作階段還原，≥2 檔才打同一支 API。過長時先省略預設／可選參數，再截標的（沒有短網址服務）。沒有雲端同步、也沒有第二條掃描資料徑。掃描窗格與市場「外資排行」共用 `web/static/tw_range.js` 的「近 N 日／自訂區間」（#83）。日曆是 **#73** 的 `web.tw_calendar.taiwan_today` / `is_tw_trading_day`（Asia/Taipei，禁止裸 `date.today()`）；假日表與 #47 同一套 2025–2026。自訂／截至日落在週末或證交所休市會對齊到前一交易日。個股分點日期走同一個 snap。不另開日期 API，也不做 #84 多檔疊圖。
 
 **Cache-local foreign span ≠ Turso foreign span.** GitHub Actions 的 `twse_data.db` cache 裡 `foreign_daily` 常常只有約 85 個交易日，但 Turso 上同一張表可以有約 510 日。設了 `TURSO_*` 時，`institutional_gaps` 以 Turso（並集本機）的 `foreign_daily` 日期當缺口來源，略過 Turso 上 trust/dealer 都已齊的日期；抓完只推這三張 T86 表的補齊區間，不會用本機 cache 的短外資歷史當「已補完」。未設 secrets 時行為不變，只看本機。
 
@@ -218,7 +218,7 @@ gcloud run deploy stockalert \
 
 窄螢幕（約 375px）控制列改直向堆疊、input 滿寬、表格在區內橫滑；回測的資料集／濾網／進場／出場用 `data-bt-fold` 折疊（手機預設收合），濾網積木是列表、參數為第二層。圖表手勢文案是拖曳／雙指縮放（pinch 原本就開著）。外資排行日期欄在小螢幕改直向、高度至少 44px，避免 iOS 裁切。
 
-Header **顯示範圍**（全域 `days`）只影響加權 K 線／走勢、外資合計、融資融券、台指期未平倉、個股圖。外資買賣超排行用自己的當日／近 N 日／自訂區間，不受全域天數控制；近 N 日與自訂日期對齊台股交易日，與掃描窗格共用 `TwRange`（`/static/tw_range.js`）。
+Header **顯示範圍**（全域 `days`）只影響加權 K 線／走勢、外資合計、融資融券、台指期未平倉、個股圖。外資買賣超排行用自己的當日／近 N 日／自訂區間，不受全域天數控制；近 N 日與自訂日期對齊 #73 台股交易日，與掃描窗格共用 `TwRange`（`/static/tw_range.js`）。
 
 市場 tab 另有獨立卡 **「熱門股分點動向」**（不是「全市場」、也不是 T86 外資排行）：買超／賣超分點 Top 讀 `GET /api/broker_branch/top`，新鮮度讀 `GET /api/broker_branch/freshness`（21:00 截止，不併入 `/api/freshness`）。點當日買超／賣超分點列，下鑽該分點在熱門前 N 檔內的貢獻標的（`GET /api/broker_branch/broker?broker_id=&date=`，買／賣／淨）；近 N 日累計顯示「此切片未支援」。有 token 且已 ingest 時顯示熱門前 N 真實列；無 token／空表顯示「尚未接上 FinMind token」，不是空白圖。手機兩塊列表直向堆疊、各自捲動。本機可用 `python -m market.broker_branch load-fixture --dev` 看示範列，**不要**把 fixture 當 production。
 

@@ -1,16 +1,18 @@
-"""Shared 「近 N 日／自訂區間」helper (#83): JS TwRange + Python calendar."""
+"""Shared 「近 N 日／自訂區間」helper (#83) on the #73 Taipei calendar."""
 from __future__ import annotations
 
 import json
 import subprocess
 import unittest
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 from web.tw_calendar import (
     TWSE_CLOSED_WEEKDAYS,
     last_n_trading_days,
     on_or_before_trading_day,
+    taiwan_today,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,6 +20,19 @@ JS = ROOT / "web" / "static" / "tw_range.js"
 
 
 class PythonCalendarRangeTests(unittest.TestCase):
+    def test_uses_issue_73_taiwan_today_not_date_today(self):
+        utc_fri_1559 = datetime(2026, 9, 4, 15, 59, tzinfo=timezone.utc)
+        utc_fri_1600 = datetime(2026, 9, 4, 16, 0, tzinfo=timezone.utc)
+        naive_utc = datetime(2026, 9, 4, 16, 0)
+        self.assertEqual(taiwan_today(utc_fri_1559), date(2026, 9, 4))
+        self.assertEqual(taiwan_today(utc_fri_1600), date(2026, 9, 5))
+        self.assertEqual(taiwan_today(naive_utc), date(2026, 9, 5))
+
+    def test_last_n_default_end_is_taiwan_today(self):
+        with patch("web.tw_calendar.taiwan_today", return_value=date(2026, 9, 5)):
+            start, end = last_n_trading_days(1)
+        self.assertEqual((start, end), (date(2026, 9, 4), date(2026, 9, 4)))
+
     def test_on_or_before_skips_weekend_and_holiday(self):
         self.assertEqual(on_or_before_trading_day(date(2026, 9, 4)), date(2026, 9, 4))
         self.assertEqual(on_or_before_trading_day(date(2026, 9, 5)), date(2026, 9, 4))
@@ -115,8 +130,10 @@ const el = {value: '2026-01-01'};
 assert.strictEqual(TwRange.snapInput(el), '2025-12-31');
 assert.strictEqual(el.value, '2025-12-31');
 
-const today = TwRange.taiwanToday(new Date('2026-09-04T16:30:00Z'));
-assert.strictEqual(today, '2026-09-05');
+// #73 UTC 16:00 == Taipei midnight (same as web.tw_calendar.taiwan_today)
+assert.strictEqual(TwRange.taiwanToday(new Date('2026-09-04T15:59:00Z')), '2026-09-04');
+assert.strictEqual(TwRange.taiwanToday(new Date('2026-09-04T16:00:00Z')), '2026-09-05');
+assert.strictEqual(TwRange.taiwanToday(new Date('2026-09-04T16:30:00Z')), '2026-09-05');
 
 console.log(JSON.stringify({ok: true, closed: Object.keys(TwRange.CLOSED_WEEKDAYS).length}));
 """

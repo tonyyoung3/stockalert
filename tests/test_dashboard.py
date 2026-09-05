@@ -811,7 +811,7 @@ class DashboardScannerUrlTests(unittest.TestCase):
 
 
 class DashboardTwRangeTests(unittest.TestCase):
-    """#83: scanner window + ranking (and stock date) share TwRange."""
+    """#83: scanner + 市場排行 share TwRange; calendar is #73 tw_calendar."""
 
     def test_html_loads_shared_helper_and_wires_both_surfaces(self):
         html = dashboard.HTML
@@ -848,6 +848,13 @@ class DashboardTwRangeTests(unittest.TestCase):
         )
         self.assertNotIn("stock_chips_daily", src)
         self.assertNotIn("TwRange", src)
+        js = Path(__file__).resolve().parents[1].joinpath("web/static/tw_range.js").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("web/tw_calendar.py", js)
+        self.assertIn("taiwan_today", js)
+        self.assertIn("#73", js)
+        self.assertNotIn("#84", html[html.index("function scReadWindowAsof("):html.index("function topReadRange(")])
 
     def test_url_and_watchlist_gates_still_hold(self):
         html = dashboard.HTML

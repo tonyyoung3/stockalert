@@ -101,6 +101,7 @@ libSQL 支援 `CREATE VIEW`。本機 `init_db` 建 VIEW 後，`data.cloud_db.ens
 ## 不做
 
 - 籌碼 z-score（#78）— 見 `docs/chip_zscore.md`（query-time API，不改本 VIEW）
+- 熱門股分點主力（#98）— 見 `docs/broker_main_force.md`（讀 `broker_branch_daily`，不改本 VIEW）
 - 自選清單 UI（#81）；URL 狀態（#82）。散布圖 #79、結果表格 #80 已讀 chip_zscore API
 - 改儀表板既有 SQL
 - 把上櫃三大法人塞進 T86 三表

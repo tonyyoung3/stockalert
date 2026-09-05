@@ -142,6 +142,7 @@ s = \sqrt{\frac{1}{n-1}\sum_i (x_i - \overline{x})^2}
 
 ## 不做
 
+- 熱門股分點主力（#98）— 見 `docs/broker_main_force.md`（另支 `/api/scanner/broker_main_force`，不改本 API）
 - 自選清單 UI（#81）；URL 狀態（#82）。散布圖 #79、結果表格 #80 已讀本 API
 - 改儀表板既有 SQL 或 `KEY_TABLES`
 - 物化 z-score 表

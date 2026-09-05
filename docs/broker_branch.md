@@ -170,6 +170,14 @@ CREATE INDEX IF NOT EXISTS idx_broker_branch_broker_date
 
 ---
 
+## 掃描衍生：熱門股分點主力（#98）
+
+`GET /api/scanner/broker_main_force?tickers=2330,2454&asof=YYYY-MM-DD&k=5`
+
+在當日已入庫熱門前 N 列上算買／賣超集中度與龍頭分點淨額。**零 FinMind 呼叫**。`coverage: hot_n`，標題仍是「**熱門股分點動向**」，不是全市場。該日沒有該檔列就回空指標。契約見 `docs/broker_main_force.md`。不改本表 ingest、不加大 N。
+
+---
+
 ## API / SQL 契約（給 #55 / #56 / #57）
 
 Base：與現有儀表板相同的 sqlite／Turso 讀取。

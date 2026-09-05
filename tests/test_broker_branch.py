@@ -527,7 +527,7 @@ class WorkflowAndDocsTests(unittest.TestCase):
 
     def test_docs_and_readme_stay_hot_n_not_full_market(self):
         root = Path(__file__).resolve().parents[1]
-        for rel in ("docs/broker_branch.md", "README.md", "TODO.md"):
+        for rel in ("docs/broker_branch.md", "docs/broker_main_force.md", "README.md", "TODO.md"):
             text = root.joinpath(rel).read_text(encoding="utf-8")
             self.assertIn("熱門股", text)
             self.assertRegex(text, r"不是.{0,12}全市場")

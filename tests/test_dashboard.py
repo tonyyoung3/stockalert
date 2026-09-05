@@ -463,7 +463,8 @@ class DashboardNavTests(unittest.TestCase):
         self.assertIn("function resolveSection(", html)
         self.assertIn("function showSection(", html)
         self.assertIn("addEventListener('hashchange'", html)
-        self.assertIn("parseStockQuery(location.search) ? 'stock' : 'market'", html)
+        self.assertIn("parseStockQuery(location.search)", html)
+        self.assertIn("parseScannerQuery()", html)
         self.assertIn("if(opts.section !== false) showSection('stock')", html)
         self.assertIn("showSection(resolveSection(), {updateHash:false})", html)
         self.assertIn("id=\"bt-form\"", html)
@@ -591,6 +592,8 @@ class DashboardNavTests(unittest.TestCase):
         self.assertIn("/api/scanner/chip_zscore", text)
         self.assertIn("stockalert.sc.watchlist.v1", text)
         self.assertIn("一鍵套用", text)
+        self.assertIn("?sc=", text)
+        self.assertIn("過長", text)
 
 
 class DashboardScannerScatterTests(unittest.TestCase):
@@ -717,6 +720,94 @@ class DashboardScannerWatchlistTests(unittest.TestCase):
         load = html[html.index("async function loadScanner("):html.index("async function loadAlerts(")]
         self.assertEqual(load.count("/api/scanner/chip_zscore"), 1)
         self.assertIn("scPicks.map(p=>p.id)", load)
+
+
+class DashboardScannerUrlTests(unittest.TestCase):
+    """#82: encode scanner workbench into ?sc= query (same family as ?stock=)."""
+
+    def test_url_state_wiring_and_restore(self):
+        html = dashboard.HTML
+        self.assertIn("function parseScannerQuery(", html)
+        self.assertIn("function applyScannerQuery(", html)
+        self.assertIn("function syncScannerUrl(", html)
+        self.assertIn("function scEncodeIntoUrl(", html)
+        self.assertIn("function scCollectState(", html)
+        self.assertIn("function scParamsFromLocation(", html)
+        self.assertIn("history.replaceState(null, '', u.pathname + u.search + u.hash)", html)
+        self.assertIn("qs.set('sc'", html)
+        self.assertIn("qs.set('scx'", html)
+        self.assertIn("qs.set('scy'", html)
+        self.assertIn("qs.set('scw'", html)
+        self.assertIn("qs.set('scmp'", html)
+        self.assertIn("qs.set('scd'", html)
+        self.assertIn('id="sc-url-note"', html)
+        self.assertIn("?sc=", html)
+        self.assertIn("複製即可分享或重整還原", html)
+        self.assertIn("parseScannerQuery()", html)
+        self.assertIn("applyScannerQuery(scFromUrl)", html)
+        self.assertIn("if(scShouldLoad) loadScanner()", html)
+        self.assertIn("syncScannerUrl()", html)
+        boot = html[html.index("(function(){"):html.rindex("})();")]
+        self.assertIn("parseScannerQuery()", boot)
+        self.assertIn("applyScannerQuery(scFromUrl)", boot)
+        self.assertIn("if(scShouldLoad) loadScanner()", boot)
+        self.assertIn("renderScannerWatchlist()", boot)
+        add = html[html.index("function addScannerPick("):html.index("function removeScannerPick(")]
+        self.assertIn("syncScannerUrl()", add)
+        self.assertIn("loadScanner()", add)
+        self.assertNotIn("/api/scanner/chip_zscore", add)
+        apply = html[html.index("function applyScannerWatchlist("):html.index("function saveScannerPicksToWatchlist(")]
+        self.assertIn("syncScannerUrl()", apply)
+        self.assertIn("loadScanner()", apply)
+        self.assertNotIn("/api/scanner/chip_zscore", apply)
+        load = html[html.index("async function loadScanner("):html.index("async function loadAlerts(")]
+        self.assertEqual(load.count("/api/scanner/chip_zscore"), 1)
+        self.assertIn("syncScannerUrl()", load)
+        self.assertIn("scRefreshPickNames", load)
+        self.assertEqual(html.count("j('/api/scanner/chip_zscore?"), 1)
+        src = Path(__file__).resolve().parents[1].joinpath("web/dashboard.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("stock_chips_daily", src)
+        self.assertNotIn("scEncodeIntoUrl", src)
+
+    def test_overlong_url_drops_optional_then_truncates_tickers(self):
+        html = dashboard.HTML
+        self.assertIn("const SC_URL_BUDGET = 1800", html)
+        self.assertIn("dropOptional", html)
+        self.assertIn("dropWindow", html)
+        self.assertIn("dropAxes", html)
+        self.assertIn("picks.pop()", html)
+        self.assertIn("網址過長，已省略部分可選參數。", html)
+        self.assertIn("網址過長，已省略部分標的／可選參數。", html)
+        self.assertIn("No shortener", html)
+        self.assertIn("location.hash.replace(/^#/,'').split('?')[1]", html)
+        resolve = html[html.index("function resolveSection("):html.index("function resizeCharts(")]
+        self.assertIn("parseStockQuery(location.search)", resolve)
+        self.assertIn("parseScannerQuery()", resolve)
+        self.assertIn("return 'scanner'", resolve)
+        self.assertIn("return 'stock'", resolve)
+        self.assertIn("return 'market'", resolve)
+        self.assertIn(".split('?')[0]", html[html.index("function parseSectionHash("):html.index("function resolveSection(")])
+
+    def test_url_state_does_not_break_watchlist_or_scatter(self):
+        html = dashboard.HTML
+        self.assertIn("stockalert.sc.watchlist.v1", html)
+        self.assertIn("function applyScannerWatchlist(", html)
+        self.assertIn("function renderScannerChart(", html)
+        self.assertIn("function renderScannerTable(", html)
+        self.assertEqual(html.count("j('/api/scanner/chip_zscore?"), 1)
+        self.assertIn("scLastPayload", html)
+        watch = html[html.index("const SC_WATCH_KEY"):html.index("function scHideChart(")]
+        self.assertNotIn("/api/scanner/chip_zscore", watch)
+        self.assertIn("localStorage.getItem(SC_WATCH_KEY)", watch)
+        table = html[html.index("function renderScannerTable("):html.index("function renderScannerChart(")]
+        self.assertNotIn("/api/scanner/chip_zscore", table)
+        self.assertIn("const payload = scLastPayload", table)
+        src = Path(__file__).resolve().parents[1].joinpath("web/dashboard.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("watchlist", src)
 
 
 class DashboardScannerTableTests(unittest.TestCase):

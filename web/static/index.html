@@ -163,6 +163,8 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
 .sc-watch-actions button.sc-watch-primary{background:#4C72B0;color:#fff;border:none}
 #sc-watch-msg{margin-top:8px}
 #sc-watch-msg[hidden]{display:none!important}
+#sc-url-note{margin:0 0 10px;font-size:12.5px;color:#6c757d;line-height:1.45}
+#sc-url-note[hidden]{display:none!important}
 .sc-controls{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin-bottom:12px}
 .sc-field{display:flex;flex-direction:column;gap:4px;min-width:0}
 .sc-field label{font-size:12px;color:#6c757d}
@@ -418,7 +420,7 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
       <button class="reset-btn" type="button" onclick="resetZoom('c-scanner')">重置</button>
     </span>
   </div>
-  <p class="sc-note">多檔橫向比較工作台，<b>不是</b>個股分頁、不是回測「個股 pattern」宇宙、也不是全市場一次掃描。搜尋加入 ≥2 檔後才向 <code>/api/scanner/chip_zscore</code> 要真實籌碼／價量；<b>一次查詢</b>同時餵散布圖與下方結果表格，沒有第二條資料徑、沒有假資料。追蹤清單存在這個瀏覽器（localStorage），可增刪、重整後仍在；<b>一鍵套用</b>寫入目前掃描標的，≥2 檔才打同一支 API。點圖上的點或表格列會開個股分頁。</p>
+  <p class="sc-note">多檔橫向比較工作台，<b>不是</b>個股分頁、不是回測「個股 pattern」宇宙、也不是全市場一次掃描。搜尋加入 ≥2 檔後才向 <code>/api/scanner/chip_zscore</code> 要真實籌碼／價量；<b>一次查詢</b>同時餵散布圖與下方結果表格，沒有第二條資料徑、沒有假資料。追蹤清單存在這個瀏覽器（localStorage），可增刪、重整後仍在；<b>一鍵套用</b>寫入目前掃描標的，≥2 檔才打同一支 API。標的／軸／窗格寫進網址 <code>?sc=</code>（與 <code>?stock=</code> 同一套 query，可並用 <code>#scanner</code>），複製即可分享或重整還原；過長時先丟掉可選參數再截標的。點圖上的點或表格列會開個股分頁。</p>
   <div class="search">
     <div class="sid-search" id="sc-search">
       <input id="sc-q" placeholder="搜尋代號／名稱，加入比較（复用 /api/stocks）" autocomplete="off"
@@ -445,11 +447,11 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
   <div class="sc-controls">
     <div class="sc-field">
       <label for="sc-x">X 軸</label>
-      <select id="sc-x" onchange="renderScannerChart()"></select>
+      <select id="sc-x" onchange="renderScannerChart();syncScannerUrl()"></select>
     </div>
     <div class="sc-field">
       <label for="sc-y">Y 軸</label>
-      <select id="sc-y" onchange="renderScannerChart()"></select>
+      <select id="sc-y" onchange="renderScannerChart();syncScannerUrl()"></select>
     </div>
     <div class="sc-field">
       <label for="sc-window">窗格（交易日）</label>
@@ -465,7 +467,8 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
     </div>
     <button type="button" class="sc-run" id="sc-run" onclick="loadScanner()">更新掃描</button>
   </div>
-  <p class="hint" id="sc-mobile-note">窄螢幕請用下方表格點進個股；圖上也可點。表頭可排序，篩選只改表格列、不另打 API。軸與窗格／截至日可調，對齊籌碼 z-score 時間模型（預設 20 個交易日）。</p>
+  <p class="hint" id="sc-url-note" hidden></p>
+  <p class="hint" id="sc-mobile-note">窄螢幕請用下方表格點進個股；圖上也可點。表頭可排序，篩選只改表格列、不另打 API。軸與窗格／截至日可調，對齊籌碼 z-score 時間模型（預設 20 個交易日）。複製網址可還原這組掃描。</p>
   <div id="sc-empty" class="bb-empty">請先搜尋並加入至少 2 檔，才會載入掃描散布圖與結果表格。也可從追蹤清單一鍵套用。不是單檔查詢，也不是全市場宇宙。</div>
   <div id="sc-loading" class="empty" hidden>載入中…</div>
   <div id="sc-error" class="bt-error" hidden></div>
@@ -808,7 +811,12 @@ function parseSectionHash(hash){
   return PAGE_SECTIONS.indexOf(h)>=0 ? h : '';
 }
 function resolveSection(){
-  return parseSectionHash() || (parseStockQuery(location.search) ? 'stock' : 'market');
+  const hashed = parseSectionHash();
+  if(hashed) return hashed;
+  if(parseStockQuery(location.search)) return 'stock';
+  const sc = parseScannerQuery();
+  if(sc && sc.picks && sc.picks.length) return 'scanner';
+  return 'market';
 }
 function resizeCharts(){
   Object.keys(charts).forEach(id=>{
@@ -1091,7 +1099,7 @@ function renderScannerPicks(){
     return;
   }
   box.innerHTML = scPicks.map((it,i)=>
-    '<span class="sc-pick">'+esc(it.id)+(it.name?' '+esc(it.name):'')
+    '<span class="sc-pick">'+esc(it.id)+(it.name && it.name!==it.id?' '+esc(it.name):'')
     +'<button type="button" data-i="'+i+'" aria-label="移除 '+esc(it.id)+'">×</button></span>'
   ).join('');
   box.querySelectorAll('button[data-i]').forEach(btn=>{
@@ -1110,12 +1118,14 @@ function addScannerPick(item){
   const inp = document.getElementById('sc-q');
   if(inp) inp.value = '';
   renderScannerPicks();
+  syncScannerUrl();
   if(scPicks.length >= 2) loadScanner();
   else scShowEmpty();
 }
 function removeScannerPick(i){
   scPicks.splice(i, 1);
   renderScannerPicks();
+  syncScannerUrl();
   if(scPicks.length >= 2) loadScanner();
   else { scLastPayload = null; scShowEmpty(); }
 }
@@ -1182,6 +1192,171 @@ async function resolveScannerSearch(){
 async function submitScannerSearch(){
   const item = await resolveScannerSearch();
   if(item) addScannerPick(item);
+}
+// #82: scanner workbench → query params (same family as ?stock=). Hash stays
+// the section (#scanner). Overlong URLs: omit defaults, drop optional (asof /
+// min_periods, then window / axes), then truncate tickers. No shortener.
+const SC_URL_KEYS = ['sc','scx','scy','scw','scmp','scd'];
+const SC_URL_BUDGET = 1800;
+function scUrlNote(text){
+  const el = document.getElementById('sc-url-note');
+  if(!el) return;
+  if(!text){ el.hidden = true; el.textContent = ''; return; }
+  el.hidden = false;
+  el.textContent = text;
+}
+function scValidAxis(key, fallback){
+  return SC_AXES.some(a=>a.key===key) ? key : fallback;
+}
+function scParamsFromLocation(){
+  try{
+    const qs = new URLSearchParams(location.search);
+    if(SC_URL_KEYS.some(k=>qs.get(k))) return qs;
+    const hq = (location.hash.replace(/^#/,'').split('?')[1] || '');
+    return hq ? new URLSearchParams(hq) : qs;
+  }catch(e){ return new URLSearchParams(); }
+}
+function parseScannerQuery(){
+  const qs = scParamsFromLocation();
+  const raw = (qs.get('sc') || qs.get('p') || '').trim();
+  const picks = [];
+  const seen = {};
+  raw.split(/[,+\s]+/).forEach(tok=>{
+    const id = parseStockId(tok);
+    if(!id || seen[id]) return;
+    seen[id] = 1;
+    picks.push(id);
+  });
+  const hasCtrl = SC_URL_KEYS.some(k=>qs.get(k)) || qs.get('p') || qs.get('x') || qs.get('y') || qs.get('w');
+  if(!picks.length && !hasCtrl) return null;
+  const windowN = Math.max(2, Math.min(252, parseInt(qs.get('scw') || qs.get('w'), 10) || 20));
+  let minP = parseInt(qs.get('scmp') || qs.get('mp'), 10);
+  if(!minP) minP = windowN;
+  minP = Math.max(2, Math.min(windowN, minP));
+  const asof = (qs.get('scd') || qs.get('d') || '').trim();
+  return {
+    picks: picks,
+    x: scValidAxis(qs.get('scx') || qs.get('x'), 'foreign_net_z'),
+    y: scValidAxis(qs.get('scy') || qs.get('y'), 'close'),
+    window: windowN,
+    min_periods: minP,
+    asof: /^\d{4}-\d{2}-\d{2}$/.test(asof) ? asof : ''
+  };
+}
+function applyScannerQuery(st){
+  if(!st) return false;
+  initScannerAxes();
+  const x = document.getElementById('sc-x');
+  const y = document.getElementById('sc-y');
+  const w = document.getElementById('sc-window');
+  const m = document.getElementById('sc-min-periods');
+  const d = document.getElementById('sc-asof');
+  if(x) x.value = st.x || 'foreign_net_z';
+  if(y) y.value = st.y || 'close';
+  if(w) w.value = st.window || 20;
+  if(m) m.value = st.min_periods || st.window || 20;
+  if(d) d.value = st.asof || '';
+  if(st.picks && st.picks.length){
+    scPicks = st.picks.slice(0, SC_MAX).map(id=>({id:id, name:id}));
+  }
+  renderScannerPicks();
+  return st.picks && st.picks.length >= 2;
+}
+function scCollectState(){
+  initScannerAxes();
+  const picks = [];
+  const seen = {};
+  scPicks.forEach(p=>{
+    const id = parseStockId(p && p.id);
+    if(!id || seen[id]) return;
+    seen[id] = 1;
+    picks.push(id);
+  });
+  const windowN = Math.max(2, Math.min(252, parseInt((document.getElementById('sc-window')||{}).value, 10) || 20));
+  let minP = parseInt((document.getElementById('sc-min-periods')||{}).value, 10);
+  if(!minP) minP = windowN;
+  minP = Math.max(2, Math.min(windowN, minP));
+  const asof = ((document.getElementById('sc-asof')||{}).value || '').trim();
+  return {
+    picks: picks,
+    x: scValidAxis((document.getElementById('sc-x')||{}).value, 'foreign_net_z'),
+    y: scValidAxis((document.getElementById('sc-y')||{}).value, 'close'),
+    window: windowN,
+    min_periods: minP,
+    asof: /^\d{4}-\d{2}-\d{2}$/.test(asof) ? asof : ''
+  };
+}
+function scFillParams(state, flags){
+  flags = flags || {};
+  const qs = new URLSearchParams();
+  if(state.picks && state.picks.length) qs.set('sc', state.picks.join(','));
+  if(!flags.dropAxes){
+    if(state.x && state.x!=='foreign_net_z') qs.set('scx', state.x);
+    if(state.y && state.y!=='close') qs.set('scy', state.y);
+  }
+  if(!flags.dropWindow && state.window && state.window!==20) qs.set('scw', String(state.window));
+  if(!flags.dropOptional){
+    if(state.min_periods && state.min_periods!==state.window) qs.set('scmp', String(state.min_periods));
+    if(state.asof) qs.set('scd', state.asof);
+  }
+  return qs;
+}
+function scEncodeIntoUrl(u, state){
+  SC_URL_KEYS.forEach(k=>u.searchParams.delete(k));
+  if(!state || !state.picks || !state.picks.length) return '';
+  let picks = state.picks.slice();
+  const attempts = [
+    {dropOptional:false, dropWindow:false, dropAxes:false},
+    {dropOptional:true, dropWindow:false, dropAxes:false},
+    {dropOptional:true, dropWindow:true, dropAxes:false},
+    {dropOptional:true, dropWindow:true, dropAxes:true}
+  ];
+  function fits(qs){
+    const next = new URL(u.href);
+    SC_URL_KEYS.forEach(k=>next.searchParams.delete(k));
+    qs.forEach((v,k)=>next.searchParams.set(k,v));
+    return (next.pathname + next.search + next.hash).length <= SC_URL_BUDGET;
+  }
+  let chosen = null;
+  let note = '';
+  for(let i=0;i<attempts.length;i++){
+    const qs = scFillParams(Object.assign({}, state, {picks:picks}), attempts[i]);
+    if(fits(qs)){
+      chosen = qs;
+      if(i>0) note = '網址過長，已省略部分可選參數。';
+      break;
+    }
+  }
+  if(!chosen){
+    note = '網址過長，已省略部分標的／可選參數。';
+    while(picks.length){
+      picks.pop();
+      const qs = scFillParams(Object.assign({}, state, {picks:picks}), {dropOptional:true, dropWindow:true, dropAxes:true});
+      if(fits(qs)){ chosen = qs; break; }
+    }
+  }
+  if(chosen) chosen.forEach((v,k)=>u.searchParams.set(k,v));
+  return note;
+}
+function syncScannerUrl(){
+  try{
+    const u = new URL(location.href);
+    const note = scEncodeIntoUrl(u, scCollectState());
+    history.replaceState(null, '', u.pathname + u.search + u.hash);
+    scUrlNote(note);
+  }catch(e){}
+}
+function scRefreshPickNames(rows){
+  if(!rows || !rows.length) return;
+  const names = {};
+  rows.forEach(row=>{
+    if(row && row.stock_id) names[row.stock_id] = row.stock_name || row.stock_id;
+  });
+  let changed = false;
+  scPicks.forEach(p=>{
+    if(names[p.id] && p.name!==names[p.id]){ p.name = names[p.id]; changed = true; }
+  });
+  if(changed) renderScannerPicks();
 }
 const SC_WATCH_KEY = 'stockalert.sc.watchlist.v1';
 const SC_WATCH_CAP = SC_MAX;
@@ -1281,6 +1456,7 @@ function applyScannerWatchlist(){
   scPicks = store.tickers.slice(0, SC_MAX).map(t=>({id:t.id, name:t.name||t.id}));
   hideScannerMenu();
   renderScannerPicks();
+  syncScannerUrl();
   if(scPicks.length >= 2){
     scWatchStatus('已套用 '+scPicks.length+' 檔到掃描標的。', 'ok');
     loadScanner();
@@ -1653,6 +1829,7 @@ async function loadScanner(){
   initScannerAxes();
   if(scPicks.length < 2){
     scLastPayload = null;
+    syncScannerUrl();
     scShowEmpty();
     return;
   }
@@ -1677,6 +1854,8 @@ async function loadScanner(){
       return;
     }
     scLastPayload = r;
+    scRefreshPickNames(r.data||[]);
+    syncScannerUrl();
     renderScannerChart();
   }catch(e){
     scLastPayload = null;
@@ -3612,10 +3791,13 @@ window.addEventListener('resize', resizeCharts);
   if(id) selectStock(id, null, {load:false, scroll:false, section:false});
   initBtFolds();
   initScannerAxes();
+  const scFromUrl = parseScannerQuery();
+  const scShouldLoad = scFromUrl ? applyScannerQuery(scFromUrl) : false;
   renderScannerPicks();
   renderScannerWatchlist();
   loadAll();
   showSection(resolveSection(), {updateHash:false});
+  if(scShouldLoad) loadScanner();
 })();
 </script>
 </body>

@@ -434,8 +434,8 @@ def _t86_colmap(fields: list | None) -> dict[str, int]:
         "trust_buy": find("投信買進"),
         "trust_sell": find("投信賣出"),
         "trust_net": find("投信買賣超"),
-        # 「自營商買賣超股數」不含「自行買賣」「避險」= 合計欄
-        "dealer_net": find("自營商買賣超", exclude=("自行", "避險")),
+        # 「自營商買賣超股數」合計欄. Must not pick 外資自營商 or 自行買賣/避險.
+        "dealer_net": find("自營商買賣超", exclude=("自行", "避險", "外資", "外陸")),
         "dealer_prop_buy": find("自營商買進", "自行"),
         "dealer_prop_sell": find("自營商賣出", "自行"),
         "dealer_hedge_buy": find("自營商買進", "避險"),

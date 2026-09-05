@@ -217,6 +217,13 @@ class TestParseT86Institutional(unittest.TestCase):
             collector.EMPTY_T86,
         )
 
+    def test_dealer_net_is_not_foreign_dealer(self):
+        """「外資自營商買賣超」must not be read as 自營商合計."""
+        cmap = collector._t86_colmap(FAKE_T86_FIELDS)
+        self.assertEqual(cmap["dealer_net"], 11)
+        self.assertEqual(cmap["trust_net"], 10)
+        self.assertNotEqual(cmap["dealer_net"], 7)
+
 
 class TestParseTaiexOHLC(unittest.TestCase):
     def test_roc_year_conversion(self):

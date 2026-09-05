@@ -99,7 +99,7 @@ class DashboardAuthHTTPTests(unittest.TestCase):
             with _serve() as base:
                 status, _, body = _request(base + "/")
                 self.assertEqual(status, 200)
-                self.assertIn(b"台股資料儀表板", body)
+                self.assertIn("台股資料儀表板".encode("utf-8"), body)
                 with patch.object(dashboard, "api", return_value={"ok": True}):
                     status, _, body = _request(base + "/api/summary")
                 self.assertEqual(status, 200)
@@ -129,7 +129,7 @@ class DashboardAuthHTTPTests(unittest.TestCase):
             with _serve() as base:
                 status, _, body = _request(base + "/", headers=headers)
                 self.assertEqual(status, 200)
-                self.assertIn(b"台股資料儀表板", body)
+                self.assertIn("台股資料儀表板".encode("utf-8"), body)
                 with patch.object(dashboard, "api", return_value={"ok": True}):
                     status, _, body = _request(base + "/api/summary", headers=headers)
                 self.assertEqual(status, 200)

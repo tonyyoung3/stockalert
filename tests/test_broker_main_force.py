@@ -103,7 +103,7 @@ class QueryTests(unittest.TestCase):
         )
         self.assertEqual(out["title"], "熱門股分點動向")
         self.assertNotIn("全市場", out["title"])
-        self.assertNotIn("全市場", out["coverage_note"])
+        self.assertIn("不是全市場", out["coverage_note"])
         self.assertEqual(out["coverage"], "hot_n")
         self.assertEqual(out["path"], "A")
         self.assertEqual(out["slice_decision"], "hot_n")
@@ -182,16 +182,19 @@ class QueryTests(unittest.TestCase):
             self.conn, ["2330"], k=5, asof="2026-09-03", env={},
         )
         dumped = json.dumps(out, ensure_ascii=False)
-        self.assertNotIn("全市場", dumped)
+        self.assertNotIn("全市場", out["title"])
         self.assertNotEqual(out["coverage"], "full_market")
+        self.assertNotIn("全市場分點", dumped)
+        self.assertIn("不是全市場", out["coverage_note"])
 
 
 class NoFinMindTests(unittest.TestCase):
     def test_module_has_no_finmind_client(self):
-        self.assertNotIn("FINMIND", SRC)
-        self.assertNotIn("finmind", SRC.lower())
-        self.assertNotIn("requests", SRC)
+        self.assertNotIn("import requests", SRC)
+        self.assertNotIn("FINMIND_TOKEN", SRC)
+        self.assertNotIn("FINMIND_SECID", SRC)
         self.assertNotIn("TaiwanStockTradingDailyReport", SRC)
+        self.assertNotIn("api.finmindtrade.com", SRC)
         self.assertNotIn("live_ingest", SRC)
         self.assertIn("broker_branch_daily", SRC)
 

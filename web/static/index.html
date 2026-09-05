@@ -9,6 +9,7 @@
 <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial@0.2.1"></script>
 <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.2.0"></script>
+<script src="/static/tw_range.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{max-width:100%;}
@@ -321,7 +322,7 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
       <input type="date" id="top-start" onchange="onTopDates()" aria-label="起始日期">
       <span class="hint">～</span>
       <input type="date" id="top-end" onchange="onTopDates()" aria-label="結束日期">
-      <span class="hint">此區間只控制排行，與上方全域天數無關。點長條可開啟「個股」分頁</span>
+      <span class="hint">此區間只控制排行，與上方全域天數無關。點長條可開啟「個股」分頁。近 N 日／自訂日期對齊台股交易日（與掃描窗格同一套模型）。</span>
     </span>
   </div>
   <div class="two" style="margin-bottom:0">
@@ -391,7 +392,7 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
     <h3 id="sbb-title">券商分點買賣超</h3>
     <span class="top-range">
       <input type="date" id="sbb-date" onchange="onSbbDate()" aria-label="個股分點日期">
-      <span class="hint">此日期只控制該檔分點，與上方個股圖、全域天數無關。空白＝表內最新日</span>
+      <span class="hint">此日期只控制該檔分點，與上方個股圖、全域天數無關。空白＝表內最新日。非交易日會對齊到前一交易日。</span>
     </span>
   </div>
   <p class="bb-sub" id="sbb-sub">該檔讀已入庫熱門前 N 列（熱門股分點，非全市場）。來源 FinMind 分點（約 21:00），不是證交所 T86 外資排行。</p>
@@ -454,8 +455,17 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
       <select id="sc-y" onchange="renderScannerChart();syncScannerUrl()"></select>
     </div>
     <div class="sc-field">
+      <label for="sc-window-preset">時間區間</label>
+      <select id="sc-window-preset" aria-label="掃描近 N 交易日" onchange="onScWindowPreset()">
+        <option value="5">近 5 日</option>
+        <option value="20" selected>近 20 日</option>
+        <option value="60">近 60 日</option>
+        <option value="custom">自訂窗格</option>
+      </select>
+    </div>
+    <div class="sc-field">
       <label for="sc-window">窗格（交易日）</label>
-      <input type="number" id="sc-window" min="2" max="252" value="20" inputmode="numeric" aria-label="z-score 窗格交易日" onchange="loadScanner()">
+      <input type="number" id="sc-window" min="2" max="252" value="20" inputmode="numeric" aria-label="z-score 窗格交易日" onchange="onScWindowInput()">
     </div>
     <div class="sc-field">
       <label for="sc-min-periods">最少期數 min_periods</label>
@@ -468,7 +478,7 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
     <button type="button" class="sc-run" id="sc-run" onclick="loadScanner()">更新掃描</button>
   </div>
   <p class="hint" id="sc-url-note" hidden></p>
-  <p class="hint" id="sc-mobile-note">窄螢幕請用下方表格點進個股；圖上也可點。表頭可排序，篩選只改表格列、不另打 API。軸與窗格／截至日可調，對齊籌碼 z-score 時間模型（預設 20 個交易日）。複製網址可還原這組掃描。</p>
+  <p class="hint" id="sc-mobile-note">窄螢幕請用下方表格點進個股；圖上也可點。表頭可排序，篩選只改表格列、不另打 API。軸與窗格／截至日可調，對齊籌碼 z-score 時間模型（預設 20 個交易日）。近 N 日與截至日對齊台股交易日，與外資排行同一套時間模型。複製網址可還原這組掃描。</p>
   <div id="sc-empty" class="bb-empty">請先搜尋並加入至少 2 檔，才會載入掃描散布圖與結果表格。也可從追蹤清單一鍵套用。不是單檔查詢，也不是全市場宇宙。</div>
   <div id="sc-loading" class="empty" hidden>載入中…</div>
   <div id="sc-error" class="bt-error" hidden></div>
@@ -1229,18 +1239,19 @@ function parseScannerQuery(){
   });
   const hasCtrl = SC_URL_KEYS.some(k=>qs.get(k)) || qs.get('p') || qs.get('x') || qs.get('y') || qs.get('w');
   if(!picks.length && !hasCtrl) return null;
-  const windowN = Math.max(2, Math.min(252, parseInt(qs.get('scw') || qs.get('w'), 10) || 20));
+  const windowN = TwRange.clampWindow(qs.get('scw') || qs.get('w'));
   let minP = parseInt(qs.get('scmp') || qs.get('mp'), 10);
   if(!minP) minP = windowN;
   minP = Math.max(2, Math.min(windowN, minP));
-  const asof = (qs.get('scd') || qs.get('d') || '').trim();
+  const asofRaw = (qs.get('scd') || qs.get('d') || '').trim();
+  const asof = TwRange.isYmd(asofRaw) ? TwRange.onOrBefore(asofRaw) : '';
   return {
     picks: picks,
     x: scValidAxis(qs.get('scx') || qs.get('x'), 'foreign_net_z'),
     y: scValidAxis(qs.get('scy') || qs.get('y'), 'close'),
     window: windowN,
     min_periods: minP,
-    asof: /^\d{4}-\d{2}-\d{2}$/.test(asof) ? asof : ''
+    asof: asof
   };
 }
 function applyScannerQuery(st){
@@ -1253,9 +1264,13 @@ function applyScannerQuery(st){
   const d = document.getElementById('sc-asof');
   if(x) x.value = st.x || 'foreign_net_z';
   if(y) y.value = st.y || 'close';
-  if(w) w.value = st.window || 20;
+  if(w) w.value = TwRange.clampWindow(st.window || 20);
   if(m) m.value = st.min_periods || st.window || 20;
-  if(d) d.value = st.asof || '';
+  if(d){
+    d.value = st.asof || '';
+    TwRange.snapInput(d);
+  }
+  TwRange.syncPresetSelect(document.getElementById('sc-window-preset'), (w && w.value) || 20);
   if(st.picks && st.picks.length){
     scPicks = st.picks.slice(0, SC_MAX).map(id=>({id:id, name:id}));
   }
@@ -1272,19 +1287,39 @@ function scCollectState(){
     seen[id] = 1;
     picks.push(id);
   });
-  const windowN = Math.max(2, Math.min(252, parseInt((document.getElementById('sc-window')||{}).value, 10) || 20));
+  const wa = scReadWindowAsof();
   let minP = parseInt((document.getElementById('sc-min-periods')||{}).value, 10);
-  if(!minP) minP = windowN;
-  minP = Math.max(2, Math.min(windowN, minP));
-  const asof = ((document.getElementById('sc-asof')||{}).value || '').trim();
+  if(!minP) minP = wa.window;
+  minP = Math.max(2, Math.min(wa.window, minP));
   return {
     picks: picks,
     x: scValidAxis((document.getElementById('sc-x')||{}).value, 'foreign_net_z'),
     y: scValidAxis((document.getElementById('sc-y')||{}).value, 'close'),
-    window: windowN,
+    window: wa.window,
     min_periods: minP,
-    asof: /^\d{4}-\d{2}-\d{2}$/.test(asof) ? asof : ''
+    asof: wa.asof
   };
+}
+function scReadWindowAsof(){
+  const windowN = TwRange.clampWindow((document.getElementById('sc-window')||{}).value);
+  const wEl = document.getElementById('sc-window');
+  if(wEl) wEl.value = windowN;
+  TwRange.syncPresetSelect(document.getElementById('sc-window-preset'), windowN);
+  return {window: windowN, asof: TwRange.snapInput(document.getElementById('sc-asof'))};
+}
+function onScWindowPreset(){
+  const el = document.getElementById('sc-window-preset');
+  const w = document.getElementById('sc-window');
+  if(!el || el.value==='custom'){
+    if(w) w.focus();
+    return;
+  }
+  if(w) w.value = el.value;
+  loadScanner();
+}
+function onScWindowInput(){
+  scReadWindowAsof();
+  loadScanner();
 }
 function scFillParams(state, flags){
   flags = flags || {};
@@ -1834,18 +1869,15 @@ async function loadScanner(){
     return;
   }
   scShowLoading();
-  const windowN = Math.max(2, Math.min(252, parseInt((document.getElementById('sc-window')||{}).value, 10) || 20));
+  const wa = scReadWindowAsof();
   let minP = parseInt((document.getElementById('sc-min-periods')||{}).value, 10);
-  if(!minP) minP = windowN;
-  minP = Math.max(2, Math.min(windowN, minP));
-  const wEl = document.getElementById('sc-window');
+  if(!minP) minP = wa.window;
+  minP = Math.max(2, Math.min(wa.window, minP));
   const mEl = document.getElementById('sc-min-periods');
-  if(wEl) wEl.value = windowN;
   if(mEl) mEl.value = minP;
-  const asof = ((document.getElementById('sc-asof')||{}).value || '').trim();
   const tickers = scPicks.map(p=>p.id).join(',');
-  const qs = new URLSearchParams({tickers:tickers, window:String(windowN), min_periods:String(minP)});
-  if(/^\d{4}-\d{2}-\d{2}$/.test(asof)) qs.set('asof', asof);
+  const qs = new URLSearchParams({tickers:tickers, window:String(wa.window), min_periods:String(minP)});
+  if(TwRange.isYmd(wa.asof)) qs.set('asof', wa.asof);
   try{
     const r = await j('/api/scanner/chip_zscore?'+qs.toString());
     if(!r || r.error==='missing_tickers'){
@@ -2227,17 +2259,17 @@ async function loadTaifexOi(){
   } catch(e){ setChartEmpty('c-taifex', EMPTY_MARKET); }
 }
 
-function topRangeParams(){
+function topReadRange(){
   const preset = document.getElementById('top-preset').value;
   if(preset==='custom'){
-    const s = document.getElementById('top-start').value;
-    const e = document.getElementById('top-end').value;
-    const q = [];
-    if(s) q.push('start='+s);
-    if(e) q.push('end='+e);
-    return q.length ? '?'+q.join('&') : '';
+    const start = TwRange.snapInput(document.getElementById('top-start'));
+    const end = TwRange.snapInput(document.getElementById('top-end'));
+    return TwRange.normalize({mode:'custom', start:start, end:end});
   }
-  return '?days='+encodeURIComponent(preset);
+  return {mode:'last_n', n: TwRange.clampInt(preset, 1, 1, 730)};
+}
+function topRangeParams(){
+  return TwRange.toTopQuery(topReadRange());
 }
 function onTopPreset(){
   if(document.getElementById('top-preset').value==='custom') return;
@@ -2245,6 +2277,8 @@ function onTopPreset(){
 }
 function onTopDates(){
   document.getElementById('top-preset').value = 'custom';
+  TwRange.snapInput(document.getElementById('top-start'));
+  TwRange.snapInput(document.getElementById('top-end'));
   loadTop();
 }
 async function loadTop(){
@@ -2567,11 +2601,13 @@ const SBB_EMPTY_PICK = '請先選股（搜尋代號／名稱，或用網址 ?sto
 const SBB_EMPTY_NODATA = '此檔當日沒有分點列（熱門前 N 檔才會入庫，非全市場）。不是空白圖表，也不是 T86 外資。';
 
 function sbbDateParam(){
-  const el = document.getElementById('sbb-date');
-  const v = el && el.value ? el.value : '';
+  const v = TwRange.snapInput(document.getElementById('sbb-date'));
   return v ? '&date='+encodeURIComponent(v) : '';
 }
-function onSbbDate(){ loadStockBrokerBranch(); }
+function onSbbDate(){
+  TwRange.snapInput(document.getElementById('sbb-date'));
+  loadStockBrokerBranch();
+}
 function sbbSafeTitle(title){
   if(!title || String(title).indexOf('全市場')>=0) return SBB_TITLE;
   return SBB_TITLE;

@@ -106,3 +106,40 @@ def holiday_name(d: date) -> str | None:
 def is_tw_trading_day(d: date) -> bool:
     """Weekday and not a TWSE cash-market holiday."""
     return d.weekday() < 5 and d not in TWSE_CLOSED_WEEKDAYS
+
+
+def on_or_before_trading_day(d: date, max_lookback: int = 400) -> date:
+    """``d`` if it is a TWSE trading day, else the previous one."""
+    for _ in range(max_lookback):
+        if is_tw_trading_day(d):
+            return d
+        d -= timedelta(days=1)
+    raise ValueError(
+        f"no TW trading day in {max_lookback} days on/before {d.isoformat()}"
+    )
+
+
+def last_n_trading_days(n: int, end: date | None = None) -> tuple[date, date]:
+    """Inclusive (start, end) covering ``n`` TWSE trading days ending at ``end``.
+
+    ``end`` snaps with ``on_or_before_trading_day``. ``n`` is clamped to 1–730.
+    Used by the dashboard JS helper (``web/static/tw_range.js``) as the shared
+    「近 N 日」model for scanner window + ranking custom range.
+    """
+    try:
+        n = int(n)
+    except (TypeError, ValueError):
+        n = 1
+    n = max(1, min(n, 730))
+    end = on_or_before_trading_day(end or taiwan_today())
+    start = end
+    found = 0
+    d = end
+    for _ in range(n * 3 + 40):
+        if is_tw_trading_day(d):
+            found += 1
+            start = d
+            if found >= n:
+                break
+        d -= timedelta(days=1)
+    return start, end

@@ -2032,7 +2032,7 @@ function btChipLabels(blocks){
     const ref = {first_hour_high:'第一小時高點', first_hour_low:'第一小時低點', day_open:'開盤價', prev_close:'前收'}[entry.reference]||entry.reference;
     const trig = entry.trigger==='touch_from_below' ? '向下觸及' : '向上觸及';
     chips.push('則進場 '+dir+' '+ref+' '+trig);
-    chips.push('則出場 '+(ex.exit_hour||13)+':00 收盤');
+    chips.push('則出場 '+((ex.exit_hour||13)==13 ? '13:30' : (ex.exit_hour||13)+':00')+' 收盤');
     if(ex.stop_enabled) chips.push('停損開');
   } else if(blocks.mode==='overnight'){
     const hold = {next_open:'隔日開盤', next_close:'隔日收盤', next_hour:'隔日'+(ex.hold_to_hour||10)+':00'}[ex.hold_to]||'隔日出場';

@@ -525,7 +525,8 @@ def summarize_blocks(blocks: dict) -> list[str]:
         }.get(entry.get("reference"), entry.get("reference", ""))
         trig = "向下觸及" if entry.get("trigger") == "touch_from_below" else "向上觸及"
         chips.append(f"則進場 {direction} {ref} {trig}")
-        chips.append(f"則出場 {exit_block.get('exit_hour', 13)}:00 收盤")
+        eh = _as_int(exit_block.get("exit_hour"), 13)
+        chips.append("則出場 13:30 收盤" if eh == 13 else f"則出場 {eh}:00 收盤")
         if exit_block.get("stop_enabled"):
             chips.append("停損開")
     elif mode == "overnight":

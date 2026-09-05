@@ -266,6 +266,59 @@ def parse_stock_query(query: str | None) -> str | None:
     return token if _STOCK_ID.fullmatch(token) else None
 
 
+def parse_backtest_query(query: str | None) -> dict | None:
+    """Extract stock/pattern prefill from a #backtest deep link.
+
+    Mirrors dashboard JS ``parseBacktestQuery``: hash query
+    ``#backtest?stock=&pattern=`` wins; otherwise search params when the
+    hash section is backtest. Prefixed ``bts`` / ``btp`` also work.
+    Invalid tickers become ``""``; returns None when there is nothing to
+    prefill. Does not raise on junk input.
+    """
+    if not query:
+        return None
+    try:
+        raw = str(query).strip()
+        hash_part = ""
+        path_or_search = raw
+        if "#" in raw:
+            path_or_search, hash_part = raw.split("#", 1)
+        search_part = ""
+        if "?" in path_or_search:
+            search_part = path_or_search.split("?", 1)[1]
+        elif "=" in path_or_search and "://" not in path_or_search:
+            search_part = path_or_search[1:] if path_or_search.startswith("?") else path_or_search
+        hash_section = hash_part
+        hash_qs = ""
+        if "?" in hash_part:
+            hash_section, hash_qs = hash_part.split("?", 1)
+        hash_section = hash_section.strip()
+        if hash_section.startswith("section-"):
+            hash_section = hash_section[8:]
+        params: dict[str, str] = {}
+        if search_part:
+            params.update(
+                {k: (v[0] if v else "") for k, v in parse_qs(search_part, keep_blank_values=True).items()}
+            )
+        if hash_qs:
+            params.update(
+                {k: (v[0] if v else "") for k, v in parse_qs(hash_qs, keep_blank_values=True).items()}
+            )
+        on_backtest = hash_section == "backtest"
+        explicit = "bts" in params or "btp" in params or bool(hash_qs)
+        if not on_backtest and not explicit:
+            return None
+        stock = (params.get("bts") or params.get("stock") or "").strip()
+        pattern = (params.get("btp") or params.get("pattern") or "").strip()[:80]
+        token = stock.split()[0] if stock else ""
+        stock_id = token if _STOCK_ID.fullmatch(token) else ""
+        if not stock_id and not pattern:
+            return None
+        return {"stock": stock_id, "pattern": pattern}
+    except Exception:
+        return None
+
+
 def _foreign_window(qs):
     """Inclusive (start, end) for foreign ranking. Empty DB → (None, None).
 

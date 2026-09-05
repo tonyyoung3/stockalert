@@ -1,8 +1,18 @@
 # stock_chips_daily — 掃描用日頻籌碼＋價量契約（#77 / epic #76）
 
-**狀態：VIEW 契約。** 不實作 z-score（#78）或掃描散布圖（#79）。
+**狀態：VIEW 契約，可 merge。** 不實作 z-score（#78）或掃描散布圖（#79）。DE merge（本票不自動合）。
 
-多檔掃描要一張穩定的日頻寬表：價量來自 `stock_daily`，三大法人買賣超來自 `foreign_daily`／`trust_daily`／`dealer_daily`。本物件是 **SQL VIEW**，不是實體表。
+多檔掃描要一張穩定的日頻寬表：價量來自 `stock_daily`，三大法人買賣超來自 `foreign_daily`／`trust_daily`／`dealer_daily`（#64 / `f09da98` 已在 main，與外資同日覆蓋）。本物件是 **SQL VIEW**，不是實體表。
+
+## PM merge gates
+
+| # | Gate | 本契約 |
+| --- | --- | --- |
+| 1 | Documented columns / PK | 下表欄位；**邏輯 PK = `(trade_date, stock_id)`**（承 `stock_daily` 實體 PK；VIEW 本身沒有 SQLite PRIMARY KEY） |
+| 2 | Queryable recent N days × many tickers | 見下方 SQL；測試 `test_recent_n_days_many_tickers` |
+| 3 | Clear incremental strategy | VIEW **不刷新**。底表仍由 18:00 `update_market_data` 寫入；Turso 只推 table 列 + VIEW DDL |
+| 4 | Do not break existing dashboard read paths | 儀表板／`KEY_TABLES` 繼續打底表，不改走 VIEW |
+| 5 | CI green then merge | CI 綠後由 **DE merge** |
 
 ---
 
@@ -14,7 +24,7 @@
 | 類型 | `VIEW`（`collector.init_db` 建立；`DROP VIEW IF EXISTS` 後重建，定義可演進） |
 | 左表 | `stock_daily`（上市 MI_INDEX + 上櫃櫃買，同一張日 K） |
 | 右表 | `foreign_daily`、`trust_daily`、`dealer_daily`（證交所 T86；**只有上市**） |
-| Join 鍵 | `(trade_date, stock_id)`，三個 LEFT JOIN 都用這對鍵 |
+| Join 鍵 / 邏輯 PK | `(trade_date, stock_id)`。三個 LEFT JOIN 都用這對鍵；一檔一日一列 |
 | 列來源 | 左表有日 K 才出現。只有法人、沒有日 K 的列**不會**進 VIEW（SQLite 無 FULL OUTER JOIN） |
 
 上櫃列會出現（`stock_daily` 有），法人欄是 `NULL`。T86 本來就不收 OTC，與 README／#64 一致。
@@ -25,7 +35,7 @@
 
 ## 欄位
 
-鍵：`trade_date`（`YYYY-MM-DD`）+ `stock_id`。一檔一日一列。
+**PK（邏輯）：** `(trade_date, stock_id)`。`trade_date` 為 `YYYY-MM-DD`。一檔一日一列。底表 `stock_daily` / T86 三表的實體 `PRIMARY KEY` 也是這對。
 
 | 欄位 | 來源 | 單位／備註 |
 | --- | --- | --- |

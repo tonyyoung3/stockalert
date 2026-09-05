@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """stock_chips_daily VIEW contract (#77)."""
-import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
 
 from market import collector
+from web.freshness import KEY_TABLES
+
+REPO = Path(__file__).resolve().parents[1]
 
 
 STOCK_CHIPS_COLUMNS = [
@@ -119,6 +121,13 @@ class StockChipsDailyTests(unittest.TestCase):
         self.assertEqual(otc[3], 500.0)
         self.assertTrue(all(v is None for v in otc[6:15]))
 
+        # Logical PK (trade_date, stock_id) is unique
+        n, distinct = self.conn.execute(
+            "SELECT COUNT(*), COUNT(DISTINCT trade_date || '#' || stock_id) "
+            "FROM stock_chips_daily WHERE trade_date >= '2026-09-03'"
+        ).fetchone()
+        self.assertEqual(n, distinct)
+
     def test_recent_n_days_many_tickers(self):
         self._load_fixtures()
         rows = self.conn.execute(
@@ -170,3 +179,16 @@ class StockChipsDailyTests(unittest.TestCase):
             trust_cols,
             {"trade_date", "stock_id", "stock_name", "trust_buy", "trust_sell", "trust_net"},
         )
+        dealer_net = self.conn.execute(
+            "SELECT dealer_net FROM dealer_daily "
+            "WHERE trade_date='2026-09-03' AND stock_id='2330'"
+        ).fetchone()[0]
+        self.assertEqual(dealer_net, 4)
+        self.assertEqual(
+            KEY_TABLES,
+            ("foreign_daily", "stock_daily", "taifex", "alerts"),
+        )
+        self.assertNotIn("stock_chips_daily", KEY_TABLES)
+        for rel in ("web/dashboard.py", "web/freshness.py"):
+            text = (REPO / rel).read_text()
+            self.assertNotIn("stock_chips_daily", text)

@@ -1,6 +1,6 @@
 # 熱門股分點主力 — 掃描衍生指標（#98 / epic #76）
 
-**狀態：query-time 契約。** 只讀路徑 A 已入庫的 `broker_branch_daily`（熱門前 N）。**零 FinMind 增量**。標題鎖定「**熱門股分點動向**」，禁止寫「全市場」。掃描 UI 軸／表格由後續 SWE 接；本票只提供多檔 API。
+**狀態：query-time 契約 + 掃描工作台面板（#101）。** 只讀路徑 A 已入庫的 `broker_branch_daily`（熱門前 N）。**零 FinMind 增量**。標題鎖定「**熱門股分點動向**」，禁止寫「全市場」。掃描工作台另塊面板讀本 API，與 chip_zscore 散布圖分開；同一套 `tickers`+`asof`。
 
 來源：DE 評估 #85（零額度衍生）。資料契約見 `docs/broker_branch.md`。
 
@@ -100,7 +100,7 @@
 
 `data` 順序跟請求 `tickers` 相同。
 
-掃描工作台之後可把這三個 `fields` 當散布圖／表格軸（與 `chip_zscore` 同一套 `tickers`+`asof`）。本票不改 `web/static/index.html`。
+掃描工作台「熱門股分點動向」面板讀這三個 `fields`（與 `chip_zscore` 同一套 `tickers`+`asof`），不是籌碼散布圖軸。見 `web/static/index.html`。
 
 ---
 
@@ -120,5 +120,5 @@
 - 加大 `BROKER_BRANCH_HOT_N`、分點長歷史回補
 - SponsorPro 全市場 parquet／標題寫全市場
 - BSR／OpenAPI 熱門進出假裝分點
-- 掃描 UI（散布圖軸、表格欄）— SWE 另票
+- 把主力欄位混進 chip_zscore 散布圖軸（#101 用獨立面板）
 - 券商群組歸母公司（#85 可選，本票不做）

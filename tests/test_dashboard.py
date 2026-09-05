@@ -1069,6 +1069,102 @@ class DashboardStockBacktestUITests(unittest.TestCase):
         self.assertLess(stock.index('id="bt-stock-summary"'), stock.index("runStockBacktest()"))
 
 
+class DashboardScannerMainForceTests(unittest.TestCase):
+    """#101: separate hot-N main-force panel; same tickers+asof, not chip_zscore scatter."""
+
+    def test_panel_is_separate_from_scatter_and_uses_existing_api(self):
+        html = dashboard.HTML
+        self.assertIn('id="sc-mf-panel"', html)
+        self.assertIn('id="sc-mf-title"', html)
+        self.assertIn('id="sc-mf-note"', html)
+        self.assertIn('id="sc-mf-empty"', html)
+        self.assertIn('id="sc-mf-error"', html)
+        self.assertIn('id="sc-mf-loading"', html)
+        self.assertIn('id="sc-mf-list"', html)
+        self.assertIn('id="sc-mf-k"', html)
+        self.assertIn(">熱門股分點動向</h3>", html)
+        self.assertIn("買超集中度", html)
+        self.assertIn("賣超集中度", html)
+        self.assertIn("龍頭分點淨額", html)
+        self.assertIn("coverage: ", html)
+        self.assertIn("coverage: hot_n", html)
+        self.assertIn("function loadScannerMainForce(", html)
+        self.assertIn("function renderScannerMainForce(", html)
+        self.assertIn("function scHideMainForce(", html)
+        self.assertIn("function scMfTitle(", html)
+        self.assertIn("/api/scanner/broker_main_force?", html)
+        self.assertIn("不是籌碼 z-score", html)
+        self.assertIn("不是</b>全市場", html)
+        self.assertEqual(html.count("j('/api/scanner/chip_zscore?"), 1)
+        self.assertEqual(html.count("j('/api/scanner/broker_main_force?"), 1)
+        load = html[html.index("async function loadScanner("):html.index("async function loadAlerts(")]
+        self.assertIn("loadScannerOverlay()", load)
+        self.assertIn("loadScannerMainForce()", load)
+        self.assertEqual(load.count("/api/scanner/chip_zscore"), 1)
+        self.assertIn("/api/scanner/broker_main_force?", load)
+        self.assertNotIn("renderScannerTable()", load)
+        mf = html[html.index("function scMfTitle("):html.index("async function loadAlerts(")]
+        self.assertIn("/api/scanner/broker_main_force?", mf)
+        self.assertNotIn("/api/scanner/chip_zscore", mf)
+        self.assertIn("indexOf('全市場')", mf)
+        self.assertIn("熱門股分點動向", mf)
+        self.assertIn("coverage: ", mf)
+        self.assertIn("buy_concentration", mf)
+        self.assertIn("sell_concentration", mf)
+        self.assertIn("lead_branch_net", mf)
+        self.assertIn("in_hot_n", mf)
+        title_fn = html[html.index("function scMfTitle("):html.index("function scMfReadK(")]
+        self.assertNotIn("全市場分點", title_fn)
+        scanner = html[html.index('id="section-scanner"'):html.index('id="section-alerts"')]
+        self.assertIn('id="sc-mf-panel"', scanner)
+        self.assertIn('id="c-scanner"', scanner)
+        panel = scanner[scanner.index('id="sc-mf-panel"'):]
+        self.assertIn(">熱門股分點動向</h3>", panel)
+        self.assertNotIn("全市場分點", panel)
+        self.assertNotIn("全市場分點主力", panel)
+        stock = html[html.index('id="section-stock"'):html.index('id="section-scanner"')]
+        self.assertNotIn("sc-mf-panel", stock)
+        self.assertNotIn("loadScannerMainForce", stock)
+        src = Path(__file__).resolve().parents[1].joinpath("web/dashboard.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("stock_chips_daily", src)
+        self.assertIn("/api/scanner/broker_main_force", src)
+
+    def test_empty_error_and_same_universe_gates(self):
+        html = dashboard.HTML
+        empty = html[html.index("function scShowEmpty("):html.index("function scShowLoading(")]
+        self.assertIn("scHideMainForce()", empty)
+        self.assertIn("scHideOverlay()", empty)
+        loading = html[html.index("function scShowLoading("):html.index("function scShowError(")]
+        self.assertIn("scHideMainForce()", loading)
+        err = html[html.index("function scShowError("):html.index("function scAxisValue(")]
+        self.assertIn("scHideMainForce()", err)
+        load_mf = html[html.index("async function loadScannerMainForce("):html.index("async function loadAlerts(")]
+        self.assertIn("scPicks.length < 2", load_mf)
+        self.assertIn("scPicks.map(p=>p.id)", load_mf)
+        self.assertIn("scReadWindowAsof()", load_mf)
+        self.assertIn("TwRange.isYmd(wa.asof)", load_mf)
+        self.assertIn("主力指標載入失敗", load_mf)
+        self.assertIn("沒有假資料可畫", load_mf)
+        self.assertNotIn("/api/scanner/chip_zscore", load_mf)
+        self.assertNotIn("/api/scanner/alert_profile", load_mf)
+        render = html[html.index("function renderScannerMainForce("):html.index("async function loadScannerMainForce(")]
+        self.assertIn("scMfLastPayload", render)
+        self.assertNotIn("/api/scanner/chip_zscore", render)
+        self.assertNotIn("await j(", render)
+        self.assertIn("selectStock(tr.dataset.ticker, tr.dataset.name||'')", render)
+        k_change = html[html.index('id="sc-mf-k"'):html.index('id="sc-mf-k"') + 280]
+        self.assertIn("loadScannerMainForce()", k_change)
+        self.assertNotIn("loadScanner()", k_change)
+        self.assertEqual(html.count("j('/api/scanner/chip_zscore?"), 1)
+        watch = html[html.index("const SC_WATCH_KEY"):html.index("function scHideChart(")]
+        self.assertNotIn("/api/scanner/broker_main_force", watch)
+        alert = html[html.index("async function saveScannerAlertProfile("):html.index("function scHideChart(")]
+        self.assertNotIn("/api/scanner/broker_main_force", alert)
+        self.assertNotIn("loadScannerMainForce()", alert)
+
+
 class DashboardScannerAlertTests(unittest.TestCase):
     """#86: one saved profile → schedule; UI save does not add a chip_zscore fetch."""
 

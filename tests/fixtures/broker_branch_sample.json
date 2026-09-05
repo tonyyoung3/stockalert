@@ -1,0 +1,26 @@
+{
+  "_comment": "TEST/DEV fixture only for #55 UI parallel and unit tests. Not production. Do not merge these rows as live FinMind data. Do not push to Turso as a real feed. live_ingest is always false.",
+  "production": false,
+  "data_mode": "dev_fixture",
+  "coverage": "hot_n",
+  "title": "熱門股分點動向",
+  "trade_date": "2026-09-03",
+  "hot_n": 3,
+  "slice_method": "stock_daily latest trade_date, ORDER BY turnover DESC LIMIT N",
+  "brokers": [
+    {"broker_id": "1020", "broker_name": "合庫"},
+    {"broker_id": "5850", "broker_name": "統一"},
+    {"broker_id": "9A00", "broker_name": "永豐金"}
+  ],
+  "rows": [
+    {"trade_date": "2026-09-03", "stock_id": "2330", "broker_id": "1020", "buy_volume": 500000, "sell_volume": 100000, "net_volume": 400000},
+    {"trade_date": "2026-09-03", "stock_id": "2317", "broker_id": "1020", "buy_volume": 80000, "sell_volume": 20000, "net_volume": 60000},
+    {"trade_date": "2026-09-03", "stock_id": "2454", "broker_id": "1020", "buy_volume": 10000, "sell_volume": 40000, "net_volume": -30000},
+    {"trade_date": "2026-09-03", "stock_id": "2330", "broker_id": "5850", "buy_volume": 20000, "sell_volume": 300000, "net_volume": -280000},
+    {"trade_date": "2026-09-03", "stock_id": "2317", "broker_id": "5850", "buy_volume": 5000, "sell_volume": 80000, "net_volume": -75000},
+    {"trade_date": "2026-09-03", "stock_id": "2454", "broker_id": "5850", "buy_volume": 15000, "sell_volume": 10000, "net_volume": 5000},
+    {"trade_date": "2026-09-03", "stock_id": "2330", "broker_id": "9A00", "buy_volume": 120000, "sell_volume": 110000, "net_volume": 10000},
+    {"trade_date": "2026-09-03", "stock_id": "2317", "broker_id": "9A00", "buy_volume": 40000, "sell_volume": 30000, "net_volume": 10000},
+    {"trade_date": "2026-09-03", "stock_id": "2454", "broker_id": "9A00", "buy_volume": 90000, "sell_volume": 20000, "net_volume": 70000}
+  ]
+}

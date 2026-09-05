@@ -19,7 +19,19 @@
 
 資料區間約 2021-06-30 起（FinMind）。官方 BSR 下午 3–4 點才出當日。
 
-### 建議做法
+### 契約（#54，2026-09-05）
+
+書面定案與 API／SQL 在 **`docs/broker_branch.md`**。空表在 `collector.init_db`。
+**Live ingest 尚未實作。** 主人尚未決定 token 與「大盤 vs 個股」。
+
+兩條路並列，不單方面選定：
+
+1. **有 token → 建議 v1**：單檔 on-demand（SecIdAgg）。市場 tab 不排行。
+2. **仍要市場 tab 先**：SponsorPro 真全市場，或 **熱門前 N**（`stock_daily` 最新日成交額）。熱門前 N 標題只能是「熱門股分點動向」，**禁止**寫「全市場」。
+
+無 token：不打 FinMind；fixture 僅 TEST/DEV（`python -m market.broker_branch load-fixture --dev`），不可當 production merge。
+
+### 建議做法（ingest 等裁示後）
 
 1. 有 FinMind token：接 `TaiwanStockTradingDailyReportSecIdAgg`（指定個股分點排行），或 SponsorPro 整日 parquet 再 `GROUP BY` 分點算買賣超。
 2. 沒有 token：不要先爬 BSR（驗證碼 + 2000 檔）。除非只做少數指定個股。

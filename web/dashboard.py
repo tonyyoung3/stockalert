@@ -33,6 +33,7 @@ from alertsdb.store import (
     performance_by_horizon,
 )
 from data import market_db
+from market import broker_branch as broker_branch_mod
 from web import freshness as freshness_mod
 
 _YMD = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -544,6 +545,30 @@ def _api(path, qs):
         return api_alerts(qs)
     if path == "/api/performance":
         return api_performance()
+    if path == "/api/broker_branch/top":
+        day = _ymd(qs, "date")
+        try:
+            k = int(qs.get("k", [str(broker_branch_mod.DEFAULT_K)])[0])
+        except (TypeError, ValueError):
+            k = broker_branch_mod.DEFAULT_K
+        return broker_branch_mod.top_branches(_request_conn.get(), day, k)
+    if path == "/api/broker_branch/broker":
+        return broker_branch_mod.broker_stocks(
+            _request_conn.get(),
+            (qs.get("broker_id", [""])[0] or "").strip(),
+            _ymd(qs, "date"),
+        )
+    if path == "/api/broker_branch/stock":
+        return broker_branch_mod.stock_branches(
+            _request_conn.get(),
+            (qs.get("id", [""])[0] or qs.get("stock_id", [""])[0] or "").strip(),
+            _ymd(qs, "date"),
+        )
+    if path == "/api/broker_branch/freshness":
+        body = broker_branch_mod.freshness_payload(_request_conn.get())
+        body.update(broker_branch_mod.ingest_status())
+        body["data_mode"] = broker_branch_mod.data_mode(_request_conn.get())
+        return body
     return None
 
 

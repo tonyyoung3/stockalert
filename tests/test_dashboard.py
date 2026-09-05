@@ -51,6 +51,8 @@ class DashboardAlertsAPITests(unittest.TestCase):
         self.assertIn("/api/alerts", dashboard.HTML)
         self.assertIn("/api/performance", dashboard.HTML)
         self.assertIn("data-ticker=", dashboard.HTML)
+        self.assertIn(">回測此訊號<", dashboard.HTML)
+        self.assertIn("alert-bt-btn", dashboard.HTML)
         self.assertNotIn("onclick=\"showStock(", dashboard.HTML)
         self.assertIn("fresh-banner", dashboard.HTML)
         self.assertIn("請跑 python -m market.update_market_data", dashboard.HTML)
@@ -191,6 +193,58 @@ class ParseStockQueryTests(unittest.TestCase):
         self.assertIsNone(dashboard.parse_stock_query("?stock=<script>"))
         self.assertIsNone(dashboard.parse_stock_query("?stock=a"))
         self.assertIsNone(dashboard.parse_stock_query("?stock=" + "1" * 11))
+
+
+class ParseBacktestQueryTests(unittest.TestCase):
+    def test_hash_query_stock_and_pattern(self):
+        self.assertEqual(
+            dashboard.parse_backtest_query(
+                "#backtest?stock=2330&pattern=upper_shadow_reversal"
+            ),
+            {"stock": "2330", "pattern": "upper_shadow_reversal"},
+        )
+        self.assertEqual(
+            dashboard.parse_backtest_query(
+                "/?days=90#backtest?stock=2317&pattern=inside_day"
+            ),
+            {"stock": "2317", "pattern": "inside_day"},
+        )
+        self.assertEqual(
+            dashboard.parse_backtest_query("#section-backtest?stock=00631L"),
+            {"stock": "00631L", "pattern": ""},
+        )
+
+    def test_search_params_when_hash_is_backtest(self):
+        self.assertEqual(
+            dashboard.parse_backtest_query("?stock=2330&pattern=inside_day#backtest"),
+            {"stock": "2330", "pattern": "inside_day"},
+        )
+        self.assertEqual(
+            dashboard.parse_backtest_query(
+                "http://localhost:8765/?bts=2330&btp=inside_day#backtest"
+            ),
+            {"stock": "2330", "pattern": "inside_day"},
+        )
+
+    def test_ignores_stock_page_query(self):
+        self.assertIsNone(dashboard.parse_backtest_query("?stock=2330"))
+        self.assertIsNone(dashboard.parse_backtest_query("?stock=2330#stock"))
+        self.assertIsNone(dashboard.parse_backtest_query("#alerts"))
+        self.assertIsNone(dashboard.parse_backtest_query("#backtest"))
+        self.assertIsNone(dashboard.parse_backtest_query(""))
+        self.assertIsNone(dashboard.parse_backtest_query(None))
+
+    def test_bad_data_does_not_raise(self):
+        self.assertIsNone(dashboard.parse_backtest_query("#backtest?stock=<script>"))
+        self.assertEqual(
+            dashboard.parse_backtest_query("#backtest?stock=<script>&pattern=nope"),
+            {"stock": "", "pattern": "nope"},
+        )
+        self.assertEqual(
+            dashboard.parse_backtest_query("#backtest?stock=a&pattern=scanner_foreign_net_z"),
+            {"stock": "", "pattern": "scanner_foreign_net_z"},
+        )
+        self.assertIsNone(dashboard.parse_backtest_query("#backtest?stock=" + "1" * 11))
 
 
 class DashboardNavTests(unittest.TestCase):
@@ -1046,9 +1100,7 @@ class DashboardStockBacktestUITests(unittest.TestCase):
         self.assertIn("不是組合部位", html)
         self.assertIn("不是全市場一次回測", html)
         self.assertIn(">型態</summary>", html)
-        self.assertIn("本波不做", html)
-        self.assertNotIn(">回測此訊號<", html)
-        self.assertNotIn("onclick=\"prefillStockBacktest", html)
+        self.assertIn("function prefillStockBacktest(", html)
         self.assertIn("目前是個股 pattern（stock_daily 日K）", html)
         self.assertIn("目前是大盤指數積木", html)
         uni = html[html.index('class="bt-universe"'):html.index('id="bt-index-panel"')]
@@ -1067,6 +1119,79 @@ class DashboardStockBacktestUITests(unittest.TestCase):
         self.assertLess(stock.index('id="bt-stock-pattern"'), stock.index('id="bt-stock-hold"'))
         self.assertLess(stock.index('id="bt-stock-hold"'), stock.index('id="bt-stock-summary"'))
         self.assertLess(stock.index('id="bt-stock-summary"'), stock.index("runStockBacktest()"))
+
+
+class DashboardAlertBacktestPrefillTests(unittest.TestCase):
+    """#52: alert row → #backtest prefill; no auto POST; keep #50/#51 IA."""
+
+    def test_cta_and_deep_link_wiring(self):
+        html = dashboard.HTML
+        self.assertIn(">回測此訊號<", html)
+        self.assertIn("alert-bt-btn", html)
+        self.assertIn("data-bt-stock=", html)
+        self.assertIn("data-bt-pattern=", html)
+        self.assertIn("function alertBacktestHref(", html)
+        self.assertIn("function parseBacktestQuery(", html)
+        self.assertIn("function prefillStockBacktest(", html)
+        self.assertIn("function applyBacktestPrefillFromLocation(", html)
+        self.assertIn("function onAlertBacktestClick(", html)
+        self.assertIn("#backtest", html)
+        self.assertIn("qs.set('stock'", html)
+        self.assertIn("qs.set('pattern'", html)
+        self.assertIn("btShowUniverse('stock')", html)
+        self.assertIn("此 pattern 尚未支援回測", html)
+        self.assertIn('id="bt-stock-prefill-msg"', html)
+        self.assertIn('id="bt-stock-run"', html)
+        self.assertIn("applyBacktestPrefillFromLocation()", html)
+        load = html[html.index("async function loadAlerts("):html.index("async function loadPerformance(")]
+        self.assertIn(">回測此訊號<", load)
+        self.assertIn("alertBacktestHref(", load)
+        self.assertIn("onAlertBacktestClick", load)
+        self.assertNotIn("/api/backtest/stock", load)
+        self.assertNotIn("runStockBacktest()", load)
+
+    def test_prefill_does_not_auto_run_or_touch_index_presets(self):
+        html = dashboard.HTML
+        prefill = html[html.index("function prefillStockBacktest("):html.index("function applyBacktestPrefillFromLocation(")]
+        self.assertIn("btShowUniverse('stock')", prefill)
+        self.assertIn("btPickStock(", prefill)
+        self.assertIn("此 pattern 尚未支援回測", prefill)
+        self.assertIn("已預填，尚未執行", prefill)
+        self.assertNotIn("runStockBacktest()", prefill)
+        self.assertNotIn("fetch(", prefill)
+        self.assertNotIn("/api/backtest", prefill)
+        self.assertNotIn("localStorage.setItem(BT_PRESET_KEY", prefill)
+        self.assertNotIn("btBuildBlocks()", prefill)
+        apply = html[html.index("function applyBacktestPrefillFromLocation("):html.index("function onAlertBacktestClick(")]
+        self.assertIn("parseBacktestQuery()", apply)
+        self.assertIn("prefillStockBacktest(", apply)
+        self.assertNotIn("runStockBacktest()", apply)
+        self.assertNotIn("fetch(", apply)
+        run = html[html.index("async function runStockBacktest("):html.index("function loadAll(")]
+        self.assertIn("此 pattern 尚未支援回測", run)
+        self.assertIn("btPrefillUnsupported", run)
+        hash_l = html[html.index("window.addEventListener('hashchange'"):html.index("function setChartEmpty(")]
+        self.assertIn("applyBacktestPrefillFromLocation()", hash_l)
+        boot = html[html.rindex("(function(){"):]
+        self.assertIn("applyBacktestPrefillFromLocation()", boot)
+        alerts = html[html.index('id="section-alerts"'):html.index('id="section-backtest"')]
+        self.assertIn("「回測此訊號」", alerts)
+        self.assertIn("不自動執行", alerts)
+        stock = html[html.index('id="bt-stock-panel"'):html.index("id=\"bt-stock-results\"")]
+        self.assertNotIn("stockalert.bt.presets.v1", stock)
+        self.assertNotIn("localStorage.setItem(BT_PRESET_KEY", stock)
+
+    def test_unsupported_and_bad_data_guards(self):
+        html = dashboard.HTML
+        self.assertIn("function btNormalizePattern(", html)
+        self.assertIn("BT_REPLAY_PATTERNS", html)
+        self.assertIn("function btEnsureUnsupportedOption(", html)
+        self.assertIn("btSetStockRunEnabled(false)", html)
+        self.assertIn("catch(e)", html[html.index("function prefillStockBacktest("):html.index("function applyBacktestPrefillFromLocation(")])
+        self.assertIn("parseStockId(ticker)", html)
+        parse = html[html.index("function parseBacktestQuery("):html.index("function btNormalizePattern(")]
+        self.assertIn("catch(e){ return null; }", parse)
+        self.assertIn("parseSectionHash() !== 'backtest'", parse)
 
 
 class DashboardScannerMainForceTests(unittest.TestCase):

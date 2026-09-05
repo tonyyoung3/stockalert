@@ -226,7 +226,7 @@ gcloud run deploy stockalert \
 
 頂部分頁：`市場`（預設）｜`個股`｜`掃描`｜`告警`｜`回測`。用顯示／隱藏切換，不必捲完整頁。新鮮度橫幅與各表最後日期留在分頁上方。
 
-網址 hash：`#market` / `#stock` / `#scanner` / `#alerts` / `#backtest`（也接受 `#section-stock` 這種寫法），可與既有 `?stock=2330` 並用。沒有 hash、但有 `?stock=` 時開個股分頁；沒有 hash、但有 `?sc=` 標的時開掃描分頁；純首次進入落在市場總覽，回測表單與結果不佔首屏。回測頁內再切 `大盤策略`｜`個股 pattern`（與日內／隔夜／波段不同層）。**掃描**是多檔橫向比較工作台，不是單檔個股宇宙、也不是回測個股 pattern。自選 ≥2 檔後打一次 `GET /api/scanner/chip_zscore`，同時餵散布圖與結果表格（不另打 API）；軸可選價量／籌碼 z-score；表頭點擊排序（代號、軸／z、收盤、成交量），表格可依代號／名稱與列狀態篩選；點圖或列呼叫 `selectStock` 進個股。本機追蹤清單（`stockalert.sc.watchlist.v1`，與回測預設同一 localStorage 模式）可增刪並一鍵套用到 `sc-picks`，不會另打 API。掃描條件編碼在 `?sc=` / `scx` / `scy` / `scw`（與 `?stock=` 同一套 query；hash 後 `?sc=` 也可讀），複製網址可還原；過長 URL 先丟掉可選參數再截標的，畫面上有短註。少於 2 檔是空狀態；載入中／失敗明示（無假資料）；所選軸為 null 時標「樣本不足」。窄螢幕控制列直向堆疊，並用下方表格當點進個股的降級入口。「存成每日告警」把目前標的＋一組欄位上下限 POST 到 `/api/scanner/alert_profile`（不另打 chip_zscore）；排程 `python -m notify.scanner_alert` 用同一支計算寫告警列／Slack。熱門股分點主力是另一塊面板：同一批標的與 asof 打 `GET /api/scanner/broker_main_force`，顯示買／賣超集中度與龍頭分點淨額；標題「熱門股分點動向」，`coverage: hot_n`，不是籌碼散布圖、也不是全市場。
+網址 hash：`#market` / `#stock` / `#scanner` / `#alerts` / `#backtest`（也接受 `#section-stock` 這種寫法），可與既有 `?stock=2330` 並用。告警列「回測此訊號」走 `#backtest?stock=2330&pattern=upper_shadow_reversal`（與掃描 `?sc=` 同一套 hash／query 深連結），自動切到個股 pattern 並預填；**不自動執行**。沒有 hash、但有 `?stock=` 時開個股分頁；沒有 hash、但有 `?sc=` 標的時開掃描分頁；純首次進入落在市場總覽，回測表單與結果不佔首屏。回測頁內再切 `大盤策略`｜`個股 pattern`（與日內／隔夜／波段不同層）。**掃描**是多檔橫向比較工作台，不是單檔個股宇宙、也不是回測個股 pattern。自選 ≥2 檔後打一次 `GET /api/scanner/chip_zscore`，同時餵散布圖與結果表格（不另打 API）；軸可選價量／籌碼 z-score；表頭點擊排序（代號、軸／z、收盤、成交量），表格可依代號／名稱與列狀態篩選；點圖或列呼叫 `selectStock` 進個股。本機追蹤清單（`stockalert.sc.watchlist.v1`，與回測預設同一 localStorage 模式）可增刪並一鍵套用到 `sc-picks`，不會另打 API。掃描條件編碼在 `?sc=` / `scx` / `scy` / `scw`（與 `?stock=` 同一套 query；hash 後 `?sc=` 也可讀），複製網址可還原；過長 URL 先丟掉可選參數再截標的，畫面上有短註。少於 2 檔是空狀態；載入中／失敗明示（無假資料）；所選軸為 null 時標「樣本不足」。窄螢幕控制列直向堆疊，並用下方表格當點進個股的降級入口。「存成每日告警」把目前標的＋一組欄位上下限 POST 到 `/api/scanner/alert_profile`（不另打 chip_zscore）；排程 `python -m notify.scanner_alert` 用同一支計算寫告警列／Slack。熱門股分點主力是另一塊面板：同一批標的與 asof 打 `GET /api/scanner/broker_main_force`，顯示買／賣超集中度與龍頭分點淨額；標題「熱門股分點動向」，`coverage: hot_n`，不是籌碼散布圖、也不是全市場。
 
 窄螢幕（約 375px）控制列改直向堆疊、input 滿寬、表格在區內橫滑；回測的資料集／濾網／進場／出場用 `data-bt-fold` 折疊（手機預設收合），濾網積木是列表、參數為第二層。圖表手勢文案是拖曳／雙指縮放（pinch 原本就開著）。外資排行日期欄在小螢幕改直向、高度至少 44px，避免 iOS 裁切。
 
@@ -245,7 +245,7 @@ Header **顯示範圍**（全域 `days`）只影響加權 K 線／走勢、外�
 | 本機 | `screener.db`（`python -m notify.screener`、`python -m notify.scanner_alert`、`python -m notify.performance_checker` 寫入） |
 | Cloud Run | 同一個 Turso DB（排程 `python -m data.cloud_db push-alerts` 把兩張表推上去；不必再開第二個 Turso） |
 
-名稱來自市場資料的 `stocks` 表（本機 `twse_data.db` 或 Turso）。題材（theme）目前沒存在表裡，畫面上是空的，也不會在每次開頁去打 yfinance。沒有列時顯示「尚無告警／尚未結算」。近期告警預設近 30 日（可選 7／90，上限 365）。績效是全樣本，並依 `pattern_type` 拆一列，不是分頁。
+名稱來自市場資料的 `stocks` 表（本機 `twse_data.db` 或 Turso）。題材（theme）目前沒存在表裡，畫面上是空的，也不會在每次開頁去打 yfinance。沒有列時顯示「尚無告警／尚未結算」。近期告警預設近 30 日（可選 7／90，上限 365）。績效是全樣本，並依 `pattern_type` 拆一列，不是分頁。每列有可見 CTA「回測此訊號」→ `#backtest` 預填標的＋pattern（見下節）；不支援的 pattern 仍預填代號並顯示「此 pattern 尚未支援回測」。
 
 ### 回測規則積木（v1）
 
@@ -303,7 +303,7 @@ Header **顯示範圍**（全域 `days`）只影響加權 K 線／走勢、外�
 
 非目標：組合部位、分點濾網、DSL、一次做完所有 pattern、實盤。
 
-告警預填（**#52，本波不做**）：之後告警「回測此訊號」只預填標的＋支援的 pattern，**不自動執行**；尚不支援的 pattern 只預填代號並提示。
+告警預填（#52）：告警列「回測此訊號」深連結 `#backtest?stock=`＋`pattern=`（hash query，與掃描 URL 狀態同一套路），進入回測分頁並自動切到「個股 pattern」，預填標的與對應中文名／code。**只預填，不自動 POST** `/api/backtest/stock`；使用者看完摘要再按執行。pattern 不在 v1.1 支援集（上影線反轉、Inside Day）時仍預填代號，明示「此 pattern 尚未支援回測」並禁用執行。壞掉的 ticker／pattern 不會白屏。不寫入、不覆寫 `stockalert.bt.presets.v1`。
 
 儀表板 HTML/JS 在 `web/static/`（不再整包塞進 `dashboard.py`）。`GET /` 與 `GET /static/…` 帶 `ETag` + `Cache-Control: private, max-age=300, must-revalidate`；`If-None-Match` 命中回 304。台股「今天」一律走 `web.tw_calendar.taiwan_today`（Asia/Taipei），不要用機器的 `date.today()`。
 

@@ -76,6 +76,11 @@ tr:hover td{background:#f8f9fa}
 .empty{color:#6c757d;font-size:13px;padding:8px 0}
 .ticker-link{color:#4C72B0;text-decoration:none;font-weight:600;cursor:pointer;background:none;border:none;padding:0;font:inherit}
 .ticker-link:hover{text-decoration:underline}
+.alert-bt-btn{display:inline-block;border:1px solid #4C72B0;background:#fff;color:#4C72B0;border-radius:4px;padding:6px 10px;cursor:pointer;font-size:12px;font-weight:600;text-decoration:none;min-height:36px;line-height:22px;white-space:nowrap;box-sizing:border-box}
+.alert-bt-btn:hover{background:#eef3fa}
+.alert-bt-btn:focus-visible{outline:2px solid #4C72B0;outline-offset:2px}
+#bt-stock-prefill-msg[hidden]{display:none!important}
+#bt-stock-run:disabled{opacity:.5;cursor:not-allowed}
 .bb-card{border:1px solid #d9e2ec}
 .bb-card .chart-head h3{color:#1a1a2e}
 .bb-sub{font-size:12.5px;color:#495057;margin:0 0 10px;line-height:1.5}
@@ -237,6 +242,7 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
   .bt-box label[style]{margin-left:0!important}
   #bt-form button,#bt-stock-form button{width:100%;margin-left:0!important;min-height:44px}
   .bt-universe{flex-direction:column}
+  .alert-bt-btn{min-height:44px;padding:10px 12px;font-size:13px}
   .bt-add-row{flex-direction:column;align-items:stretch}
   .bt-block>summary.bt-block-sum{min-height:44px}
   .kpi-value{font-size:22px}
@@ -607,6 +613,7 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
         <option value="90">近 90 天</option>
       </select>
     </div>
+    <p class="hint">列上「回測此訊號」會到回測分頁預填標的與 pattern，並切到個股 pattern；<b>不自動執行</b>。</p>
     <div id="alerts-box" class="table-scroll"><p class="empty">尚無告警</p></div>
   </div>
   <div class="card">
@@ -844,12 +851,13 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
         <summary class="bt-label">型態</summary>
         <div class="bt-row">
           <span class="bt-sub">與告警相同</span>
-          <select id="bt-stock-pattern" aria-label="個股型態" onchange="btRenderStockSummary()">
+          <select id="bt-stock-pattern" aria-label="個股型態" onchange="btOnStockPatternChange()">
             <option value="upper_shadow_reversal">上影線反轉</option>
             <option value="inside_day">Inside Day</option>
           </select>
         </div>
         <p class="hint">中文名對齊 Slack／告警。每個交易日用截至當日的日K trailing window，不是小時K。</p>
+        <p id="bt-stock-prefill-msg" class="bt-warn" hidden></p>
       </details>
       <details class="bt-box" data-bt-fold="stock-exit" open>
         <summary class="bt-label">出場</summary>
@@ -871,7 +879,7 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
         <div class="bt-row" style="margin-top:10px">
           <span class="bt-sub">來回成本 %</span>
           <input type="number" id="bt-stock-cost" value="0.03" step="0.01" style="width:80px" oninput="btRenderStockSummary()">
-          <button type="button" onclick="runStockBacktest()" style="margin-left:16px;padding:8px 24px;background:#4C72B0;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:14px">執行回測</button>
+          <button type="button" id="bt-stock-run" onclick="runStockBacktest()" style="margin-left:16px;padding:8px 24px;background:#4C72B0;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:14px">執行回測</button>
         </div>
       </div>
     </div>
@@ -948,7 +956,10 @@ document.querySelector('.page-nav').addEventListener('click', ev=>{
   ev.preventDefault();
   showSection(a.dataset.section);
 });
-window.addEventListener('hashchange', ()=> showSection(resolveSection(), {updateHash:false}));
+window.addEventListener('hashchange', ()=>{
+  showSection(resolveSection(), {updateHash:false});
+  applyBacktestPrefillFromLocation();
+});
 
 function setChartEmpty(id, msg){
   if(charts[id]){ charts[id].destroy(); delete charts[id]; }
@@ -2439,16 +2450,24 @@ async function loadAlerts(){
       box.innerHTML = '<p class="empty">尚無告警</p>';
       return;
     }
-    box.innerHTML = '<table><thead><tr><th>日期</th><th>代號</th><th>名稱</th><th>型態</th><th class="num">告警價</th><th>題材</th></tr></thead><tbody>'
-      + r.data.map(a => '<tr><td>'+esc(a.alert_date||'')+'</td>'
+    box.innerHTML = '<table><thead><tr><th>日期</th><th>代號</th><th>名稱</th><th>型態</th><th class="num">告警價</th><th>題材</th><th>回測</th></tr></thead><tbody>'
+      + r.data.map(a => {
+        const href = alertBacktestHref(a.ticker, a.pattern_type);
+        const name = (a.name && a.name !== '–') ? a.name : '';
+        return '<tr><td>'+esc(a.alert_date||'')+'</td>'
         +'<td><button type="button" class="ticker-link" data-ticker="'+esc(a.ticker||'')+'">'+esc(a.ticker||'')+'</button></td>'
         +'<td>'+esc(a.name||'–')+'</td>'
         +'<td class="pat">'+esc(patName(a.pattern_type))+'</td>'
         +'<td class="num">'+money(a.price_at_alert)+'</td>'
-        +'<td>'+esc(a.theme||'–')+'</td></tr>').join('')
+        +'<td>'+esc(a.theme||'–')+'</td>'
+        +'<td><a class="alert-bt-btn" href="'+esc(href)+'" data-bt-stock="'+esc(a.ticker||'')+'" data-bt-pattern="'+esc(a.pattern_type||'')+'" data-bt-name="'+esc(name)+'">回測此訊號</a></td></tr>';
+      }).join('')
       + '</tbody></table>';
     box.querySelectorAll('[data-ticker]').forEach(btn=>{
       btn.addEventListener('click', ()=> showStock(btn.getAttribute('data-ticker')));
+    });
+    box.querySelectorAll('[data-bt-stock]').forEach(a=>{
+      a.addEventListener('click', onAlertBacktestClick);
     });
   }catch(e){
     box.innerHTML = '<p class="empty">尚無告警</p>';
@@ -4129,14 +4148,16 @@ if(btPresetSel){
 }
 
 // ---- 個股 pattern 宇宙（與大盤積木分離；不寫 stockalert.bt.presets.v1）----
-// #52 later（本波不做）：告警「回測此訊號」只預填標的＋支援的 pattern，不自動執行；
-// 尚不支援的 pattern 只預填代號並提示。不要在告警列加 CTA，也不要吃 query 自動跑。
+// #52：告警「回測此訊號」只預填標的＋支援的 pattern，不自動執行（不 POST）。
+// 尚不支援的 pattern 只預填代號並提示「此 pattern 尚未支援回測」。
+const BT_REPLAY_PATTERNS = {upper_shadow_reversal:'上影線反轉', inside_day:'Inside Day'};
 let btUniverse = 'index';
 let btStockId = '';
 let btStockName = '';
 let btSidHits = [];
 let btSidActive = -1;
 let btSidTimer = null;
+let btPrefillUnsupported = false;
 
 function btShowUniverse(name){
   btUniverse = (name === 'stock') ? 'stock' : 'index';
@@ -4160,6 +4181,143 @@ function btShowUniverse(name){
 document.querySelectorAll('.bt-universe [data-universe]').forEach(btn=>{
   btn.addEventListener('click', ()=> btShowUniverse(btn.dataset.universe));
 });
+
+function alertBacktestHref(ticker, pattern){
+  const qs = new URLSearchParams();
+  const id = parseStockId(ticker);
+  if(id) qs.set('stock', id);
+  const pat = String(pattern==null ? '' : pattern).trim().slice(0, 80);
+  if(pat) qs.set('pattern', pat);
+  return '#backtest' + (qs.toString() ? '?'+qs.toString() : '');
+}
+function btQueryParams(){
+  try{
+    const hq = (location.hash.replace(/^#/,'').split('?')[1] || '');
+    if(hq) return new URLSearchParams(hq);
+    if(parseSectionHash() === 'backtest') return new URLSearchParams(location.search);
+    return new URLSearchParams();
+  }catch(e){ return new URLSearchParams(); }
+}
+function parseBacktestQuery(){
+  try{
+    if(parseSectionHash() !== 'backtest') return null;
+    const qs = btQueryParams();
+    const stock = parseStockId(qs.get('bts') || qs.get('stock') || '');
+    const pattern = String(qs.get('btp') || qs.get('pattern') || '').trim().slice(0, 80);
+    if(!stock && !pattern) return null;
+    return {stock: stock, pattern: pattern};
+  }catch(e){ return null; }
+}
+function btNormalizePattern(raw){
+  const s = String(raw==null ? '' : raw).trim();
+  if(!s) return {code:'', supported:false, label:''};
+  const aliases = {
+    upper_shadow_reversal:'upper_shadow_reversal',
+    inside_day:'inside_day',
+    '上影線反轉':'upper_shadow_reversal',
+    'inside day':'inside_day'
+  };
+  const code = aliases[s] || aliases[s.toLowerCase()];
+  if(code && BT_REPLAY_PATTERNS[code]) return {code:code, supported:true, label:BT_REPLAY_PATTERNS[code]};
+  return {code:'', supported:false, label: patName(s)};
+}
+function btSetStockRunEnabled(on){
+  const btn = document.getElementById('bt-stock-run');
+  if(btn) btn.disabled = !on;
+}
+function btResetStockResults(msg){
+  const box = document.getElementById('bt-stock-results');
+  if(!box) return;
+  box.innerHTML = '<div class="bt-empty" id="bt-stock-empty">'+esc(msg || '尚未執行。先選標的與 pattern，再按執行。')+'</div>';
+}
+function btSetPrefillMsg(text){
+  const msg = document.getElementById('bt-stock-prefill-msg');
+  if(!msg) return;
+  if(!text){ msg.hidden = true; msg.textContent = ''; return; }
+  msg.hidden = false;
+  msg.textContent = text;
+}
+function btClearUnsupportedOption(){
+  const sel = document.getElementById('bt-stock-pattern');
+  if(!sel) return;
+  const opt = sel.querySelector('option[data-unsupported]');
+  if(opt) opt.remove();
+  if(!sel.value && sel.options.length) sel.selectedIndex = 0;
+}
+function btEnsureUnsupportedOption(label){
+  const sel = document.getElementById('bt-stock-pattern');
+  if(!sel) return;
+  let opt = sel.querySelector('option[data-unsupported]');
+  if(!opt){
+    opt = document.createElement('option');
+    opt.setAttribute('data-unsupported', '1');
+    opt.disabled = true;
+    sel.insertBefore(opt, sel.firstChild);
+  }
+  opt.value = '';
+  opt.textContent = (label || '此 pattern') + '（尚未支援）';
+  sel.value = '';
+}
+function prefillStockBacktest(ticker, pattern, name){
+  try{
+    btShowUniverse('stock');
+    const id = parseStockId(ticker);
+    const pat = btNormalizePattern(pattern);
+    const label = (name && String(name).trim() && String(name).trim() !== '–') ? String(name).trim() : '';
+    if(id) btPickStock({id:id, name:label || id});
+    else {
+      btStockId = '';
+      btStockName = '';
+      const el = document.getElementById('bt-sid');
+      if(el) el.value = '';
+    }
+    if(pat.supported){
+      btPrefillUnsupported = false;
+      btClearUnsupportedOption();
+      const sel = document.getElementById('bt-stock-pattern');
+      if(sel) sel.value = pat.code;
+      btSetPrefillMsg('');
+      btSetStockRunEnabled(!!id);
+    } else if(String(pattern==null ? '' : pattern).trim()){
+      btPrefillUnsupported = true;
+      btEnsureUnsupportedOption(pat.label || String(pattern).trim());
+      btSetPrefillMsg('此 pattern 尚未支援回測');
+      btSetStockRunEnabled(false);
+    } else {
+      btPrefillUnsupported = false;
+      btClearUnsupportedOption();
+      btSetPrefillMsg('');
+      btSetStockRunEnabled(!!id);
+    }
+    btRenderStockSummary();
+    btResetStockResults(id ? '已預填，尚未執行。請確認摘要後再按執行。' : '尚未執行。先選標的與 pattern，再按執行。');
+  }catch(e){
+    try{
+      btPrefillUnsupported = false;
+      btShowUniverse('stock');
+      btSetPrefillMsg('');
+      btSetStockRunEnabled(true);
+      btResetStockResults('尚未執行。先選標的與 pattern，再按執行。');
+    }catch(_){}
+  }
+}
+function applyBacktestPrefillFromLocation(){
+  try{
+    const st = parseBacktestQuery();
+    if(!st) return;
+    prefillStockBacktest(st.stock, st.pattern, '');
+  }catch(e){}
+}
+function onAlertBacktestClick(ev){
+  const a = ev.target && ev.target.closest ? ev.target.closest('[data-bt-stock]') : null;
+  if(!a) return;
+  try{
+    prefillStockBacktest(a.getAttribute('data-bt-stock'), a.getAttribute('data-bt-pattern'), a.getAttribute('data-bt-name'));
+    showSection('backtest', {updateHash:false});
+  }catch(e){
+    try{ showSection('backtest', {updateHash:false}); }catch(_){}
+  }
+}
 
 function hideBtStockMenu(){
   const menu = document.getElementById('bt-sid-menu');
@@ -4248,8 +4406,22 @@ function btOnStockExitToggle(){
   btRenderStockSummary();
 }
 function btStockPatternLabel(){
-  const v = document.getElementById('bt-stock-pattern').value;
-  return PAT[v] || v;
+  const sel = document.getElementById('bt-stock-pattern');
+  const v = sel ? sel.value : '';
+  if(!v && btPrefillUnsupported){
+    const opt = sel && sel.querySelector('option[data-unsupported]');
+    return (opt && opt.textContent) || '尚未支援';
+  }
+  return BT_REPLAY_PATTERNS[v] || PAT[v] || v;
+}
+function btOnStockPatternChange(){
+  if(btPrefillUnsupported){
+    btPrefillUnsupported = false;
+    btClearUnsupportedOption();
+    btSetPrefillMsg('');
+    btSetStockRunEnabled(!!btStockId);
+  }
+  btRenderStockSummary();
 }
 function btRenderStockSummary(){
   const box = document.getElementById('bt-stock-summary');
@@ -4304,6 +4476,10 @@ function renderStockBacktestResult(d){
 }
 async function runStockBacktest(){
   const box = document.getElementById('bt-stock-results');
+  if(btPrefillUnsupported || !(document.getElementById('bt-stock-pattern')||{}).value){
+    if(box) box.innerHTML = '<div class="bt-error">此 pattern 尚未支援回測</div>';
+    return;
+  }
   if(!btStockId){
     box.innerHTML = '<div class="bt-empty">請先選標的，再執行個股 pattern 回測。</div>';
     return;
@@ -4368,6 +4544,7 @@ window.addEventListener('resize', resizeCharts);
   loadScannerAlertProfile();
   loadAll();
   showSection(resolveSection(), {updateHash:false});
+  applyBacktestPrefillFromLocation();
   if(scShouldLoad) loadScanner();
   else if(scFromUrl) syncScannerUrl();
 })();

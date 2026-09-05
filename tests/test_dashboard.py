@@ -307,6 +307,76 @@ class DashboardNavTests(unittest.TestCase):
         self.assertNotIn("全市場", broker_branch.market_title("empty"))
         self.assertNotIn("全市場", broker_branch.market_title("hot_n"))
 
+    def test_html_stock_broker_branch_shell_issue_57(self):
+        html = dashboard.HTML
+        stock = html[html.index('id="section-stock"'):html.index('id="section-alerts"')]
+        self.assertIn('id="stock-broker-branch-card"', stock)
+        self.assertIn(">券商分點買賣超</h3>", stock)
+        self.assertIn("買超分點 Top", stock)
+        self.assertIn("賣超分點 Top", stock)
+        self.assertIn("id=\"sbb-empty\"", stock)
+        self.assertIn("id=\"sbb-lists\"", stock)
+        self.assertIn("id=\"sbb-fresh\"", stock)
+        self.assertIn("id=\"sbb-date\"", stock)
+        self.assertIn("請先選股", stock)
+        self.assertIn("?stock=", stock)
+        self.assertIn("熱門前 N", stock)
+        self.assertIn("非全市場", stock)
+        self.assertIn("21:00", stock)
+        self.assertIn("不是 T86", stock)
+        self.assertIn("尚未接上 FinMind token", html)
+        self.assertIn("/api/broker_branch/stock?id=", html)
+        self.assertIn("function loadStockBrokerBranch(", html)
+        self.assertIn("loadStock(); loadStockBrokerBranch();", html)
+        self.assertIn("if(stockId) loadStock();", html)
+        self.assertIn("loadStockBrokerBranch();", html)
+        self.assertIn("sbbSafeTitle", html)
+        self.assertIn("empty_awaiting_token", html)
+        self.assertIn("SBB_EMPTY_NODATA", html)
+        self.assertIn("SBB_EMPTY_PICK", html)
+        self.assertIn("BB_EMPTY_TOKEN", html)
+        self.assertLess(stock.index('id="stock-lookup"'), stock.index('id="stock-broker-branch-card"'))
+        self.assertNotIn("<canvas", stock[stock.index("id=\"stock-broker-branch-card\""):])
+        self.assertNotIn("ticker-link", stock[stock.index("id=\"stock-broker-branch-card\""):])
+        self.assertNotIn("/api/broker_branch/broker", stock)
+        self.assertNotIn("全市場分點", stock)
+        self.assertNotIn("全市場分點買賣超", stock)
+        self.assertNotIn("api.finmindtrade.com", html)
+        self.assertNotIn("live_ingest: true", html)
+
+    def test_pm_locked_copy_gates_issue_57(self):
+        """PM copy/gates for #57: stock-tab card, token empty, hot-N empty, no 全市場."""
+        html = dashboard.HTML
+        stock = html[html.index('id="section-stock"'):html.index('id="section-alerts"')]
+        card = stock[stock.index('id="stock-broker-branch-card"'):]
+        self.assertIn(">券商分點買賣超</h3>", card)
+        self.assertIn("該檔讀已入庫熱門前 N 列", card)
+        self.assertIn("非全市場", card)
+        self.assertIn("FinMind 分點（約 21:00）", card)
+        self.assertIn("不是證交所 T86 外資排行", card)
+        self.assertIn("請先選股", card)
+        self.assertIn("?stock=", card)
+        self.assertIn("熱門前 N 檔才會入庫", html)
+        self.assertIn("不是空白圖表", html)
+        self.assertIn("尚未接上 FinMind token", html)
+        self.assertIn("empty_awaiting_token", html)
+        self.assertIn("function sbbEmptyCopy(", html)
+        self.assertIn("if(!mode || mode==='empty_awaiting_token') return BB_EMPTY_TOKEN;", html)
+        self.assertIn("return SBB_EMPTY_NODATA;", html)
+        self.assertIn("示範資料（本機 fixture）", card)
+        self.assertIn("買超分點 Top", card)
+        self.assertIn("賣超分點 Top", card)
+        self.assertIn(".bb-lists{grid-template-columns:1fr}", html)
+        self.assertNotIn("全市場分點", card)
+        self.assertNotIn("全市場分點買賣超", card)
+        self.assertNotIn("/api/broker_branch/broker", card)
+        self.assertNotIn("api.finmindtrade.com", html)
+        self.assertNotIn("live_ingest: true", html)
+        from market import broker_branch
+        self.assertFalse(broker_branch.ingest_status({}).get("live_ingest"))
+        self.assertEqual(broker_branch.market_title("single_stock"), "個股分點買賣超")
+        self.assertNotIn("全市場", broker_branch.market_title("single_stock"))
+
     def test_js_hash_and_selectstock_switch_sections(self):
         html = dashboard.HTML
         self.assertIn("const PAGE_SECTIONS", html)

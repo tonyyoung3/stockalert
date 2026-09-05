@@ -206,7 +206,11 @@ def _envelope(
         "coverage_note": (
             "加總範圍是已入庫的熱門前 N 檔，不是全市場。"
             if coverage == "hot_n"
-            else "路徑 A 空狀態：請接 FINMIND_TOKEN。標題是熱門股，不是全市場。"
+            else (
+                "該檔讀已入庫熱門前 N 列，不是全市場、也不是 on-demand 拉檔。"
+                if coverage == "single_stock"
+                else "路徑 A 空狀態：請接 FINMIND_TOKEN。標題是熱門股，不是全市場。"
+            )
         ),
         "trade_date": trade_date,
         "data_mode": mode,
@@ -389,6 +393,9 @@ def stock_branches(
             "ORDER BY b.net_volume DESC",
             (stock_id, day),
         ).fetchall()
+    ranked = [[r[0], r[1], int(r[4] or 0)] for r in rows]
+    buy = [r for r in ranked if r[2] > 0]
+    sell = sorted((r for r in ranked if r[2] < 0), key=lambda r: r[2])
     return _envelope(
         conn,
         coverage=coverage,
@@ -398,6 +405,8 @@ def stock_branches(
             "stock_id": stock_id,
             "stock_name": name,
             "data": [list(r) for r in rows],
+            "buy": buy,
+            "sell": sell,
         },
     )
 

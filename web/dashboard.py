@@ -6,10 +6,18 @@
 
 設了 TURSO_DATABASE_URL 跟 TURSO_AUTH_TOKEN 就讀雲端,否則讀本機 sqlite。
 告警／績效：本機讀 screener.db 的 alerts、performance；Turso 則與市場表同一顆遠端 DB。
+
+DASHBOARD_USER 與 DASHBOARD_PASSWORD 都有值時啟用 HTTP Basic Auth
+（HTML 與 /api/*；GET /health 永遠開放）。缺任一變數則不驗證，只適合本機。
 """
+import base64
+import hmac
 import json
+import os
 import re
 import sqlite3
+import threading
+import time
 import webbrowser
 from contextvars import ContextVar
 from datetime import date, timedelta
@@ -45,6 +53,99 @@ def _ymd(qs, key):
 
 
 _STOCK_ID = re.compile(r"^[0-9A-Za-z]{2,10}$")
+AUTH_REALM = "stockalert"
+UNAUTHORIZED_JSON = {"error": "unauthorized"}
+RATE_LIMITED_JSON = {"error": "rate_limited"}
+BACKTEST_RATE_LIMIT = 10
+BACKTEST_RATE_WINDOW_SEC = 60
+
+
+def dashboard_credentials(env=None):
+    """Return (user, password) when both env vars are non-empty; else None."""
+    env = os.environ if env is None else env
+    user = (env.get("DASHBOARD_USER") or "").strip()
+    password = (env.get("DASHBOARD_PASSWORD") or "").strip()
+    if user and password:
+        return user, password
+    return None
+
+
+def auth_enabled(env=None) -> bool:
+    return dashboard_credentials(env) is not None
+
+
+def path_requires_auth(path: str) -> bool:
+    if path == "/health":
+        return False
+    if path in ("/", "/index.html"):
+        return True
+    return path.startswith("/api/")
+
+
+def parse_basic_authorization(header: str | None):
+    if not header:
+        return None
+    scheme, _, rest = header.strip().partition(" ")
+    if scheme.lower() != "basic" or not rest:
+        return None
+    try:
+        decoded = base64.b64decode(rest.strip(), validate=True).decode("utf-8")
+    except Exception:
+        return None
+    if ":" not in decoded:
+        return None
+    user, password = decoded.split(":", 1)
+    return user, password
+
+
+def _const_eq(left: str, right: str) -> bool:
+    a, b = left.encode("utf-8"), right.encode("utf-8")
+    if len(a) != len(b):
+        return False
+    return hmac.compare_digest(a, b)
+
+
+def valid_basic_header(header: str | None, user: str, password: str) -> bool:
+    parsed = parse_basic_authorization(header)
+    if parsed is None:
+        return False
+    got_user, got_pass = parsed
+    return _const_eq(got_user, user) and _const_eq(got_pass, password)
+
+
+class _IpRateLimiter:
+    def __init__(self, max_hits, window_sec):
+        self.max_hits = max_hits
+        self.window_sec = window_sec
+        self._hits = {}
+        self._lock = threading.Lock()
+
+    def allow(self, key, now=None) -> bool:
+        now = time.monotonic() if now is None else now
+        with self._lock:
+            recent = [t for t in self._hits.get(key, ()) if now - t < self.window_sec]
+            if len(recent) >= self.max_hits:
+                self._hits[key] = recent
+                return False
+            recent.append(now)
+            self._hits[key] = recent
+            return True
+
+    def reset(self):
+        with self._lock:
+            self._hits.clear()
+
+
+_backtest_limiter = _IpRateLimiter(BACKTEST_RATE_LIMIT, BACKTEST_RATE_WINDOW_SEC)
+
+
+def client_ip(handler) -> str:
+    xff = handler.headers.get("X-Forwarded-For") if handler.headers else None
+    if xff:
+        return xff.split(",", 1)[0].strip() or "unknown"
+    if handler.client_address:
+        return handler.client_address[0]
+    return "unknown"
 
 
 def parse_stock_query(query: str | None) -> str | None:
@@ -948,7 +1049,7 @@ function mk(id, cfg){ if(charts[id]) charts[id].destroy();
   charts[id] = new Chart(document.getElementById(id), cfg); return charts[id]; }
 
 async function j(u){
-  const resp = await fetch(u);
+  const resp = await fetch(u, {credentials: 'same-origin'});
   if(!resp.ok) throw new Error('HTTP '+resp.status);
   return resp.json();
 }
@@ -1783,7 +1884,7 @@ async function runBacktest(){
   box.innerHTML = '<p class="hint">回測中…</p>';
   let data;
   try{
-    const resp = await fetch('/api/backtest', {method:'POST',
+    const resp = await fetch('/api/backtest', {method:'POST', credentials:'same-origin',
       headers:{'Content-Type':'application/json'}, body: JSON.stringify(btBuildRule())});
     data = await resp.json();
   }catch(e){ box.innerHTML = '<div class="bt-error">請求失敗:'+e+'</div>'; return; }
@@ -2024,33 +2125,86 @@ window.addEventListener('resize', resizeCharts);
 
 
 class Handler(BaseHTTPRequestHandler):
+    def _send_bytes(self, status, body, content_type, extra_headers=None):
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        if extra_headers:
+            for key, value in extra_headers.items():
+                self.send_header(key, value)
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_json(self, status, obj, extra_headers=None):
+        body = json.dumps(obj).encode("utf-8")
+        self._send_bytes(status, body, "application/json; charset=utf-8", extra_headers)
+
+    def _reject_unauthorized(self):
+        self._send_json(
+            401,
+            UNAUTHORIZED_JSON,
+            {"WWW-Authenticate": f'Basic realm="{AUTH_REALM}"'},
+        )
+
+    def _drain_body(self):
+        try:
+            length = int(self.headers.get("Content-Length", 0) or 0)
+        except (TypeError, ValueError):
+            length = 0
+        if length > 0:
+            self.rfile.read(length)
+
+    def _authorize(self, path: str) -> bool:
+        if not path_requires_auth(path) or not auth_enabled():
+            return True
+        creds = dashboard_credentials()
+        if creds and valid_basic_header(self.headers.get("Authorization"), creds[0], creds[1]):
+            return True
+        self._reject_unauthorized()
+        return False
+
     def do_GET(self):
         u = urlparse(self.path)
         if u.path == "/health":
             body = json.dumps(health_payload()).encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-        elif u.path == "/" or u.path == "/index.html":
+            self._send_bytes(200, body, "application/json; charset=utf-8")
+            return
+        if not self._authorize(u.path):
+            return
+        if u.path == "/" or u.path == "/index.html":
             body = HTML.encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-        else:
-            result = api(u.path, parse_qs(u.query))
-            if result is None:
-                self.send_response(404)
-                self.end_headers()
-                return
-            body = json.dumps(result).encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+            self._send_bytes(200, body, "text/html; charset=utf-8")
+            return
+        result = api(u.path, parse_qs(u.query))
+        if result is None:
+            self.send_response(404)
+            self.end_headers()
+            return
+        self._send_json(200, result)
 
     def do_POST(self):
         u = urlparse(self.path)
+        if path_requires_auth(u.path) and auth_enabled():
+            creds = dashboard_credentials()
+            ok = bool(
+                creds
+                and valid_basic_header(
+                    self.headers.get("Authorization"), creds[0], creds[1]
+                )
+            )
+            if not ok:
+                self._drain_body()
+                self._reject_unauthorized()
+                return
         if u.path != "/api/backtest":
-            self.send_response(404); self.end_headers(); return
+            self._drain_body()
+            self.send_response(404)
+            self.end_headers()
+            return
+        if auth_enabled() and not _backtest_limiter.allow(client_ip(self)):
+            self._drain_body()
+            self._send_json(429, RATE_LIMITED_JSON)
+            return
         try:
             length = int(self.headers.get("Content-Length", 0))
             rule = json.loads(self.rfile.read(length) or b"{}")
@@ -2060,14 +2214,9 @@ class Handler(BaseHTTPRequestHandler):
                 result = backtest_engine.run_backtest(conn, rule)
             finally:
                 conn.close()
-        except Exception as e:
-            result = {"error": f"回測執行失敗: {e}"}
-        body = json.dumps(result).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        except Exception:
+            result = {"error": "回測執行失敗"}
+        self._send_json(200, result)
 
     def log_message(self, *a):
         pass
@@ -2110,6 +2259,10 @@ def main() -> int:
 
     url = f"http://{host}:{bound}"
     print(f"儀表板啟動:{url} source={'turso' if market_db.using_turso() else 'sqlite'}")
+    if auth_enabled():
+        print("HTTP Basic Auth 已啟用（DASHBOARD_USER / DASHBOARD_PASSWORD）。")
+    else:
+        print("未設 DASHBOARD_USER+DASHBOARD_PASSWORD，無驗證（僅建議本機，勿公開部署）。")
     if market_db.should_open_browser():
         webbrowser.open(f"http://localhost:{bound}")
     server.serve_forever()

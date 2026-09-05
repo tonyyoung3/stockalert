@@ -49,6 +49,10 @@ class StaticExtractTests(unittest.TestCase):
             (dashboard.STATIC_DIR / "tw_range.js").resolve(),
         )
         self.assertEqual(
+            dashboard.resolve_static_path("/static/sc_overlay.js"),
+            (dashboard.STATIC_DIR / "sc_overlay.js").resolve(),
+        )
+        self.assertEqual(
             dashboard.resolve_static_path("/"),
             dashboard.INDEX_HTML_PATH.resolve(),
         )
@@ -99,6 +103,17 @@ class StaticServeTests(unittest.TestCase):
         self.assertIn("function onOrBefore", text)
         self.assertIn("function toTopQuery", text)
         self.assertIn("function toScanner", text)
+
+    def test_sc_overlay_js_is_served(self):
+        status, headers, body = _request(self.base + "/static/sc_overlay.js")
+        self.assertEqual(status, 200)
+        self.assertIn("javascript", headers.get("content-type", ""))
+        self.assertTrue(headers.get("etag", "").startswith('"'))
+        text = body.decode("utf-8")
+        self.assertIn("root.ScOverlay", text)
+        self.assertIn("function normalizePoints", text)
+        self.assertIn("function sliceToWindow", text)
+        self.assertIn("function lookbackDays", text)
 
     def test_stale_etag_returns_200(self):
         status, headers, body = _request(

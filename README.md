@@ -182,7 +182,7 @@ gcloud run deploy stockalert \
 
 網址 hash：`#market` / `#stock` / `#alerts` / `#backtest`（也接受 `#section-stock` 這種寫法），可與既有 `?stock=2330` 並用。沒有 hash、但有 `?stock=` 時開個股分頁；純首次進入落在市場總覽，回測表單與結果不佔首屏。
 
-窄螢幕（約 375px）控制列改直向堆疊、input 滿寬、表格在區內橫滑；回測的篩選／進場／出場用 `data-bt-fold` 折疊（手機預設收合）。圖表手勢文案是拖曳／雙指縮放（pinch 原本就開著）。外資排行日期欄在小螢幕改直向、高度至少 44px，避免 iOS 裁切。
+窄螢幕（約 375px）控制列改直向堆疊、input 滿寬、表格在區內橫滑；回測的資料集／濾網／進場／出場用 `data-bt-fold` 折疊（手機預設收合），濾網積木是列表、參數為第二層。圖表手勢文案是拖曳／雙指縮放（pinch 原本就開著）。外資排行日期欄在小螢幕改直向、高度至少 44px，避免 iOS 裁切。
 
 Header **顯示範圍**（全域 `days`）只影響加權 K 線／走勢、外資合計、融資融券、台指期未平倉、個股圖。外資買賣超排行用自己的當日／近 N 日／自訂區間，不受全域天數控制。
 
@@ -196,6 +196,45 @@ Header **顯示範圍**（全域 `days`）只影響加權 K 線／走勢、外�
 | Cloud Run | 同一個 Turso DB（排程 `python -m data.cloud_db push-alerts` 把兩張表推上去；不必再開第二個 Turso） |
 
 名稱來自市場資料的 `stocks` 表（本機 `twse_data.db` 或 Turso）。題材（theme）目前沒存在表裡，畫面上是空的，也不會在每次開頁去打 yfinance。沒有列時顯示「尚無告警／尚未結算」。近期告警預設近 30 日（可選 7／90，上限 365）。績效是全樣本，並依 `pattern_type` 拆一列，不是分頁。
+
+### 回測規則積木（v1）
+
+回測頁用積木組「若…（濾網 AND）→ 則進場／出場」，能力對齊現有 `web/backtest_engine.py`，**不是**新 DSL。
+
+`POST /api/backtest` 仍走既有 **HTTP Basic Auth** 與（auth 開啟時）每 IP 每分鐘約 10 次限流。Body 可為：
+
+1. **v1 積木 JSON**（儀表板現在送這個；伺服器 `blocks_to_rule` 編成扁平 rule）
+2. **舊扁平 rule**（`filters` 為物件）— 相容，行為與以前相同
+
+積木文件形狀（詳見 `web/strategy_blocks.py`）：
+
+```json
+{
+  "version": 1,
+  "dataset": "2y_hourly",
+  "mode": "intraday",
+  "filters": [{"type": "weekdays", "params": {"days": [0, 1, 2, 3]}}],
+  "entry": {"direction": "long", "reference": "first_hour_high", "offset_pct": 0,
+            "trigger": "touch_from_below", "earliest_hour": 10},
+  "exit": {"exit_hour": 13, "stop_enabled": false},
+  "cost_pct": 0.03
+}
+```
+
+| 濾網 `type` | 引擎欄位 | 收盤才確定？ |
+| --- | --- | --- |
+| `weekdays` | `weekdays` | 否 |
+| `trend` | `trend`（含 `*_today`） | 僅 `*_today` |
+| `prev_day` | `prev_day` | 否 |
+| `gap` | `gap_dir`, `gap_abs_min_pct` | 否 |
+| `day_return` | `day_ret_dir`, `day_ret_min_pct` | 是 |
+| `ma_cross` | `ma_cross` | 是 |
+| `breakout` | `breakout`, `breakout_window` | 是 |
+| `oi_ratio` | `oi_ratio_mode`, `oi_ratio_pctile`, `oi_ratio_window` | 否 |
+
+結構：`dataset` ∈ {`2y_hourly`, `15y_daily`}；`mode` ∈ {`intraday`, `overnight`, `swing`}。日內 `entry`/`exit` 對應參考價＋偏移、觸發、方向、最早時間、出場時刻、停損。隔夜／波段 `exit` 對應 `hold_to`／停損%／停利%／最大持有天數（引擎既有優先序：停損＞停利＞時間／持有）。
+
+v1 **不做**：OR／巢狀群組、個股回測、告警 K 線進場、移動停損、任意腳本。日內模式若帶收盤才確定的濾網，編譯與引擎都會拒絕（偷看未來）。本機規則預設檔（#43 localStorage）是 #42 merge 後的下一票，本 PR 不做。
 
 本機模擬 PaaS：
 

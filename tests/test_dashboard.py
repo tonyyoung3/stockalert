@@ -199,6 +199,14 @@ class DashboardNavTests(unittest.TestCase):
         self.assertIn(">個股</a>", html)
         self.assertIn(">告警</a>", html)
         self.assertIn(">回測</a>", html)
+        self.assertIn("新增積木", html)
+        self.assertIn("尚未加入濾網積木", html)
+        self.assertIn("執行前規則摘要", html)
+        self.assertIn("id=\"bt-summary\"", html)
+        self.assertIn("function btBuildBlocks(", html)
+        self.assertIn("function btAddFilter(", html)
+        self.assertNotIn('id="bt-trend"', html)
+        self.assertNotIn('id="bt-macross"', html)
         self.assertIn("id=\"section-market\"", html)
         self.assertIn("id=\"section-stock\"", html)
         self.assertIn("id=\"section-alerts\"", html)
@@ -262,6 +270,8 @@ class DashboardNavTests(unittest.TestCase):
         self.assertIn("拖曳／雙指縮放", html)
         self.assertNotIn("滾輪縮放", html)
         self.assertIn("function initBtFolds(", html)
+        self.assertIn("function btApplyMobileBlockFolds(", html)
+        self.assertIn("日內會收合,不套用", html)
         self.assertIn('<details class="bt-box" data-bt-fold="filters" open>', html)
         self.assertIn('<details class="bt-box" data-bt-fold="entry" open>', html)
         self.assertIn('data-bt-fold="exit"', html)
@@ -272,6 +282,26 @@ class DashboardNavTests(unittest.TestCase):
         self.assertIn(">個股</a>", html)
         self.assertIn(">告警</a>", html)
         self.assertIn(">回測</a>", html)
+        self.assertIn("參數為第二層", html)
+        self.assertIn("偷看未來資訊", html)
+
+    def test_backtest_blocks_ui_replaces_fixed_filter_wall(self):
+        html = dashboard.HTML
+        self.assertIn("尚未加入濾網積木", html)
+        self.assertIn("新增積木", html)
+        self.assertIn("執行前規則摘要", html)
+        self.assertIn("id=\"bt-filter-empty\"", html)
+        self.assertIn("id=\"bt-close-decided-hint\"", html)
+        self.assertIn("沒有任何交易被觸發", html)
+        self.assertIn("credentials:'same-origin'", html)
+        self.assertIn("JSON.stringify(btBuildBlocks())", html)
+        self.assertIn("則進場（日內）", html)
+        self.assertIn("則出場（日內）", html)
+        self.assertIn("則進場（隔夜,收盤）", html)
+        self.assertIn("則出場（隔夜）", html)
+        self.assertIn("則進場（波段,收盤）", html)
+        self.assertNotIn("localStorage", html)
+        self.assertNotIn("inside_day", dashboard.HTML[dashboard.HTML.find("BT_FILTER_CATALOG"):dashboard.HTML.find("let btFilters")])
 
     def test_readme_documents_nav_and_days_scope(self):
         text = Path(__file__).resolve().parents[1].joinpath("README.md").read_text(encoding="utf-8")
@@ -281,6 +311,11 @@ class DashboardNavTests(unittest.TestCase):
         self.assertIn("?stock=", text)
         self.assertIn("375px", text)
         self.assertIn("雙指縮放", text)
+        self.assertIn("回測規則積木", text)
+        self.assertIn("blocks_to_rule", text)
+        self.assertIn("weekdays", text)
+        self.assertIn("#43 localStorage", text)
+        self.assertIn("#42 merge 後的下一票", text)
 
 
 if __name__ == "__main__":

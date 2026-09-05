@@ -267,6 +267,7 @@ class DashboardNavTests(unittest.TestCase):
         self.assertIn("分點（名稱＋代號）", html)
         self.assertIn(".bb-lists{grid-template-columns:1fr}", html)
         self.assertIn(".bb-list{max-height:280px}", html)
+        self.assertIn(".bb-lists[hidden],.bb-warn[hidden],.bb-empty[hidden]{display:none!important}", html)
         self.assertIn("此區間只控制熱門股分點，與上方外資排行、全域天數無關", html)
         self.assertLess(html.index("外資買賣超排行"), html.index("id=\"broker-branch-card\""))
         self.assertLess(html.index("id=\"c-buy\""), html.index("id=\"broker-branch-card\""))

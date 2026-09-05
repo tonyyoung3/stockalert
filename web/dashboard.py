@@ -660,6 +660,7 @@ tr:hover td{background:#f8f9fa}
 .bb-warn{font-size:12.5px;color:#7a5c00;background:#fff8e8;border:1px solid #ffe08a;border-radius:6px;padding:8px 10px;margin-bottom:12px}
 .bb-empty{padding:20px 14px;text-align:center;color:#495057;background:#f4f7fb;border:1px dashed #adb5bd;border-radius:6px;font-size:14px;font-weight:600;line-height:1.55;margin-bottom:4px}
 .bb-lists{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:16px;min-width:0}
+.bb-lists[hidden],.bb-warn[hidden],.bb-empty[hidden]{display:none!important}
 .bb-list-wrap{min-width:0}
 .bb-list-wrap h3{margin-bottom:8px}
 .bb-list{max-height:420px;overflow:auto;-webkit-overflow-scrolling:touch}

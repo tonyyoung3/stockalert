@@ -1,0 +1,12 @@
+{
+  "tickers": ["2330", "2454", "2317"],
+  "window": 20,
+  "min_periods": 20,
+  "field": "foreign_net_z",
+  "min": 1.5,
+  "max": null,
+  "x": "foreign_net_z",
+  "y": "close",
+  "enabled": true,
+  "asof": null
+}

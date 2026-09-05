@@ -39,6 +39,16 @@ jobs:
           restore-keys: |
             screener-db-
 
+      - name: Restore market databases
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            twse_data.db
+            us_data.db
+          key: market-data-${{ github.run_id }}
+          restore-keys: |
+            market-data-
+
       - name: Seed screener.db from git history if cache miss
         run: |
           if [ -f screener.db ]; then
@@ -78,6 +88,25 @@ jobs:
         env:
           TZ: Asia/Taipei
         run: python -m notify.performance_checker
+
+      - name: Run scanner daily alert
+        env:
+          TZ: Asia/Taipei
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+        run: |
+          set -o pipefail
+          python -m notify.scanner_alert 2>&1 | tee scanner-alert.log
+
+      - name: Notify Slack on scanner-alert failure
+        if: failure()
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
+          GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python -m notify.notify_job --title "掃描每日告警失敗" --log scanner-alert.log
 
       - name: Save screener database
         if: always()

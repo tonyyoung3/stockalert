@@ -165,6 +165,14 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
 .sc-watch-actions button.sc-watch-primary{background:#4C72B0;color:#fff;border:none}
 #sc-watch-msg{margin-top:8px}
 #sc-watch-msg[hidden]{display:none!important}
+.sc-alert{margin:0 0 12px;padding:10px 12px;background:#f7f4ee;border:1px solid #e8e0d0;border-radius:6px}
+.sc-alert-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px;margin-bottom:8px}
+.sc-alert-head h4{margin:0;font-size:13px;font-weight:600}
+.sc-alert-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:8px}
+.sc-alert-actions button{padding:8px 14px;border:1px solid #4C72B0;background:#4C72B0;color:#fff;border-radius:4px;cursor:pointer;font-size:13px;min-height:36px}
+#sc-alert-msg{margin-top:8px}
+#sc-alert-msg[hidden]{display:none!important}
+#sc-alert-run{margin:8px 0 0;font-size:12.5px;color:#6c757d;line-height:1.45}
 #sc-url-note{margin:0 0 10px;font-size:12.5px;color:#6c757d;line-height:1.45}
 #sc-url-note[hidden]{display:none!important}
 .sc-controls{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin-bottom:12px}
@@ -229,6 +237,8 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
   .sc-field select,.sc-field input,.sc-run,#sc-search input,#sc-add,#sc-watch-add{width:100%;min-height:44px}
   .sc-watch-actions{flex-direction:column;align-items:stretch}
   .sc-watch-actions button{width:100%;min-height:44px}
+  .sc-alert-actions{flex-direction:column;align-items:stretch}
+  .sc-alert-actions button,.sc-alert .sc-field select,.sc-alert .sc-field input{width:100%;min-height:44px}
   .sc-chart-wrap{height:280px;min-height:240px}
   .sc-pick button{min-width:44px;min-height:44px}
   .sc-table-tools{flex-direction:column;align-items:stretch}
@@ -430,7 +440,7 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
       <button class="reset-btn" type="button" onclick="resetZoom('c-scanner')">重置</button>
     </span>
   </div>
-  <p class="sc-note">多檔橫向比較工作台，<b>不是</b>個股分頁、不是回測「個股 pattern」宇宙、也不是全市場一次掃描。搜尋加入 ≥2 檔後才向 <code>/api/scanner/chip_zscore</code> 要真實籌碼／價量；<b>一次查詢</b>同時餵散布圖與下方結果表格，沒有第二條資料徑、沒有假資料。股價疊圖是第二張圖，复用同一批掃描標的與既有 <code>/api/stock_ohlc</code>（正規化／絕對價），圖例可關系列，× 只從疊圖拿掉、不改掃描標的與散布圖。追蹤清單存在這個瀏覽器（localStorage），可增刪、重整後仍在；<b>一鍵套用</b>寫入目前掃描標的，≥2 檔才打同一支 API。標的／軸／窗格寫進網址 <code>?sc=</code>（與 <code>?stock=</code> 同一套 query，可並用 <code>#scanner</code>），複製即可分享或重整還原；過長時先丟掉可選參數再截標的。點圖上的點或表格列會開個股分頁。</p>
+  <p class="sc-note">多檔橫向比較工作台，<b>不是</b>個股分頁、不是回測「個股 pattern」宇宙、也不是全市場一次掃描。搜尋加入 ≥2 檔後才向 <code>/api/scanner/chip_zscore</code> 要真實籌碼／價量；<b>一次查詢</b>同時餵散布圖與下方結果表格，沒有第二條資料徑、沒有假資料。股價疊圖是第二張圖，复用同一批掃描標的與既有 <code>/api/stock_ohlc</code>（正規化／絕對價），圖例可關系列，× 只從疊圖拿掉、不改掃描標的與散布圖。追蹤清單存在這個瀏覽器（localStorage），可增刪、重整後仍在；<b>一鍵套用</b>寫入目前掃描標的，≥2 檔才打同一支 API。標的／軸／窗格寫進網址 <code>?sc=</code>（與 <code>?stock=</code> 同一套 query，可並用 <code>#scanner</code>），複製即可分享或重整還原；過長時先丟掉可選參數再截標的。點圖上的點或表格列會開個股分頁。<b>存成每日告警</b>把目前標的＋一組欄位上下限寫進後端（一組就好，不是 DSL、也不下單）；排程复用同一支 chip_zscore，命中列進告警頁，也走既有 Slack。</p>
   <div class="search">
     <div class="sid-search" id="sc-search">
       <input id="sc-q" placeholder="搜尋代號／名稱，加入比較（复用 /api/stocks）" autocomplete="off"
@@ -453,6 +463,31 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
       <button type="button" id="sc-watch-clear" onclick="clearScannerWatchlist()">清空追蹤</button>
     </div>
     <div id="sc-watch-msg" role="status" hidden></div>
+  </div>
+  <div id="sc-alert" class="sc-alert">
+    <div class="sc-alert-head">
+      <h4>每日告警（一組）</h4>
+      <span class="hint">存目前掃描標的＋欄位上下限。排程盤後跑同一支 chip_zscore；不是 DSL，也不是下單。</span>
+    </div>
+    <div class="sc-controls" style="margin-bottom:0">
+      <div class="sc-field">
+        <label for="sc-alert-field">告警欄位</label>
+        <select id="sc-alert-field" aria-label="每日告警欄位"></select>
+      </div>
+      <div class="sc-field">
+        <label for="sc-alert-min">下限 min</label>
+        <input type="number" id="sc-alert-min" step="0.1" value="1.5" inputmode="decimal" aria-label="告警下限">
+      </div>
+      <div class="sc-field">
+        <label for="sc-alert-max">上限 max（可空）</label>
+        <input type="number" id="sc-alert-max" step="0.1" inputmode="decimal" aria-label="告警上限">
+      </div>
+    </div>
+    <div class="sc-alert-actions">
+      <button type="button" id="sc-alert-save" onclick="saveScannerAlertProfile()">存成每日告警</button>
+    </div>
+    <div id="sc-alert-msg" role="status" hidden></div>
+    <p id="sc-alert-run" hidden></p>
   </div>
   <div class="sc-controls">
     <div class="sc-field">
@@ -947,7 +982,13 @@ function renderFreshness(f){
   }
 }
 const PAT = {upper_shadow_reversal:'上影線反轉', inside_day:'Inside Day'};
-function patName(p){ return PAT[p] || p || '–'; }
+function patName(p){
+  if(PAT[p]) return PAT[p];
+  if(p && String(p).indexOf('scanner_')===0){
+    return '掃描：'+scAxisLabel(String(p).slice(8));
+  }
+  return p || '–';
+}
 function pct(n){ return n==null ? '–' : ((n>=0?'+':'')+Number(n).toFixed(2)+'%'); }
 function money(n){ return n==null ? '–' : Number(n).toLocaleString('zh-TW', {maximumFractionDigits:2}); }
 
@@ -1128,6 +1169,11 @@ function initScannerAxes(){
   y.innerHTML = opts;
   x.value = 'foreign_net_z';
   y.value = 'close';
+  const af = document.getElementById('sc-alert-field');
+  if(af && !af.options.length){
+    af.innerHTML = opts;
+    af.value = 'foreign_net_z';
+  }
   scAxesReady = true;
 }
 function hideScannerMenu(){
@@ -1549,6 +1595,89 @@ function clearScannerWatchlist(){
 async function submitScannerWatchAdd(){
   const item = await resolveScannerSearch();
   if(item) addScannerWatch(item);
+}
+function scAlertStatus(text, kind){
+  const el = document.getElementById('sc-alert-msg');
+  if(!el) return;
+  if(!text){ el.hidden = true; el.textContent = ''; el.className = ''; return; }
+  el.hidden = false;
+  el.className = kind==='ok' ? 'bt-ok' : 'bt-error';
+  el.textContent = text;
+}
+function renderScannerAlertRun(last){
+  const el = document.getElementById('sc-alert-run');
+  if(!el) return;
+  if(!last){ el.hidden = true; el.textContent = ''; return; }
+  const bits = [];
+  if(last.run_date) bits.push('上次排程 '+last.run_date);
+  if(last.asof) bits.push('asof '+last.asof);
+  if(last.status) bits.push(last.status);
+  if(last.hit_count!=null) bits.push('新告警 '+last.hit_count);
+  if(last.error) bits.push(last.error);
+  el.hidden = false;
+  el.textContent = bits.join(' · ');
+}
+function scCollectAlertProfile(){
+  const st = scCollectState();
+  const fieldEl = document.getElementById('sc-alert-field');
+  const minEl = document.getElementById('sc-alert-min');
+  const maxEl = document.getElementById('sc-alert-max');
+  let field = (fieldEl && fieldEl.value) || st.x || 'foreign_net_z';
+  if(!SC_AXES.some(a=>a.key===field)) field = 'foreign_net_z';
+  const minRaw = minEl ? String(minEl.value||'').trim() : '';
+  const maxRaw = maxEl ? String(maxEl.value||'').trim() : '';
+  return {
+    tickers: st.picks,
+    window: st.window,
+    min_periods: st.min_periods,
+    field: field,
+    min: minRaw==='' ? 1.5 : Number(minRaw),
+    max: maxRaw==='' ? null : Number(maxRaw),
+    x: st.x,
+    y: st.y,
+    enabled: true
+  };
+}
+function applyScannerAlertProfile(r){
+  if(!r || !r.profile) return;
+  initScannerAxes();
+  const p = r.profile;
+  const field = document.getElementById('sc-alert-field');
+  const minEl = document.getElementById('sc-alert-min');
+  const maxEl = document.getElementById('sc-alert-max');
+  if(field && p.field) field.value = scValidAxis(p.field, 'foreign_net_z');
+  if(minEl && p.min!=null) minEl.value = p.min;
+  if(maxEl) maxEl.value = p.max==null ? '' : p.max;
+  renderScannerAlertRun(r.last_run);
+}
+async function loadScannerAlertProfile(){
+  try{
+    const r = await j('/api/scanner/alert_profile');
+    applyScannerAlertProfile(r);
+  }catch(e){}
+}
+async function saveScannerAlertProfile(){
+  const body = scCollectAlertProfile();
+  if(!body.tickers.length){
+    scAlertStatus('請先加入至少 1 檔標的。', 'err');
+    return;
+  }
+  try{
+    const resp = await fetch('/api/scanner/alert_profile', {
+      method:'POST', credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(body)
+    });
+    const r = await resp.json();
+    if(!resp.ok || r.error){
+      scAlertStatus('儲存失敗：'+(r.error||resp.status), 'err');
+      return;
+    }
+    applyScannerAlertProfile(r);
+    scAlertStatus('已存 '+body.tickers.length+' 檔條件（'+body.field+'）。排程會用這組跑每日告警。', 'ok');
+  }catch(e){
+    scAlertStatus('儲存失敗：'+e, 'err');
+  }
 }
 function scHideChart(){
   if(charts['c-scanner']){ charts['c-scanner'].destroy(); delete charts['c-scanner']; }
@@ -4038,6 +4167,7 @@ window.addEventListener('resize', resizeCharts);
   const scShouldLoad = scFromUrl ? applyScannerQuery(scFromUrl) : false;
   renderScannerPicks();
   renderScannerWatchlist();
+  loadScannerAlertProfile();
   loadAll();
   showSection(resolveSection(), {updateHash:false});
   if(scShouldLoad) loadScanner();

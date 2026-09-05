@@ -61,6 +61,27 @@ def init_db() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_alerts_alert_date
             ON alerts (alert_date);
+
+            CREATE TABLE IF NOT EXISTS scanner_alert_profile (
+                id          INTEGER PRIMARY KEY CHECK (id = 1),
+                payload     TEXT    NOT NULL,
+                updated_at  TEXT    DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS scanner_alert_runs (
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_date            TEXT    NOT NULL,
+                asof                TEXT,
+                status              TEXT    NOT NULL,
+                hit_count           INTEGER NOT NULL DEFAULT 0,
+                skipped_duplicates  INTEGER NOT NULL DEFAULT 0,
+                error               TEXT,
+                detail              TEXT,
+                created_at          TEXT    DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_scanner_alert_runs_date
+            ON scanner_alert_runs (run_date);
         """)
         _ensure_performance_horizons(conn)
 

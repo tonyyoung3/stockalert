@@ -194,7 +194,34 @@ class FixtureAndRankingTests(unittest.TestCase):
         self.assertEqual(top["buy"], [])
         self.assertEqual(top["title"], "熱門股分點動向")
         self.assertTrue(top["freshness"]["empty"])
+        self.assertIsNone(top["start"])
+        self.assertEqual(top["trading_days"], 0)
         blank.close()
+
+    def test_near_n_days_sums_without_seeding_default_path(self):
+        broker_branch.load_fixture(self.conn, FIXTURE, dev=True)
+        self.conn.execute(
+            "INSERT OR REPLACE INTO broker_branch_daily "
+            "VALUES ('2026-09-02','2330','1020',10000,0,10000)"
+        )
+        self.conn.commit()
+        one = broker_branch.top_branches(self.conn, "2026-09-03", k=3, env={})
+        self.assertEqual(one["days"], 1)
+        self.assertEqual(one["start"], "2026-09-03")
+        self.assertEqual(one["end"], "2026-09-03")
+        self.assertEqual(one["buy"][0][0], "1020")
+        self.assertEqual(one["buy"][0][2], 430000)
+        multi = broker_branch.top_branches(
+            self.conn, "2026-09-03", k=3, env={}, days=5,
+        )
+        self.assertEqual(multi["days"], 5)
+        self.assertEqual(multi["start"], "2026-09-02")
+        self.assertEqual(multi["end"], "2026-09-03")
+        self.assertEqual(multi["trading_days"], 2)
+        self.assertEqual(multi["buy"][0][0], "1020")
+        self.assertEqual(multi["buy"][0][2], 440000)
+        self.assertEqual(multi["title"], "熱門股分點動向")
+        self.assertNotIn("全市場", multi["title"])
 
 
 class DashboardStubTests(unittest.TestCase):
@@ -221,8 +248,16 @@ class DashboardStubTests(unittest.TestCase):
         self.assertFalse(r["live_ingest"])
         self.assertFalse(r["token_present"])
         self.assertEqual(r["buy"], [])
+        self.assertEqual(r["sell"], [])
         self.assertNotIn("全市場", r["title"])
         json.dumps(r)
+
+    def test_top_days_query_default_is_single_day(self):
+        r = self.call("/api/broker_branch/top", days=5)
+        self.assertEqual(r["data_mode"], "empty_awaiting_token")
+        self.assertEqual(r["buy"], [])
+        self.assertEqual(r["days"], 5)
+        self.assertIsNone(r["start"])
 
     def test_freshness_key_tables_unchanged(self):
         with patch("web.freshness.taiwan_now",

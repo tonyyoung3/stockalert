@@ -221,53 +221,85 @@ def _envelope(
     return body
 
 
+def ranking_window(
+    conn: sqlite3.Connection,
+    trade_date: str | None = None,
+    days: int | None = None,
+) -> tuple[str | None, str | None, int]:
+    """Inclusive (start, end, trading_days) for market Top.
+
+    No date + no rows → (None, None, 0). days unset or 1 → latest (or given) day.
+    days>1 → last N distinct trade_dates ending at that day (foreign-ranking habit).
+    """
+    end = trade_date or latest_trade_date(conn)
+    if not end or not _table_ready(conn):
+        return None, None, 0
+    n = 1 if days is None else max(1, min(int(days), 730))
+    if n == 1:
+        return end, end, 1
+    span = conn.execute(
+        "SELECT MIN(d), MAX(d), COUNT(*) FROM ("
+        "SELECT DISTINCT trade_date AS d FROM broker_branch_daily "
+        "WHERE trade_date <= ? ORDER BY trade_date DESC LIMIT ?) AS t",
+        (end, n),
+    ).fetchone()
+    if not span or not span[0]:
+        return end, end, 0
+    return str(span[0]), str(span[1]), int(span[2])
+
+
 def top_branches(
     conn: sqlite3.Connection,
     trade_date: str | None = None,
     k: int = DEFAULT_K,
     env: dict[str, str] | None = None,
+    days: int | None = None,
 ) -> dict:
     k = max(1, min(int(k), 50))
-    day = trade_date or latest_trade_date(conn)
-    coverage = coverage_for_rows(conn) if day else "empty"
+    start, end, n_days = ranking_window(conn, trade_date, days)
+    coverage = coverage_for_rows(conn) if end else "empty"
     buy: list = []
     sell: list = []
     universe = 0
-    if day and _table_ready(conn):
+    if end and _table_ready(conn):
         buy = conn.execute(
             "SELECT b.broker_id, COALESCE(MAX(br.broker_name), b.broker_id), "
             "SUM(b.net_volume) AS net "
             "FROM broker_branch_daily b "
             "LEFT JOIN brokers br ON br.broker_id = b.broker_id "
-            "WHERE b.trade_date = ? "
+            "WHERE b.trade_date BETWEEN ? AND ? "
             "GROUP BY b.broker_id "
             "ORDER BY net DESC LIMIT ?",
-            (day, k),
+            (start, end, k),
         ).fetchall()
         sell = conn.execute(
             "SELECT b.broker_id, COALESCE(MAX(br.broker_name), b.broker_id), "
             "SUM(b.net_volume) AS net "
             "FROM broker_branch_daily b "
             "LEFT JOIN brokers br ON br.broker_id = b.broker_id "
-            "WHERE b.trade_date = ? "
+            "WHERE b.trade_date BETWEEN ? AND ? "
             "GROUP BY b.broker_id "
             "ORDER BY net ASC LIMIT ?",
-            (day, k),
+            (start, end, k),
         ).fetchall()
         universe = int(
             conn.execute(
                 "SELECT COUNT(DISTINCT stock_id) FROM broker_branch_daily "
-                "WHERE trade_date = ?",
-                (day,),
+                "WHERE trade_date BETWEEN ? AND ?",
+                (start, end),
             ).fetchone()[0]
         )
     return _envelope(
         conn,
         coverage=coverage,
-        trade_date=day,
+        trade_date=end,
         env=env,
         extra={
             "k": k,
+            "days": 1 if days is None else max(1, min(int(days), 730)),
+            "start": start,
+            "end": end,
+            "trading_days": n_days,
             "hot_n": universe or None,
             "universe_count": universe,
             "slice_method": (

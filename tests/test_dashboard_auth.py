@@ -71,6 +71,7 @@ class CredentialHelperTests(unittest.TestCase):
         self.assertTrue(dashboard.path_requires_auth("/api/broker_branch/freshness"))
         self.assertTrue(dashboard.path_requires_auth("/api/scanner/chip_zscore"))
         self.assertTrue(dashboard.path_requires_auth("/api/scanner/broker_main_force"))
+        self.assertTrue(dashboard.path_requires_auth("/api/scanner/alert_profile"))
         self.assertTrue(dashboard.path_requires_auth("/static/index.html"))
         self.assertFalse(dashboard.path_requires_auth("/favicon.ico"))
 

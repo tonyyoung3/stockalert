@@ -36,7 +36,7 @@ CHUNK = 400
 MAX_VARS = 900
 DEFAULT_FILES = (REPO_ROOT / "twse_data.db", REPO_ROOT / "us_data.db")
 ALERT_FILES = (REPO_ROOT / "screener.db",)
-SINCE_COLUMNS = ("trade_date", "alert_date", "check_date")
+SINCE_COLUMNS = ("trade_date", "alert_date", "check_date", "run_date")
 
 
 def _ident(name: str) -> str:

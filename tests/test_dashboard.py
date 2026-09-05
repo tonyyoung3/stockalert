@@ -1069,5 +1069,81 @@ class DashboardStockBacktestUITests(unittest.TestCase):
         self.assertLess(stock.index('id="bt-stock-summary"'), stock.index("runStockBacktest()"))
 
 
+class DashboardScannerAlertTests(unittest.TestCase):
+    """#86: one saved profile → schedule; UI save does not add a chip_zscore fetch."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        self.screener = root / "screener.db"
+        self.market = root / "twse.db"
+        sqlite3.connect(self.market).close()
+        alerts_db.set_db_path(self.screener)
+        market_db.set_db_path(self.market)
+
+    def tearDown(self):
+        alerts_db.set_db_path(None)
+        market_db.set_db_path(None)
+        self.tmp.cleanup()
+
+    def test_ui_save_panel_reuses_picks_and_single_chip_zscore(self):
+        html = dashboard.HTML
+        self.assertIn('id="sc-alert"', html)
+        self.assertIn('id="sc-alert-field"', html)
+        self.assertIn('id="sc-alert-min"', html)
+        self.assertIn('id="sc-alert-save"', html)
+        self.assertIn(">存成每日告警</button>", html)
+        self.assertIn("function saveScannerAlertProfile(", html)
+        self.assertIn("function scCollectAlertProfile(", html)
+        self.assertIn("function loadScannerAlertProfile(", html)
+        self.assertIn("/api/scanner/alert_profile", html)
+        self.assertIn("不是 DSL", html)
+        self.assertIn("也不下單", html)
+        self.assertEqual(html.count("j('/api/scanner/chip_zscore?"), 1)
+        save = html[html.index("async function saveScannerAlertProfile("):html.index("function scHideChart(")]
+        self.assertIn("method:'POST'", save)
+        self.assertIn("/api/scanner/alert_profile", save)
+        self.assertNotIn("/api/scanner/chip_zscore", save)
+        self.assertNotIn("loadScanner()", save)
+        load = html[html.index("async function loadScanner("):html.index("async function loadAlerts(")]
+        self.assertEqual(load.count("/api/scanner/chip_zscore"), 1)
+        scanner = html[html.index('id="section-scanner"'):html.index('id="section-alerts"')]
+        self.assertIn('id="sc-alert"', scanner)
+        stock = html[html.index('id="section-stock"'):html.index('id="section-scanner"')]
+        self.assertNotIn("sc-alert-save", stock)
+        src = Path(__file__).resolve().parents[1].joinpath("web/dashboard.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("stock_chips_daily", src)
+        self.assertIn("/api/scanner/alert_profile", src)
+        self.assertIn("indexOf('scanner_')===0", html)
+
+    def test_get_falls_back_to_repo_file_without_db(self):
+        got = dashboard.api_scanner_alert_profile()
+        self.assertIn(got["source"], ("file", "empty", "db"))
+        self.assertIn("tickers", got["profile"])
+        self.assertIn("field", got["profile"])
+
+    def test_post_saves_one_profile_and_rejects_dsl(self):
+        saved = dashboard.save_scanner_alert_profile({
+            "tickers": ["2330", "2454"],
+            "window": 20,
+            "field": "foreign_net_z",
+            "min": 1.5,
+        })
+        self.assertTrue(saved["saved"])
+        self.assertEqual(saved["source"], "db")
+        self.assertEqual(saved["profile"]["tickers"], ["2330", "2454"])
+        got = dashboard.api_scanner_alert_profile()
+        self.assertEqual(got["source"], "db")
+        self.assertEqual(got["profile"]["tickers"], ["2330", "2454"])
+        with self.assertRaises(ValueError) as ctx:
+            dashboard.save_scanner_alert_profile({
+                "tickers": ["2330"],
+                "expr": "foreign_net_z > 2",
+            })
+        self.assertIn("unsupported_condition", str(ctx.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,4 +1,4 @@
-"""screener.db access for Slack, harness, and later the website."""
+"""screener.db access for Slack, harness, scanner alerts, and the website."""
 
 from alertsdb.store import (
     DASHBOARD_HORIZONS,

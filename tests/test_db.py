@@ -80,6 +80,16 @@ class DbTests(unittest.TestCase):
         self.assertNotIn((old_id, 5), after)
         self.assertIn((old_id, 20), after)
 
+    def test_init_db_creates_scanner_alert_tables(self):
+        names = {
+            row[0]
+            for row in db.get_conn().execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        self.assertIn("scanner_alert_profile", names)
+        self.assertIn("scanner_alert_runs", names)
+
     def test_default_db_path_stays_at_repo_root(self):
         db.set_db_path(None)
         self.assertEqual(

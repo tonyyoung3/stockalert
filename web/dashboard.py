@@ -39,11 +39,13 @@ from alertsdb.store import (
     HORIZON_ASSUMPTIONS,
     get_conn,
     get_db_path,
+    init_db,
     list_alerts,
     performance_by_horizon,
 )
 from data import market_db
 from market import broker_branch as broker_branch_mod
+from notify import scanner_profile as scanner_profile_mod
 from web import broker_main_force as broker_main_force_mod
 from web import chip_zscore as chip_zscore_mod
 from web import freshness as freshness_mod
@@ -74,6 +76,7 @@ UNAUTHORIZED_JSON = {"error": "unauthorized"}
 ANONYMOUS_DISABLED_JSON = {"error": "anonymous_disabled"}
 RATE_LIMITED_JSON = {"error": "rate_limited"}
 INVALID_JSON = {"error": "invalid_json"}
+UNSUPPORTED_CONDITION_JSON = {"error": "unsupported_condition"}
 INTERNAL_ERROR_JSON = {"error": "internal_error"}
 BACKTEST_FAILED_JSON = {"error": "回測執行失敗"}
 BACKTEST_RATE_LIMIT = 10
@@ -319,6 +322,76 @@ def _open_alerts_conn():
 
 def _empty_alerts(days, since=None):
     return {"data": [], "empty": True, "days": days, "since": since}
+
+
+def _open_alerts_writable():
+    """Writable alerts/profile connection. Creates local screener.db if needed."""
+    if market_db.using_turso():
+        shared = _request_conn.get()
+        if shared is not None:
+            return shared, False
+        return market_db.connect(), True
+    init_db()
+    return get_conn(), True
+
+
+def _profile_payload(profile, source, last=None, extra=None):
+    body = {
+        "profile": profile,
+        "source": source,
+        "last_run": last,
+    }
+    if extra:
+        body.update(extra)
+    return body
+
+
+def api_scanner_alert_profile() -> dict:
+    """GET one saved scanner-alert profile + last job status."""
+    conn, owns = None, False
+    try:
+        conn, owns = _open_alerts_conn()
+        db_profile = scanner_profile_mod.profile_from_conn(conn) if conn is not None else None
+        last = scanner_profile_mod.last_run(conn) if conn is not None else None
+    except Exception:
+        db_profile, last = None, None
+    finally:
+        if owns and conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    if db_profile and db_profile.get("tickers"):
+        return _profile_payload(db_profile, "db", last)
+    try:
+        file_profile = scanner_profile_mod.profile_from_file()
+    except Exception:
+        file_profile = None
+    if file_profile is not None:
+        return _profile_payload(file_profile, "file", last)
+    return _profile_payload(scanner_profile_mod.default_profile(), "empty", last)
+
+
+def save_scanner_alert_profile(payload: dict) -> dict:
+    """POST: persist one condition set + ticker list (no DSL)."""
+    try:
+        profile = scanner_profile_mod.parse_profile(payload)
+    except ValueError as exc:
+        msg = str(exc)
+        if msg.startswith("unsupported_condition"):
+            raise
+        raise ValueError(msg) from exc
+    conn, owns = _open_alerts_writable()
+    try:
+        saved = scanner_profile_mod.save_profile_conn(conn, profile)
+        last = scanner_profile_mod.last_run(conn)
+    finally:
+        if owns and conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    return _profile_payload(saved, "db", last, {"saved": True})
 
 
 def _empty_performance():
@@ -670,6 +743,8 @@ def _api(path, qs):
         return chip_zscore_mod.api_chip_zscore(_request_conn.get(), qs)
     if path == "/api/scanner/broker_main_force":
         return broker_main_force_mod.api_broker_main_force(_request_conn.get(), qs)
+    if path == "/api/scanner/alert_profile":
+        return api_scanner_alert_profile()
     return None
 
 
@@ -838,15 +913,15 @@ class Handler(BaseHTTPRequestHandler):
                 self._drain_body()
                 self._reject_access()
                 return
-            if u.path not in ("/api/backtest", "/api/backtest/stock"):
+            if u.path not in (
+                "/api/backtest",
+                "/api/backtest/stock",
+                "/api/scanner/alert_profile",
+            ):
                 self._drain_body()
                 self.send_response(404)
                 self._wrote_response = True
                 self.end_headers()
-                return
-            if not _backtest_limiter.allow(client_ip(self), max_hits=backtest_max_hits()):
-                self._drain_body()
-                self._send_json(429, RATE_LIMITED_JSON)
                 return
             try:
                 length = int(self.headers.get("Content-Length", 0) or 0)
@@ -862,6 +937,19 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(payload, dict):
                 _log.warning("non-object JSON POST %s from %s", u.path, client_ip(self))
                 self._send_json(400, INVALID_JSON)
+                return
+            if u.path == "/api/scanner/alert_profile":
+                try:
+                    self._send_json(200, save_scanner_alert_profile(payload))
+                except ValueError as exc:
+                    msg = str(exc)
+                    if msg.startswith("unsupported_condition"):
+                        self._send_json(400, UNSUPPORTED_CONDITION_JSON)
+                    else:
+                        self._send_json(400, {"error": msg})
+                return
+            if not _backtest_limiter.allow(client_ip(self), max_hits=backtest_max_hits()):
+                self._send_json(429, RATE_LIMITED_JSON)
                 return
             _synthetic_handler_hold()
             if u.path == "/api/backtest/stock":

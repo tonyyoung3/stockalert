@@ -810,6 +810,66 @@ class DashboardScannerUrlTests(unittest.TestCase):
         self.assertNotIn("watchlist", src)
 
 
+class DashboardTwRangeTests(unittest.TestCase):
+    """#83: scanner + 市場排行 share TwRange; calendar is #73 tw_calendar."""
+
+    def test_html_loads_shared_helper_and_wires_both_surfaces(self):
+        html = dashboard.HTML
+        self.assertIn('src="/static/tw_range.js"', html)
+        self.assertIn("function scReadWindowAsof(", html)
+        self.assertIn("function onScWindowPreset(", html)
+        self.assertIn("function onScWindowInput(", html)
+        self.assertIn("function topReadRange(", html)
+        self.assertIn("TwRange.toTopQuery(", html)
+        self.assertIn("TwRange.clampWindow(", html)
+        self.assertIn("TwRange.snapInput(", html)
+        self.assertIn("TwRange.normalize({mode:'custom'", html)
+        self.assertIn('id="sc-window-preset"', html)
+        self.assertIn(">近 20 日</option>", html)
+        self.assertIn(">自訂窗格</option>", html)
+        self.assertIn("與外資排行同一套時間模型", html)
+        self.assertIn("與掃描窗格同一套模型", html)
+        self.assertIn("非交易日會對齊到前一交易日", html)
+        load = html[html.index("async function loadScanner("):html.index("async function loadAlerts(")]
+        self.assertIn("scReadWindowAsof()", load)
+        self.assertIn("TwRange.isYmd(wa.asof)", load)
+        self.assertEqual(load.count("/api/scanner/chip_zscore"), 1)
+        top = html[html.index("function topReadRange("):html.index("async function loadTop(")]
+        self.assertIn("TwRange.toTopQuery(topReadRange())", top)
+        self.assertIn("TwRange.snapInput(document.getElementById('top-start'))", top)
+        sbb = html[html.index("function sbbDateParam("):html.index("function onSbbDate(")]
+        self.assertIn("TwRange.snapInput(document.getElementById('sbb-date'))", sbb)
+        self.assertEqual(html.count("j('/api/scanner/chip_zscore?"), 1)
+        self.assertIn("stockalert.sc.watchlist.v1", html)
+        self.assertIn("function parseScannerQuery(", html)
+        self.assertIn("qs.set('scw'", html)
+        src = Path(__file__).resolve().parents[1].joinpath("web/dashboard.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("stock_chips_daily", src)
+        self.assertNotIn("TwRange", src)
+        js = Path(__file__).resolve().parents[1].joinpath("web/static/tw_range.js").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("web/tw_calendar.py", js)
+        self.assertIn("taiwan_today", js)
+        self.assertIn("#73", js)
+        self.assertNotIn("#84", html[html.index("function scReadWindowAsof("):html.index("function topReadRange(")])
+
+    def test_url_and_watchlist_gates_still_hold(self):
+        html = dashboard.HTML
+        self.assertIn("function syncScannerUrl(", html)
+        self.assertIn("function applyScannerWatchlist(", html)
+        self.assertEqual(html.count("j('/api/scanner/chip_zscore?"), 1)
+        parse = html[html.index("function parseScannerQuery("):html.index("function applyScannerQuery(")]
+        self.assertIn("TwRange.clampWindow(qs.get('scw')", parse)
+        self.assertIn("TwRange.onOrBefore(asofRaw)", parse)
+        collect = html[html.index("function scCollectState("):html.index("function scReadWindowAsof(")]
+        self.assertIn("scReadWindowAsof()", collect)
+        self.assertIn("wa.window", collect)
+        self.assertIn("wa.asof", collect)
+
+
 class DashboardScannerTableTests(unittest.TestCase):
     """#80: sortable/filterable results table on the same chip_zscore payload."""
 

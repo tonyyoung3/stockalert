@@ -37,7 +37,7 @@ def taiwan_now(now: datetime | None = None) -> datetime:
 
 
 def taiwan_today(now: datetime | None = None) -> date:
-    """Asia/Taipei calendar date. Use this instead of date.today() for TW market days."""
+    """Asia/Taipei calendar date (#73). Use this instead of date.today() for TW market days."""
     return taiwan_now(now).date()
 
 HOLIDAY_YEARS = (2025, 2026)
@@ -106,3 +106,40 @@ def holiday_name(d: date) -> str | None:
 def is_tw_trading_day(d: date) -> bool:
     """Weekday and not a TWSE cash-market holiday."""
     return d.weekday() < 5 and d not in TWSE_CLOSED_WEEKDAYS
+
+
+def on_or_before_trading_day(d: date, max_lookback: int = 400) -> date:
+    """``d`` if it is a TWSE trading day, else the previous one."""
+    for _ in range(max_lookback):
+        if is_tw_trading_day(d):
+            return d
+        d -= timedelta(days=1)
+    raise ValueError(
+        f"no TW trading day in {max_lookback} days on/before {d.isoformat()}"
+    )
+
+
+def last_n_trading_days(n: int, end: date | None = None) -> tuple[date, date]:
+    """Inclusive (start, end) covering ``n`` TWSE trading days ending at ``end``.
+
+    ``end`` snaps with ``on_or_before_trading_day``. ``n`` is clamped to 1–730.
+    Default ``end`` is ``taiwan_today`` (#73). Dashboard JS ``TwRange`` (#83)
+    mirrors this for scanner window + 市場排行 近 N／自訂區間.
+    """
+    try:
+        n = int(n)
+    except (TypeError, ValueError):
+        n = 1
+    n = max(1, min(n, 730))
+    end = on_or_before_trading_day(end or taiwan_today())
+    start = end
+    found = 0
+    d = end
+    for _ in range(n * 3 + 40):
+        if is_tw_trading_day(d):
+            found += 1
+            start = d
+            if found >= n:
+                break
+        d -= timedelta(days=1)
+    return start, end

@@ -45,6 +45,10 @@ class StaticExtractTests(unittest.TestCase):
             dashboard.INDEX_HTML_PATH.resolve(),
         )
         self.assertEqual(
+            dashboard.resolve_static_path("/static/tw_range.js"),
+            (dashboard.STATIC_DIR / "tw_range.js").resolve(),
+        )
+        self.assertEqual(
             dashboard.resolve_static_path("/"),
             dashboard.INDEX_HTML_PATH.resolve(),
         )
@@ -84,6 +88,17 @@ class StaticServeTests(unittest.TestCase):
         self.assertEqual(headers2.get("etag"), etag)
         self.assertEqual(headers2.get("cache-control"), dashboard._STATIC_CACHE_CONTROL)
         self.assertEqual(body2, b"")
+
+    def test_tw_range_js_is_served(self):
+        status, headers, body = _request(self.base + "/static/tw_range.js")
+        self.assertEqual(status, 200)
+        self.assertIn("javascript", headers.get("content-type", ""))
+        self.assertTrue(headers.get("etag", "").startswith('"'))
+        text = body.decode("utf-8")
+        self.assertIn("root.TwRange", text)
+        self.assertIn("function onOrBefore", text)
+        self.assertIn("function toTopQuery", text)
+        self.assertIn("function toScanner", text)
 
     def test_stale_etag_returns_200(self):
         status, headers, body = _request(

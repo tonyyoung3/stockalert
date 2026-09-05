@@ -13,7 +13,10 @@ on:
         required: false
         default: '14'
       institutional_gaps:
-        description: 'Only fill trust_daily/dealer_daily dates that foreign_daily already has (skip other jobs)'
+        description: >-
+          Only fill trust_daily/dealer_daily dates missing vs foreign_daily
+          (Turso foreign span when TURSO_* is set; Actions cache local foreign
+          span is often shorter). Skips other jobs.
         type: boolean
         default: false
 

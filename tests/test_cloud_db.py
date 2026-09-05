@@ -234,6 +234,78 @@ class PushTests(unittest.TestCase):
             "2026-09-03",
         )
 
+    def test_push_file_can_limit_tables(self):
+        counts = cloud_db.push_file(
+            self.path, self.remote, since="2026-08-15", tables=("taiex_daily",),
+        )
+        self.assertEqual(set(counts), {"taiex_daily"})
+        self.assertNotIn("stocks", counts)
+
+    def test_remote_distinct_dates_empty_when_unconfigured(self):
+        with patch("data.cloud_db.configured", return_value=False):
+            self.assertEqual(cloud_db.remote_distinct_dates("foreign_daily"), set())
+
+    def test_remote_distinct_dates_reads_injected_remote(self):
+        cloud_db.push_file(self.path, self.remote, since="2026-08-15")
+        days = cloud_db.remote_distinct_dates(
+            "taiex_daily", since="2026-08-15", remote=self.remote,
+        )
+        self.assertEqual(days, {"2026-08-20", "2026-08-29"})
+        self.assertEqual(
+            cloud_db.remote_distinct_dates("nope", remote=self.remote),
+            set(),
+        )
+
+    def test_complete_foreign_does_not_skip_incomplete_trust_dealer(self):
+        """Turso may already have full foreign_daily for a date while
+        trust_daily/dealer_daily are empty. Skip is per-table."""
+        conn = sqlite3.connect(self.path)
+        conn.executescript("""
+            CREATE TABLE foreign_daily (
+                trade_date TEXT, stock_id TEXT, stock_name TEXT,
+                foreign_buy INTEGER, foreign_sell INTEGER, foreign_net INTEGER,
+                PRIMARY KEY (trade_date, stock_id)
+            );
+            CREATE TABLE trust_daily (
+                trade_date TEXT, stock_id TEXT, stock_name TEXT,
+                trust_buy INTEGER, trust_sell INTEGER, trust_net INTEGER,
+                PRIMARY KEY (trade_date, stock_id)
+            );
+            CREATE TABLE dealer_daily (
+                trade_date TEXT, stock_id TEXT, stock_name TEXT,
+                dealer_buy INTEGER, dealer_sell INTEGER, dealer_net INTEGER,
+                PRIMARY KEY (trade_date, stock_id)
+            );
+        """)
+        for ds in ("2026-01-05", "2026-08-31"):
+            conn.execute(
+                "INSERT INTO foreign_daily VALUES (?,?,?,?,?,?)",
+                (ds, "2330", "台積電", 1, 0, 1),
+            )
+            conn.execute(
+                "INSERT INTO trust_daily VALUES (?,?,?,?,?,?)",
+                (ds, "2330", "台積電", 2, 0, 2),
+            )
+            conn.execute(
+                "INSERT INTO dealer_daily VALUES (?,?,?,?,?,?)",
+                (ds, "2330", "台積電", 3, 0, 3),
+            )
+        conn.commit()
+        conn.close()
+        remote = FakeRemote()
+        cloud_db.push_file(self.path, remote, since="2026-01-01")
+        remote.execute("DELETE FROM trust_daily")
+        remote.execute("DELETE FROM dealer_daily")
+        remote.commit()
+        counts = cloud_db.push_file(self.path, remote, since="2026-01-01")
+        self.assertEqual(counts["foreign_daily"], 1)
+        self.assertEqual(counts["trust_daily"], 2)
+        self.assertEqual(counts["dealer_daily"], 2)
+        self.assertEqual(
+            remote.execute("SELECT COUNT(*) FROM trust_daily").fetchone()[0],
+            2,
+        )
+
     def test_init_db_trust_dealer_are_discovered_by_trade_date(self):
         """Turso push auto-discovers tables with trade_date; new T86 tables qualify."""
         from market import collector

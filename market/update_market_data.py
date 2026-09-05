@@ -65,7 +65,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--institutional-gaps-only",
         action="store_true",
-        help="only fill trust_daily/dealer_daily dates missing vs foreign_daily",
+        help="only fill trust_daily/dealer_daily dates missing vs foreign_daily "
+             "(Turso foreign dates when TURSO_* is set; cache-local span can be shorter)",
     )
     parser.add_argument("--skip-turso", action="store_true",
                         help="do not push local sqlite to Turso even if secrets are set")
@@ -296,27 +297,39 @@ def main(argv: list[str] | None = None) -> int:
     write_step_summary(lines, failed)
 
     from data import cloud_db
+    from market import backfill
     push_days = args.days
+    push_tables = None
     if args.institutional_gaps_only:
-        # New tables may span the whole foreign_daily history; 14 days would miss it.
+        # Push only T86 tables for the filled span. Expanding the generic
+        # 14-day window to the whole local cache would re-upload stock_daily
+        # etc.; Turso foreign history can be much longer than the Actions cache.
         twse = REPO_ROOT / "twse_data.db"
         if twse.exists():
             conn = sqlite3.connect(twse)
             try:
-                lo = conn.execute("SELECT MIN(trade_date) FROM foreign_daily").fetchone()[0]
-            except sqlite3.OperationalError:
-                lo = None
+                remote_dates = None
+                if cloud_db.configured() and not args.skip_turso:
+                    try:
+                        remote_dates = backfill.load_remote_institutional_dates()
+                    except Exception:
+                        log.exception("Turso date lookup for push span failed")
+                push_days = backfill.institutional_push_days(
+                    conn, taiwan_now().date(),
+                    remote_dates=remote_dates,
+                    default=args.days,
+                )
             finally:
                 conn.close()
-            if lo:
-                try:
-                    span = (taiwan_now().date() - date.fromisoformat(lo)).days + 7
-                    push_days = max(push_days, span)
-                except ValueError:
-                    pass
+        push_tables = backfill.INSTITUTIONAL_TABLES
+        log.info("institutional Turso push days=%s tables=%s", push_days, ",".join(push_tables))
     if cloud_db.configured() and not args.skip_turso:
         try:
-            pushed = cloud_db.push_market_files(days=push_days, today=taiwan_now().date())
+            pushed = cloud_db.push_market_files(
+                days=push_days,
+                today=taiwan_now().date(),
+                tables=push_tables,
+            )
             print("=== turso ===")
             for fname, tables in pushed.items():
                 print(fname, ", ".join(f"{k}={v}" for k, v in tables.items()) or "(empty)")

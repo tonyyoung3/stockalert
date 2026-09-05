@@ -72,6 +72,16 @@ PTT 股板週報跟 Reddit 投資想法週報都是本機整理、印到 stdout�
 
 掃描用寬表 `stock_chips_daily` 是 **SQL VIEW**（不是實體表）：`stock_daily` LEFT JOIN 三大法人日表，鍵是 `(trade_date, stock_id)`。VIEW 不用刷新，底表仍由 `update_market_data` 寫入。欄位、單位、增量與 Turso 見 `docs/stock_chips_daily.md`（#77 / epic #76）。儀表板讀徑繼續打底表，不要改走這個 VIEW。
 
+**Cache-local foreign span ≠ Turso foreign span.** GitHub Actions 的 `twse_data.db` cache 裡 `foreign_daily` 常常只有約 85 個交易日，但 Turso 上同一張表可以有約 510 日。設了 `TURSO_*` 時，`institutional_gaps` 以 Turso（並集本機）的 `foreign_daily` 日期當缺口來源，略過 Turso 上 trust/dealer 都已齊的日期；抓完只推這三張 T86 表的補齊區間，不會用本機 cache 的短外資歷史當「已補完」。未設 secrets 時行為不變，只看本機。
+
+補歷史（merge 後由 DE 觸發；約 4 秒／日，勿在 unit CI 跑）：
+
+```bash
+gh workflow run "Update market data" --ref main -f institutional_gaps=true
+```
+
+UI：Actions → *Update market data* → Run workflow → **institutional_gaps = true**（`days` 此路徑不使用）。
+
 開 Turso：
 
 ```bash
@@ -87,7 +97,7 @@ turso db tokens create stockalert
 python -m market.update_market_data              # 預設近 14 天
 python -m market.update_market_data --days 730   # 歷史回補
 python -m market.update_market_data --institutional-gaps-only
-python -m market.backfill institutional          # 對齊 foreign_daily 日期、只補缺的投信／自營商
+python -m market.backfill institutional          # 對齊 foreign 日期（Turso ∪ 本機）、只補缺的投信／自營商
 python -m market.backfill institutional --dry-run
 python -m market.update_market_data --dry-run
 python -m data.cloud_db status

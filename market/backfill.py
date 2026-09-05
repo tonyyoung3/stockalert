@@ -8,9 +8,13 @@
   python -m market.backfill 90         # 回補近 90 天
   python -m market.backfill index 90   # 只回補指數
   python -m market.backfill foreign 90 # 只回補 T86(外資+投信+自營商)
-  python -m market.backfill institutional      # 只補 foreign_daily 已有、trust/dealer 缺少的日期
+  python -m market.backfill institutional      # 只補 foreign 已有、trust/dealer 缺少的日期
   python -m market.backfill institutional 14   # 同上,限近 14 個日曆天
   python -m market.backfill institutional --dry-run
+
+Actions cache local foreign_daily is often much shorter than Turso
+foreign_daily. When TURSO_* is set, institutional gaps use Turso
+(and/or local) foreign dates, then push only the T86 tables.
   python -m market.backfill margin 90  # 只回補融資融券
   python -m market.backfill ohlc       # 只回補大盤日K
   python -m market.backfill stock 2330,2454 730  # 回補指定個股日K
@@ -319,6 +323,9 @@ def backfill(days: int, do_index=True, do_foreign=True, do_margin=True,
     log.info("完成:指數回補 %d 天、T86 回補 %d 天、融資融券回補 %d 天", n_idx, n_for, n_mar)
 
 
+INSTITUTIONAL_TABLES = ("foreign_daily", "trust_daily", "dealer_daily")
+
+
 def _table_span(conn, table: str) -> tuple[int, str | None, str | None]:
     row = conn.execute(
         f"SELECT COUNT(*), MIN(trade_date), MAX(trade_date) FROM {table}"
@@ -326,42 +333,196 @@ def _table_span(conn, table: str) -> tuple[int, str | None, str | None]:
     return int(row[0] or 0), row[1], row[2]
 
 
-def institutional_coverage(conn) -> list[str]:
+def load_remote_institutional_dates(
+    since: str | None = None,
+    remote_dates: dict[str, set[str]] | None = None,
+    remote=None,
+) -> dict[str, set[str]]:
+    """Per-table distinct trade_date sets from Turso, or an injected mock.
+
+    Empty sets if TURSO_* is unset and no mock / remote is given.
+    """
+    if remote_dates is not None:
+        out = {}
+        for table in INSTITUTIONAL_TABLES:
+            dates = set(remote_dates.get(table) or ())
+            if since:
+                dates = {d for d in dates if d >= since}
+            out[table] = dates
+        return out
+    from data import cloud_db
+    if remote is None and not cloud_db.configured():
+        return {table: set() for table in INSTITUTIONAL_TABLES}
+    close = False
+    if remote is None:
+        remote = cloud_db.connect_remote()
+        close = True
+    try:
+        return {
+            table: cloud_db.remote_distinct_dates(table, since=since, remote=remote)
+            for table in INSTITUTIONAL_TABLES
+        }
+    finally:
+        if close:
+            try:
+                remote.close()
+            except Exception:
+                pass
+
+
+def institutional_coverage(
+    conn,
+    remote_dates: dict[str, set[str]] | None = None,
+) -> list[str]:
     lines = []
-    for table in ("foreign_daily", "trust_daily", "dealer_daily"):
+    for table in INSTITUTIONAL_TABLES:
         n, lo, hi = _table_span(conn, table)
-        lines.append(f"{table}: {n:,} rows, {lo or '–'} ~ {hi or '–'}")
+        n_dates = len(existing_dates(conn, table))
+        lines.append(
+            f"local {table}: {n:,} rows, {n_dates} dates, {lo or '–'} ~ {hi or '–'}"
+        )
+    if remote_dates is not None:
+        for table in INSTITUTIONAL_TABLES:
+            dates = remote_dates.get(table) or set()
+            lo = min(dates) if dates else None
+            hi = max(dates) if dates else None
+            lines.append(
+                f"turso {table}: {len(dates)} dates, {lo or '–'} ~ {hi or '–'}"
+            )
     return lines
 
 
-def missing_institutional_dates(conn, since: str | None = None) -> list[str]:
-    """Dates in foreign_daily that lack trust_daily or dealer_daily rows."""
-    foreign = existing_dates(conn, "foreign_daily", since=since)
-    trust = existing_dates(conn, "trust_daily", since=since)
-    dealer = existing_dates(conn, "dealer_daily", since=since)
-    return sorted(d for d in foreign if d not in trust or d not in dealer)
+def missing_institutional_dates(
+    conn,
+    since: str | None = None,
+    remote_dates: dict[str, set[str]] | None = None,
+) -> list[str]:
+    """Foreign dates that still need a T86 fetch for trust/dealer.
+
+    Local-only (`remote_dates is None`): dates in local foreign_daily that
+    lack local trust_daily or dealer_daily.
+
+    Turso-aware (`remote_dates` injected, typically from Turso): missing =
+    distinct trade_date in Turso foreign_daily and/or local foreign_daily
+    that lack both trust and dealer on local *and* lack both on Turso.
+    Dates already complete on the source of truth are skipped:
+
+    - Turso already has trust and dealer → skip (prefer Turso).
+    - Local already has trust and dealer → skip fetch (push will copy).
+
+    Do not treat Actions-cache local foreign_daily as the full history.
+    That cache is often ~85 days while Turso foreign_daily is ~510 dates.
+    """
+    local_foreign = existing_dates(conn, "foreign_daily", since=since)
+    local_trust = existing_dates(conn, "trust_daily", since=since)
+    local_dealer = existing_dates(conn, "dealer_daily", since=since)
+    if remote_dates is None:
+        return sorted(
+            d for d in local_foreign if d not in local_trust or d not in local_dealer
+        )
+    remote_foreign = set(remote_dates.get("foreign_daily") or ())
+    remote_trust = set(remote_dates.get("trust_daily") or ())
+    remote_dealer = set(remote_dates.get("dealer_daily") or ())
+    if since:
+        remote_foreign = {d for d in remote_foreign if d >= since}
+        remote_trust = {d for d in remote_trust if d >= since}
+        remote_dealer = {d for d in remote_dealer if d >= since}
+    foreign = local_foreign | remote_foreign
+    missing = []
+    for ds in foreign:
+        if ds in remote_trust and ds in remote_dealer:
+            continue
+        if ds in local_trust and ds in local_dealer:
+            continue
+        missing.append(ds)
+    return sorted(missing)
+
+
+def institutional_push_days(
+    conn,
+    today: date,
+    remote_dates: dict[str, set[str]] | None = None,
+    default: int = 14,
+) -> int:
+    """Calendar days so a Turso push covers still-incomplete T86 dates.
+
+    When Turso date sets are present, the window starts at the oldest date
+    that Turso foreign (or local) has but Turso trust/dealer still lacks.
+    That is the filled span to push — not the generic 14-day catch-up, and
+    not "whatever happens to be in the Actions cache."
+    """
+    local_foreign = existing_dates(conn, "foreign_daily")
+    local_trust = existing_dates(conn, "trust_daily")
+    local_dealer = existing_dates(conn, "dealer_daily")
+    if remote_dates is not None:
+        remote_foreign = set(remote_dates.get("foreign_daily") or ())
+        remote_trust = set(remote_dates.get("trust_daily") or ())
+        remote_dealer = set(remote_dates.get("dealer_daily") or ())
+        candidates = local_foreign | local_trust | local_dealer | remote_foreign
+        need = [
+            ds for ds in candidates
+            if ds not in remote_trust or ds not in remote_dealer
+        ]
+    else:
+        need = [
+            ds for ds in local_foreign
+            if ds not in local_trust or ds not in local_dealer
+        ]
+        if not need:
+            need = list(local_foreign | local_trust | local_dealer)
+    if not need:
+        return default
+    try:
+        lo = min(need)
+        return max(default, (today - date.fromisoformat(lo)).days + 7)
+    except ValueError:
+        return default
 
 
 def backfill_institutional_gaps(
     days: int | None = None,
     today: date | None = None,
     dry_run: bool = False,
+    remote_dates: dict[str, set[str]] | None = None,
 ) -> int:
-    """Fetch T86 only for foreign_daily dates missing trust or dealer.
+    """Fetch T86 only for foreign dates missing trust or dealer.
 
-    Aligns to the foreign_daily span (or the last `days` calendar days).
-    Does not re-download dates that already have both trust and dealer rows.
+    One T86 call writes foreign+trust+dealer. Rate limit: SLEEP seconds.
+
+    When TURSO_* is configured (or `remote_dates` is injected), missing
+    dates come from Turso foreign_daily ∪ local foreign_daily. Dates that
+    already have both trust and dealer on Turso, or already have both
+    locally, are not re-downloaded.
     """
     conn = get_conn()
     today = today or date.today()
     since = (today - timedelta(days=days)).isoformat() if days is not None else None
-    missing = missing_institutional_dates(conn, since=since)
+    loaded = None
+    try:
+        if remote_dates is not None:
+            loaded = load_remote_institutional_dates(since=since, remote_dates=remote_dates)
+        else:
+            from data import cloud_db
+            if cloud_db.configured():
+                loaded = load_remote_institutional_dates(since=since)
+                log.info(
+                    "institutional gaps: using Turso foreign dates "
+                    "(cache-local foreign span is not the Turso span)"
+                )
+    except Exception:
+        log.exception(
+            "Turso date lookup failed; falling back to local foreign_daily"
+        )
+        loaded = None
+    missing = missing_institutional_dates(conn, since=since, remote_dates=loaded)
+    source = "turso+local foreign_daily" if loaded is not None else "local foreign_daily"
     log.info(
-        "institutional gaps: %d dates missing vs foreign_daily%s",
+        "institutional gaps: %d dates missing vs %s%s",
         len(missing),
-        f" (since {since})" if since else " (full foreign_daily span)",
+        source,
+        f" (since {since})" if since else " (full foreign span)",
     )
-    for line in institutional_coverage(conn):
+    for line in institutional_coverage(conn, remote_dates=loaded):
         log.info("coverage %s", line)
     if dry_run:
         if missing:
@@ -386,7 +547,7 @@ def backfill_institutional_gaps(
             log.warning("%s T86 失敗: %s", ds, e)
         time.sleep(SLEEP)
     log.info("institutional gap fill: wrote %d days", n)
-    for line in institutional_coverage(conn):
+    for line in institutional_coverage(conn, remote_dates=loaded):
         log.info("coverage %s", line)
     return n
 

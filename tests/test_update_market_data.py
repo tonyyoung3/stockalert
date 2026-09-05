@@ -225,6 +225,19 @@ class RunJobsTests(unittest.TestCase):
         self.assertTrue(kwargs["include_today"])
         self.assertEqual(kwargs["today"], umd.taiwan_now().date())
 
+    def test_institutional_gaps_error_is_non_success(self):
+        from market.backfill import InstitutionalGapError
+        args = umd.parse_args(["--institutional-gaps-only", "--exclude-today"])
+        err = InstitutionalGapError(
+            wrote=0, failed=425, missing=425,
+            failed_dates=["2025-01-02", "2025-01-03"],
+        )
+        with patch("market.backfill.backfill_institutional_gaps", side_effect=err), \
+             patch("market.backfill.backfill_ohlc") as ohlc:
+            failed = umd.run_jobs(args)
+        self.assertEqual(failed, ["institutional_gaps"])
+        ohlc.assert_not_called()
+
     def test_institutional_gaps_only_skips_other_jobs(self):
         args = umd.parse_args(["--institutional-gaps-only", "--exclude-today"])
         with patch("market.backfill.backfill_institutional_gaps", return_value=3) as inst, \

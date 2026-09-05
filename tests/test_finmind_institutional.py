@@ -254,16 +254,18 @@ class GapFillFallbackTests(unittest.TestCase):
             seen["fm"] += 1
             return self._finmind_tables()
 
-        tables, source = backfill.fetch_institutional_day(
+        fetched = backfill.fetch_institutional_day(
             date(2026, 1, 5),
             prefer="t86",
             env={"FINMIND_TOKEN": "secret"},
             t86_fetch=boom,
             finmind_fetch=fm,
         )
-        self.assertEqual(source, "finmind")
+        self.assertEqual(fetched.source, "finmind")
+        self.assertEqual(fetched.status, "ok")
+        self.assertIn("t86_error", fetched.reason)
         self.assertEqual(seen, {"t86": 1, "fm": 1})
-        self.assertEqual(tables.trust[0][5], 661000)
+        self.assertEqual(fetched.tables.trust[0][5], 661000)
 
         self._seed_gap()
         with patch.object(backfill.time, "sleep"):
@@ -375,6 +377,104 @@ class GapFillFallbackTests(unittest.TestCase):
         self.assertNotIn(secret, text)
         self.assertIn("token=present", text)
 
+    def test_no_token_never_calls_finmind_even_on_t86_empty(self):
+        fm = MagicMock(side_effect=AssertionError("must not call FinMind"))
+        fetched = backfill.fetch_institutional_day(
+            date(2026, 1, 5),
+            prefer="finmind",
+            env={},
+            t86_fetch=lambda d: collector.EMPTY_T86,
+            finmind_fetch=fm,
+        )
+        fm.assert_not_called()
+        self.assertEqual(fetched.source, "t86")
+        self.assertEqual(fetched.status, "empty")
+        self.assertNotEqual(fetched.status, "ok")
+
+    def test_no_token_t86_error_is_not_success(self):
+        fm = MagicMock(side_effect=AssertionError("must not call FinMind"))
+
+        def boom(_day):
+            raise collector.T86FetchError("Expecting value: line 1 column 1")
+
+        fetched = backfill.fetch_institutional_day(
+            date(2026, 1, 5),
+            prefer="t86",
+            env={},
+            t86_fetch=boom,
+            finmind_fetch=fm,
+        )
+        fm.assert_not_called()
+        self.assertEqual(fetched.status, "error")
+        self.assertEqual(fetched.source, "none")
+        self.assertNotEqual(fetched.status, "ok")
+
+    def test_empty_t86_without_token_fails_gap_job(self):
+        self._seed_gap()
+        fm = MagicMock(side_effect=AssertionError("must not call FinMind"))
+        with patch.object(backfill.time, "sleep"):
+            with self.assertRaises(backfill.InstitutionalGapError) as ctx:
+                backfill.backfill_institutional_gaps(
+                    today=date(2026, 1, 5),
+                    env={},
+                    t86_fetch=lambda d: collector.EMPTY_T86,
+                    finmind_fetch=fm,
+                )
+        fm.assert_not_called()
+        self.assertEqual(ctx.exception.wrote, 0)
+        self.assertEqual(ctx.exception.failed, 1)
+        self.assertEqual(ctx.exception.missing, 1)
+        self.assertEqual(ctx.exception.failed_dates, ["2026-01-05"])
+
+    def test_gap_fill_logs_wrote_failed_counts_and_source_switch(self):
+        self._seed_gap()
+        with self.assertLogs(backfill.log, level="INFO") as cm:
+            with patch.object(backfill.time, "sleep"):
+                with self.assertRaises(backfill.InstitutionalGapError):
+                    backfill.backfill_institutional_gaps(
+                        today=date(2026, 1, 5),
+                        env={"FINMIND_TOKEN": "secret"},
+                        t86_fetch=lambda d: collector.EMPTY_T86,
+                        finmind_fetch=lambda d: collector.EMPTY_T86,
+                    )
+        text = "\n".join(cm.output)
+        self.assertIn("wrote=0", text)
+        self.assertIn("failed=1", text)
+        self.assertIn("missing=1", text)
+        self.assertIn("source_switch finmind->t86", text)
+        self.assertIn("status=empty", text)
+        self.assertNotIn("secret", text)
+
+    def test_partial_fill_still_non_success(self):
+        con = collector.get_conn()
+        with con:
+            con.execute(
+                "INSERT INTO foreign_daily VALUES (?,?,?,?,?,?)",
+                ("2026-01-05", "2330", "台積電", 1, 1, 0),
+            )
+            con.execute(
+                "INSERT INTO foreign_daily VALUES (?,?,?,?,?,?)",
+                ("2026-01-06", "2330", "台積電", 1, 1, 0),
+            )
+        con.close()
+
+        def fm(day):
+            if day == date(2026, 1, 5):
+                return self._finmind_tables(day)
+            return collector.EMPTY_T86
+
+        with patch.object(backfill.time, "sleep"):
+            with self.assertRaises(backfill.InstitutionalGapError) as ctx:
+                backfill.backfill_institutional_gaps(
+                    today=date(2026, 1, 6),
+                    env={"FINMIND_TOKEN": "secret"},
+                    t86_fetch=lambda d: collector.EMPTY_T86,
+                    finmind_fetch=fm,
+                )
+        self.assertEqual(ctx.exception.wrote, 1)
+        self.assertEqual(ctx.exception.failed, 1)
+        self.assertEqual(ctx.exception.failed_dates, ["2026-01-06"])
+
 
 class WorkflowDocsTests(unittest.TestCase):
     def test_market_workflow_has_finmind_secret_not_literal(self):
@@ -392,6 +492,8 @@ class WorkflowDocsTests(unittest.TestCase):
         self.assertIn("不能穩定爬證交所 T86", text)
         self.assertIn("TaiwanStockInstitutionalInvestorsBuySell", text)
         self.assertIn("FINMIND_TOKEN", text)
+        self.assertIn("source_switch", text)
+        self.assertIn("InstitutionalGapError", text)
 
     def test_env_example_still_empty_placeholder(self):
         text = Path(__file__).resolve().parents[1].joinpath(".env.example").read_text()

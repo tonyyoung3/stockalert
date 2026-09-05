@@ -661,6 +661,7 @@ class DashboardScannerTableTests(unittest.TestCase):
         self.assertIn(">掃描結果</h3>", html)
         self.assertIn("function renderScannerTable(", html)
         self.assertIn("function sortScannerTable(", html)
+        self.assertIn("function scSortRows(", html)
         self.assertIn("function onScannerFilter(", html)
         self.assertIn("一次查詢", html)
         self.assertIn("與散布圖同一批資料", html)

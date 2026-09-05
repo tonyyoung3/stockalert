@@ -1261,6 +1261,21 @@ function scCompareRows(a, b, key, xKey, yKey){
   if(typeof av==='number' && typeof bv==='number') return av - bv;
   return String(av).localeCompare(String(bv), 'zh-Hant', {numeric:true, sensitivity:'base'});
 }
+function scSortRows(rows, xKey, yKey){
+  return rows.slice().sort((a,b)=>{
+    if(scSortKey!=='status'){
+      const av = scCellValue(a, scSortKey, xKey, yKey);
+      const bv = scCellValue(b, scSortKey, xKey, yKey);
+      const an = av==null || av==='';
+      const bn = bv==null || bv==='';
+      if(an && bn) return 0;
+      if(an) return 1;
+      if(bn) return -1;
+    }
+    const cmp = scCompareRows(a, b, scSortKey, xKey, yKey);
+    return scSortDir==='desc' ? -cmp : cmp;
+  });
+}
 function scVisibleCols(xKey, yKey){
   const cols = scTableCols(xKey, yKey);
   if(!cols.some(c=>c.key===scSortKey)){
@@ -1307,10 +1322,7 @@ function renderScannerTable(){
   const yKey = (document.getElementById('sc-y')||{}).value || 'close';
   const cols = scVisibleCols(xKey, yKey);
   const rows = payload.data || [];
-  const shown = scFilterRows(rows, xKey, yKey).slice().sort((a,b)=>{
-    const cmp = scCompareRows(a, b, scSortKey, xKey, yKey);
-    return scSortDir==='desc' ? -cmp : cmp;
-  });
+  const shown = scSortRows(scFilterRows(rows, xKey, yKey), xKey, yKey);
   if(panel) panel.hidden = false;
   if(list){
     const head = cols.map(col=>{

@@ -38,6 +38,7 @@ from alertsdb.store import (
 )
 from data import market_db
 from market import broker_branch as broker_branch_mod
+from web import chip_zscore as chip_zscore_mod
 from web import freshness as freshness_mod
 
 _YMD = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -658,6 +659,8 @@ def _api(path, qs):
         body.update(broker_branch_mod.ingest_status())
         body["data_mode"] = broker_branch_mod.data_mode(_request_conn.get())
         return body
+    if path == "/api/scanner/chip_zscore":
+        return chip_zscore_mod.api_chip_zscore(_request_conn.get(), qs)
     return None
 
 

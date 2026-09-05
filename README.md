@@ -72,6 +72,8 @@ PTT 股板週報跟 Reddit 投資想法週報都是本機整理、印到 stdout�
 
 掃描用寬表 `stock_chips_daily` 是 **SQL VIEW**（不是實體表）：`stock_daily` LEFT JOIN 三大法人日表，鍵是 `(trade_date, stock_id)`。VIEW 不用刷新，底表仍由 `update_market_data` 寫入。欄位、單位、增量與 Turso 見 `docs/stock_chips_daily.md`（#77 / epic #76）。儀表板讀徑繼續打底表，不要改走這個 VIEW。
 
+籌碼 z-score（#78）是 **query-time**：`GET /api/scanner/chip_zscore?tickers=2330,2454&window=20&asof=YYYY-MM-DD`，預設窗格 **20 個交易日**，樣本標準差（ddof=1）。多檔、樣本不足旗標、NULL 規則見 `docs/chip_zscore.md`。不物化、不畫散布圖（#79）。
+
 **Cache-local foreign span ≠ Turso foreign span.** GitHub Actions 的 `twse_data.db` cache 裡 `foreign_daily` 常常只有約 85 個交易日，但 Turso 上同一張表可以有約 510 日。設了 `TURSO_*` 時，`institutional_gaps` 以 Turso（並集本機）的 `foreign_daily` 日期當缺口來源，略過 Turso 上 trust/dealer 都已齊的日期；抓完只推這三張 T86 表的補齊區間，不會用本機 cache 的短外資歷史當「已補完」。未設 secrets 時行為不變，只看本機。
 
 補歷史（merge 後由 DE 觸發；約 4 秒／日，勿在 unit CI 跑）：
@@ -198,6 +200,7 @@ gcloud run deploy stockalert \
 | --- | --- |
 | `GET /api/freshness` | 各表 `{table, last_date, days_ago, stale, empty}`，以及整體 `stale` / `empty` |
 | `GET /api/summary` | 原有 KPI，另含同一個 `freshness` 物件 |
+| `GET /api/scanner/chip_zscore` | 多檔籌碼 z-score（`tickers`、`window` 預設 20、`asof`）。見 `docs/chip_zscore.md`。不是掃描 UI |
 | `GET /health` | JSON：`status`/`ok` 表示**行程活著**（HTTP **一律 200**）。資料過期是 payload 的 `freshness.stale`／`empty`，**不會因此回 503**，方便之後 Cloud Run 探活依欄位延伸。 |
 
 ### 儀表板分區

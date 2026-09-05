@@ -46,11 +46,19 @@ def previous_tw_trading_day(today: date) -> date:
     raise ValueError(f"no TW trading day in 31 days before {today.isoformat()}")
 
 
-def expected_tw_trade_date(now: datetime | None = None) -> date:
-    """Latest Taiwan trading day we expect market rows for."""
+def expected_tw_trade_date(
+    now: datetime | None = None,
+    after_hour: int = INCLUDE_TODAY_AFTER_HOUR,
+) -> date:
+    """Latest Taiwan trading day we expect rows for.
+
+    `after_hour` is local Taiwan time. T86 / stock_daily use 16:00
+    (INCLUDE_TODAY_AFTER_HOUR). FinMind 分點 SecIdAgg is documented ~21:00
+    and is served from GET /api/broker_branch/freshness — not /api/freshness.
+    """
     tw = taiwan_now(now)
     today = tw.date()
-    if is_tw_trading_day(today) and tw.hour >= INCLUDE_TODAY_AFTER_HOUR:
+    if is_tw_trading_day(today) and tw.hour >= after_hour:
         return today
     return previous_tw_trading_day(today)
 

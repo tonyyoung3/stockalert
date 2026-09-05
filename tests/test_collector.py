@@ -223,7 +223,8 @@ class TestPersistence(DBTestCase):
             "SELECT name FROM sqlite_master WHERE type='table'")}
         self.assertTrue({"taiex_hourly", "taiex_daily", "taiex_hourly_ohlc",
                          "foreign_daily", "margin_total", "margin_stock",
-                         "stock_daily", "stocks"} <= names)
+                         "stock_daily", "stocks",
+                         "broker_branch_daily", "brokers"} <= names)
 
     def test_foreign_idempotent(self):
         """同一天寫兩次不應該產生重複列。"""
@@ -659,7 +660,11 @@ class TestDashboardAPI(DBTestCase):
                       ("/api/margin_total", {"days": 90}), ("/api/top", {}),
                       ("/api/stock", {"id": "2330"}), ("/api/stock_margin", {"id": "2330"}),
                       ("/api/stocks", {"q": "2330"}), ("/api/stock_ohlc", {"id": "2330"}),
-                      ("/api/freshness", {})]:
+                      ("/api/freshness", {}),
+                      ("/api/broker_branch/top", {}),
+                      ("/api/broker_branch/broker", {"broker_id": "1020"}),
+                      ("/api/broker_branch/stock", {"id": "2330"}),
+                      ("/api/broker_branch/freshness", {})]:
             with self.subTest(path=p):
                 json.dumps(self.call(p, **kw))
 

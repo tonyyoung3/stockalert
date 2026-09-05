@@ -59,6 +59,19 @@ class CalendarTests(unittest.TestCase):
     def test_expected_weekend_is_friday(self):
         self.assertEqual(freshness.expected_tw_trade_date(SATURDAY), date(2026, 9, 4))
 
+    def test_broker_branch_cutoff_is_21_not_16(self):
+        friday_20 = datetime(2026, 9, 4, 20, 0, tzinfo=TW)
+        friday_21 = datetime(2026, 9, 4, 21, 0, tzinfo=TW)
+        self.assertEqual(
+            freshness.expected_tw_trade_date(friday_20, after_hour=21),
+            date(2026, 9, 3),
+        )
+        self.assertEqual(
+            freshness.expected_tw_trade_date(friday_21, after_hour=21),
+            date(2026, 9, 4),
+        )
+        self.assertEqual(freshness.expected_tw_trade_date(friday_20), date(2026, 9, 4))
+
     def test_monday_morning_expects_friday(self):
         self.assertEqual(freshness.expected_tw_trade_date(MONDAY_MORNING), date(2026, 9, 4))
 

@@ -233,3 +233,31 @@ class PushTests(unittest.TestCase):
             remote.execute("SELECT trade_date FROM broker_branch_daily").fetchone()[0],
             "2026-09-03",
         )
+
+    def test_init_db_trust_dealer_are_discovered_by_trade_date(self):
+        """Turso push auto-discovers tables with trade_date; new T86 tables qualify."""
+        from market import collector
+        orig = collector.DB_PATH
+        collector.DB_PATH = self.path
+        try:
+            conn = collector.get_conn()
+            conn.close()
+        finally:
+            collector.DB_PATH = orig
+        local = sqlite3.connect(self.path)
+        try:
+            for table in ("trust_daily", "dealer_daily"):
+                self.assertEqual(cloud_db._since_column(local, table), "trade_date")
+            local.execute(
+                "INSERT INTO trust_daily VALUES ('2026-09-04','2330','台積電',1,0,1)"
+            )
+            local.execute(
+                "INSERT INTO dealer_daily VALUES ('2026-09-04','2330','台積電',2,1,1)"
+            )
+            local.commit()
+        finally:
+            local.close()
+        remote = FakeRemote()
+        counts = cloud_db.push_file(self.path, remote, since="2026-09-01")
+        self.assertEqual(counts["trust_daily"], 1)
+        self.assertEqual(counts["dealer_daily"], 1)

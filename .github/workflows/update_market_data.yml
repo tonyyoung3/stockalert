@@ -12,6 +12,10 @@ on:
         description: 'Calendar days to catch up (14 for daily, 730 for first historical fill)'
         required: false
         default: '14'
+      institutional_gaps:
+        description: 'Only fill trust_daily/dealer_daily dates that foreign_daily already has (skip other jobs)'
+        type: boolean
+        default: false
 
 jobs:
   update:
@@ -49,11 +53,16 @@ jobs:
         env:
           TZ: Asia/Taipei
           DAYS: ${{ github.event.inputs.days || '14' }}
+          INSTITUTIONAL_GAPS: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.institutional_gaps || 'false' }}
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
         run: |
           set -o pipefail
-          python -m market.update_market_data --days "$DAYS" --include-today 2>&1 | tee market-update.log
+          if [ "$INSTITUTIONAL_GAPS" = "true" ]; then
+            python -m market.update_market_data --institutional-gaps-only --include-today 2>&1 | tee market-update.log
+          else
+            python -m market.update_market_data --days "$DAYS" --include-today 2>&1 | tee market-update.log
+          fi
 
       - name: Save market databases
         if: always()

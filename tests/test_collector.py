@@ -36,9 +36,57 @@ FAKE_MARGIN = {"stat": "OK", "tables": [
      "data": [["2330", "台積電", "1,500", "1,200", "50", "20,000", "20,250", "6,483,000",
                "10", "30", "5", "1,000", "975", "6,483,000", "3", ""]]}]}
 
-FAKE_T86 = {"stat": "OK", "data": [
-    ["2330 ", "台積電", "42,318,827", "28,538,728", "13,780,099", "0", "0", "0"],
-    ["2317 ", "鴻海", "10,000,000", "12,000,000", "-2,000,000", "0", "0", "0"]]}
+FAKE_T86_FIELDS = [
+    "證券代號", "證券名稱",
+    "外陸資買進股數(不含外資自營商)", "外陸資賣出股數(不含外資自營商)",
+    "外陸資買賣超股數(不含外資自營商)",
+    "外資自營商買進股數", "外資自營商賣出股數", "外資自營商買賣超股數",
+    "投信買進股數", "投信賣出股數", "投信買賣超股數",
+    "自營商買賣超股數",
+    "自營商買進股數(自行買賣)", "自營商賣出股數(自行買賣)", "自營商買賣超股數(自行買賣)",
+    "自營商買進股數(避險)", "自營商賣出股數(避險)", "自營商買賣超股數(避險)",
+    "三大法人買賣超股數",
+]
+
+# 19-col T86 layout confirmed 2026-09-04. 2330 foreign cols 2–4 stay the same
+# so existing dashboard / foreign tests keep their expected nets.
+FAKE_T86 = {"stat": "OK", "fields": FAKE_T86_FIELDS, "data": [
+    ["2330 ", "台積電",
+     "42,318,827", "28,538,728", "13,780,099",
+     "0", "0", "0",
+     "1,000,000", "200,000", "800,000",
+     "406,740",
+     "176,100", "40,900", "135,200",
+     "341,070", "69,530", "271,540",
+     "14,986,839"],
+    ["2317 ", "鴻海",
+     "10,000,000", "12,000,000", "-2,000,000",
+     "0", "0", "0",
+     "0", "0", "0",
+     "0",
+     "0", "0", "0",
+     "0", "0", "0",
+     "-2,000,000"]]}
+
+# Live T86 2026-09-04 excerpt (chip-event-study sample check).
+FAKE_T86_20260904 = {"stat": "OK", "fields": FAKE_T86_FIELDS, "data": [
+    ["2330", "台積電          ",
+     "10,735,399", "8,850,314", "1,885,085",
+     "0", "0", "0",
+     "79,000", "401,024", "-322,024",
+     "406,740",
+     "176,100", "40,900", "135,200",
+     "341,070", "69,530", "271,540",
+     "1,969,801"],
+    ["2454", "聯發科          ",
+     "4,917,028", "4,382,524", "534,504",
+     "0", "0", "0",
+     "357,561", "18,200", "339,361",
+     "103,292",
+     "113,296", "36,048", "77,248",
+     "166,303", "140,259", "26,044",
+     "977,157"],
+]}
 
 FAKE_TAIEX_MONTH = {"stat": "OK", "data": [
     ["115/07/01", "42,000.11", "42,500.22", "41,800.33", "42,300.44"],
@@ -114,6 +162,67 @@ class TestParseForeign(unittest.TestCase):
     def test_non_trading_day_returns_empty(self):
         with mock_get({"stat": "很抱歉，沒有符合條件的資料!"}):
             self.assertEqual(collector.fetch_foreign(date(2026, 7, 31)), [])
+
+    def test_short_row_still_parses_foreign(self):
+        """Old 8-col fixtures / truncated rows must not break foreign_daily."""
+        tables = collector.parse_t86(
+            {"stat": "OK", "data": [
+                ["2330 ", "台積電", "1,000", "400", "600", "0", "0", "0"],
+            ]},
+            date(2026, 7, 31),
+        )
+        self.assertEqual(tables.foreign[0], ("2026-07-31", "2330", "台積電", 1000, 400, 600))
+        self.assertEqual(tables.trust[0][3:], (0, 0, 0))
+        self.assertEqual(tables.dealer[0][3:], (0, 0, 0))
+
+
+class TestParseT86Institutional(unittest.TestCase):
+    def test_one_payload_splits_foreign_trust_dealer(self):
+        tables = collector.parse_t86(FAKE_T86, date(2026, 7, 31))
+        self.assertEqual(tables.foreign[0], ("2026-07-31", "2330", "台積電",
+                                             42318827, 28538728, 13780099))
+        self.assertEqual(tables.trust[0], ("2026-07-31", "2330", "台積電",
+                                           1_000_000, 200_000, 800_000))
+        # 合計含避險: buy/sell = 自行 + 避險; net = T86「自營商買賣超股數」
+        self.assertEqual(tables.dealer[0], ("2026-07-31", "2330", "台積電",
+                                            176_100 + 341_070, 40_900 + 69_530, 406_740))
+        self.assertEqual(
+            tables.dealer[0][3] - tables.dealer[0][4],
+            tables.dealer[0][5],
+        )
+
+    def test_live_20260904_2330_and_2454(self):
+        tables = collector.parse_t86(FAKE_T86_20260904, date(2026, 9, 4))
+        by_id = {r[1]: r for r in tables.foreign}
+        self.assertEqual(by_id["2330"][3:], (10_735_399, 8_850_314, 1_885_085))
+        self.assertEqual(by_id["2454"][3:], (4_917_028, 4_382_524, 534_504))
+        trust = {r[1]: r for r in tables.trust}
+        self.assertEqual(trust["2330"][3:], (79_000, 401_024, -322_024))
+        self.assertEqual(trust["2454"][3:], (357_561, 18_200, 339_361))
+        dealer = {r[1]: r for r in tables.dealer}
+        self.assertEqual(dealer["2330"][3:], (517_170, 110_430, 406_740))
+        self.assertEqual(dealer["2454"][3:], (279_599, 176_307, 103_292))
+
+    def test_fetch_t86_is_one_http_call(self):
+        with mock_get(FAKE_T86) as get:
+            tables = collector.fetch_t86(date(2026, 7, 31))
+        get.assert_called_once()
+        self.assertEqual(len(tables.foreign), 2)
+        self.assertEqual(len(tables.trust), 2)
+        self.assertEqual(len(tables.dealer), 2)
+
+    def test_non_trading_day_empty_tables(self):
+        self.assertEqual(
+            collector.parse_t86({"stat": "很抱歉，沒有符合條件的資料!"}, date(2026, 7, 31)),
+            collector.EMPTY_T86,
+        )
+
+    def test_dealer_net_is_not_foreign_dealer(self):
+        """「外資自營商買賣超」must not be read as 自營商合計."""
+        cmap = collector._t86_colmap(FAKE_T86_FIELDS)
+        self.assertEqual(cmap["dealer_net"], 11)
+        self.assertEqual(cmap["trust_net"], 10)
+        self.assertNotEqual(cmap["dealer_net"], 7)
 
 
 class TestParseTaiexOHLC(unittest.TestCase):
@@ -222,9 +331,23 @@ class TestPersistence(DBTestCase):
         names = {r[0] for r in self.rows(
             "SELECT name FROM sqlite_master WHERE type='table'")}
         self.assertTrue({"taiex_hourly", "taiex_daily", "taiex_hourly_ohlc",
-                         "foreign_daily", "margin_total", "margin_stock",
+                         "foreign_daily", "trust_daily", "dealer_daily",
+                         "margin_total", "margin_stock",
                          "stock_daily", "stocks",
                          "broker_branch_daily", "brokers"} <= names)
+        cols = {r[1] for r in self.rows("PRAGMA table_info(trust_daily)")}
+        self.assertEqual(
+            cols,
+            {"trade_date", "stock_id", "stock_name", "trust_buy", "trust_sell", "trust_net"},
+        )
+        cols = {r[1] for r in self.rows("PRAGMA table_info(dealer_daily)")}
+        self.assertEqual(
+            cols,
+            {"trade_date", "stock_id", "stock_name", "dealer_buy", "dealer_sell", "dealer_net"},
+        )
+        indexes = {r[0] for r in self.rows(
+            "SELECT name FROM sqlite_master WHERE type='index'")}
+        self.assertTrue({"idx_trust_stock_date", "idx_dealer_stock_date"} <= indexes)
 
     def test_foreign_idempotent(self):
         """同一天寫兩次不應該產生重複列。"""
@@ -232,6 +355,16 @@ class TestPersistence(DBTestCase):
             collector.save_foreign(date(2026, 7, 31))
             collector.save_foreign(date(2026, 7, 31))
         self.assertEqual(self.rows("SELECT COUNT(*) FROM foreign_daily")[0][0], 2)
+        self.assertEqual(self.rows("SELECT COUNT(*) FROM trust_daily")[0][0], 2)
+        self.assertEqual(self.rows("SELECT COUNT(*) FROM dealer_daily")[0][0], 2)
+        self.assertEqual(
+            self.rows("SELECT trust_net FROM trust_daily WHERE stock_id='2330'")[0][0],
+            800_000,
+        )
+        self.assertEqual(
+            self.rows("SELECT dealer_net FROM dealer_daily WHERE stock_id='2330'")[0][0],
+            406_740,
+        )
 
     def test_margin_idempotent(self):
         with mock_get(FAKE_MARGIN):
@@ -255,11 +388,15 @@ class TestPersistence(DBTestCase):
 
         def fake(day):
             calls.append(day)
-            return FAKE_T86["data"] and (
-                [] if len(calls) < 3 else
-                [(day.isoformat(), "2330", "台積電", 1, 2, -1)])
+            if len(calls) < 3:
+                return collector.EMPTY_T86
+            return collector.T86Tables(
+                [(day.isoformat(), "2330", "台積電", 1, 2, -1)],
+                [(day.isoformat(), "2330", "台積電", 0, 0, 0)],
+                [(day.isoformat(), "2330", "台積電", 0, 0, 0)],
+            )
 
-        with patch.object(collector, "fetch_foreign", side_effect=fake), \
+        with patch.object(collector, "fetch_t86", side_effect=fake), \
              patch.object(collector.time, "sleep"):
             collector.save_foreign(date(2026, 8, 1))
         self.assertEqual(len(calls), 3)
@@ -318,7 +455,7 @@ class TestBackfill(DBTestCase):
             return []
 
         with patch.object(backfill, "fetch_index_5sec", side_effect=fake), \
-             patch.object(backfill, "fetch_foreign", return_value=[]), \
+             patch.object(backfill, "fetch_t86", return_value=collector.EMPTY_T86), \
              patch.object(backfill, "fetch_margin", return_value=([], [])):
             backfill.backfill(14)
         self.assertTrue(all(d.weekday() < 5 for d in seen), "不該請求週末")
@@ -332,7 +469,7 @@ class TestBackfill(DBTestCase):
 
         today = date(2026, 1, 5)  # Monday after New Year
         with patch.object(backfill, "fetch_index_5sec", side_effect=fake), \
-             patch.object(backfill, "fetch_foreign", return_value=[]), \
+             patch.object(backfill, "fetch_t86", return_value=collector.EMPTY_T86), \
              patch.object(backfill, "fetch_margin", return_value=([], [])):
             backfill.backfill(7, today=today, include_today=True)
         self.assertNotIn(date(2026, 1, 1), seen)
@@ -347,7 +484,7 @@ class TestBackfill(DBTestCase):
 
         today = date(2026, 8, 31)  # Monday
         with patch.object(backfill, "fetch_index_5sec", side_effect=fake), \
-             patch.object(backfill, "fetch_foreign", return_value=[]), \
+             patch.object(backfill, "fetch_t86", return_value=collector.EMPTY_T86), \
              patch.object(backfill, "fetch_margin", return_value=([], [])):
             backfill.backfill(3, today=today, include_today=False)
         self.assertNotIn(today, seen)
@@ -361,7 +498,7 @@ class TestBackfill(DBTestCase):
 
         today = date(2026, 8, 31)  # Monday
         with patch.object(backfill, "fetch_index_5sec", side_effect=fake), \
-             patch.object(backfill, "fetch_foreign", return_value=[]), \
+             patch.object(backfill, "fetch_t86", return_value=collector.EMPTY_T86), \
              patch.object(backfill, "fetch_margin", return_value=([], [])):
             backfill.backfill(3, today=today, include_today=True)
         self.assertIn(today, seen)
@@ -522,6 +659,111 @@ class TestBackfill(DBTestCase):
             bars = collector.official_session_bars(date(2026, 9, 3), min_cached=2)
         self.assertEqual(bars["2330"][6], 1.5)
         self.assertEqual(bars["6488"][6], 4.5)
+
+    def _t86_day(self, day, sid="2330", name="台積電"):
+        ds = day.isoformat() if isinstance(day, date) else day
+        return collector.T86Tables(
+            [(ds, sid, name, 10, 4, 6)],
+            [(ds, sid, name, 3, 1, 2)],
+            [(ds, sid, name, 8, 3, 5)],
+        )
+
+    def test_backfill_skips_t86_when_all_three_tables_have_the_day(self):
+        today = date(2026, 8, 31)
+        ds = today.isoformat()
+        con = collector.get_conn()
+        with con:
+            con.execute("INSERT INTO foreign_daily VALUES (?,?,?,?,?,?)",
+                        (ds, "2330", "台積電", 1, 1, 0))
+            con.execute("INSERT INTO trust_daily VALUES (?,?,?,?,?,?)",
+                        (ds, "2330", "台積電", 1, 1, 0))
+            con.execute("INSERT INTO dealer_daily VALUES (?,?,?,?,?,?)",
+                        (ds, "2330", "台積電", 1, 1, 0))
+        con.close()
+        with patch.object(backfill, "fetch_index_5sec", return_value=[]), \
+             patch.object(backfill, "fetch_t86", return_value=self._t86_day(today)) as t86, \
+             patch.object(backfill, "fetch_margin", return_value=([], [])):
+            backfill.backfill(0, today=today, include_today=True, do_index=False, do_margin=False)
+        t86.assert_not_called()
+
+    def test_backfill_fetches_when_foreign_exists_but_trust_missing(self):
+        today = date(2026, 8, 31)
+        ds = today.isoformat()
+        con = collector.get_conn()
+        with con:
+            con.execute("INSERT INTO foreign_daily VALUES (?,?,?,?,?,?)",
+                        (ds, "2330", "台積電", 1, 1, 0))
+        con.close()
+        with patch.object(backfill, "fetch_index_5sec", return_value=[]), \
+             patch.object(backfill, "fetch_t86", return_value=self._t86_day(today)) as t86, \
+             patch.object(backfill, "fetch_margin", return_value=([], [])):
+            backfill.backfill(0, today=today, include_today=True, do_index=False, do_margin=False)
+        t86.assert_called_once_with(today)
+        self.assertEqual(
+            self.rows("SELECT trust_net FROM trust_daily WHERE stock_id='2330'")[0][0], 2)
+        self.assertEqual(
+            self.rows("SELECT dealer_net FROM dealer_daily WHERE stock_id='2330'")[0][0], 5)
+
+    def test_institutional_gaps_only_fetches_missing_foreign_dates(self):
+        have = date(2026, 8, 28)
+        gap = date(2026, 8, 31)
+        con = collector.get_conn()
+        with con:
+            for day, filled in ((have, True), (gap, False)):
+                ds = day.isoformat()
+                con.execute("INSERT INTO foreign_daily VALUES (?,?,?,?,?,?)",
+                            (ds, "2330", "台積電", 1, 1, 0))
+                if filled:
+                    con.execute("INSERT INTO trust_daily VALUES (?,?,?,?,?,?)",
+                                (ds, "2330", "台積電", 1, 0, 1))
+                    con.execute("INSERT INTO dealer_daily VALUES (?,?,?,?,?,?)",
+                                (ds, "2330", "台積電", 1, 0, 1))
+        con.close()
+        seen = []
+
+        def fake(day):
+            seen.append(day)
+            return self._t86_day(day)
+
+        with patch.object(backfill, "fetch_t86", side_effect=fake):
+            n = backfill.backfill_institutional_gaps(today=date(2026, 8, 31))
+        self.assertEqual(seen, [gap])
+        self.assertEqual(n, 1)
+        self.assertEqual(
+            self.rows("SELECT trust_net FROM trust_daily WHERE trade_date=?",
+                      (gap.isoformat(),))[0][0],
+            2,
+        )
+
+    def test_institutional_dry_run_does_not_fetch(self):
+        con = collector.get_conn()
+        with con:
+            con.execute("INSERT INTO foreign_daily VALUES (?,?,?,?,?,?)",
+                        ("2026-08-31", "2330", "台積電", 1, 1, 0))
+        con.close()
+        with patch.object(backfill, "fetch_t86") as t86:
+            n = backfill.backfill_institutional_gaps(
+                today=date(2026, 8, 31), dry_run=True)
+        self.assertEqual(n, 0)
+        t86.assert_not_called()
+
+    def test_institutional_days_window_ignores_older_gaps(self):
+        con = collector.get_conn()
+        with con:
+            con.execute("INSERT INTO foreign_daily VALUES (?,?,?,?,?,?)",
+                        ("2026-01-05", "2330", "台積電", 1, 1, 0))
+            con.execute("INSERT INTO foreign_daily VALUES (?,?,?,?,?,?)",
+                        ("2026-08-31", "2330", "台積電", 1, 1, 0))
+        con.close()
+        seen = []
+
+        def fake(day):
+            seen.append(day)
+            return self._t86_day(day)
+
+        with patch.object(backfill, "fetch_t86", side_effect=fake):
+            backfill.backfill_institutional_gaps(days=3, today=date(2026, 8, 31))
+        self.assertEqual(seen, [date(2026, 8, 31)])
 
 
 # ---------------------------------------------------------------- 儀表板

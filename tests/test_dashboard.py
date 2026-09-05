@@ -590,6 +590,7 @@ class DashboardNavTests(unittest.TestCase):
         self.assertIn("#scanner", text)
         self.assertIn("掃描", text)
         self.assertIn("/api/scanner/chip_zscore", text)
+        self.assertIn("/api/scanner/broker_main_force", text)
         self.assertIn("stockalert.sc.watchlist.v1", text)
         self.assertIn("一鍵套用", text)
         self.assertIn("?sc=", text)

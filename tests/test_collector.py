@@ -1075,7 +1075,8 @@ class TestDashboardAPI(DBTestCase):
                       ("/api/broker_branch/broker", {"broker_id": "1020"}),
                       ("/api/broker_branch/stock", {"id": "2330"}),
                       ("/api/broker_branch/freshness", {}),
-                      ("/api/scanner/chip_zscore", {"tickers": "2330"})]:
+                      ("/api/scanner/chip_zscore", {"tickers": "2330"}),
+                      ("/api/scanner/broker_main_force", {"tickers": "2330"})]:
             with self.subTest(path=p):
                 json.dumps(self.call(p, **kw))
 

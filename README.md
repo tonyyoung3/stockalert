@@ -81,6 +81,8 @@ PTT 股板週報跟 Reddit 投資想法週報都是本機整理、印到 stdout�
 
 籌碼 z-score（#78）是 **query-time**：`GET /api/scanner/chip_zscore?tickers=2330,2454&window=20&asof=YYYY-MM-DD`，預設窗格 **20 個交易日**，樣本標準差（ddof=1）。多檔、樣本不足旗標、NULL 規則見 `docs/chip_zscore.md`。不物化。掃描散布圖 UI（#79）與結果表格（#80）共用同一回應：自選多檔、軸可選價量／z-score，表頭可排序、表格可篩選，點擊進個股。本機追蹤清單（#81）存在瀏覽器 `localStorage` 鍵 `stockalert.sc.watchlist.v1`，可增刪、重整後仍在；一鍵套用寫入目前掃描標的（≥2 檔才打同一支 API）。掃描狀態（#82）寫進網址 `?sc=2330,2454`（可加 `scx` / `scy` / `scw` / `scmp` / `scd`），與既有 `?stock=` 同一套 query、可並用 `#scanner`；複製網址即可分享或在新工作階段還原，≥2 檔才打同一支 API。過長時先省略預設／可選參數，再截標的（沒有短網址服務）。沒有雲端同步、也沒有第二條掃描資料徑。掃描窗格與市場「外資排行」共用 `web/static/tw_range.js` 的「近 N 日／自訂區間」（#83）。日曆是 **#73** 的 `web.tw_calendar.taiwan_today` / `is_tw_trading_day`（Asia/Taipei，禁止裸 `date.today()`）；假日表與 #47 同一套 2025–2026。自訂／截至日落在週末或證交所休市會對齊到前一交易日。個股分點日期走同一個 snap。不另開日期 API，也不做 #84 多檔疊圖。
 
+熱門股分點主力（#98）也是 **query-time**：`GET /api/scanner/broker_main_force?tickers=2330,2454&asof=YYYY-MM-DD&k=5`，只讀已入庫 `broker_branch_daily`（熱門前 N），**零 FinMind 增量**。回傳買／賣超集中度與龍頭分點淨額，`coverage: hot_n`，標題「熱門股分點動向」，**不是**全市場。該日未入庫的代號回空列。見 `docs/broker_main_force.md`。本票不改掃描 UI。
+
 **Cache-local foreign span ≠ Turso foreign span.** GitHub Actions 的 `twse_data.db` cache 裡 `foreign_daily` 常常只有約 85 個交易日，但 Turso 上同一張表可以有約 510 日。設了 `TURSO_*` 時，`institutional_gaps` 以 Turso（並集本機）的 `foreign_daily` 日期當缺口來源，略過 Turso 上 trust/dealer 都已齊的日期；抓完只推這三張 T86 表的補齊區間，不會用本機 cache 的短外資歷史當「已補完」。未設 secrets 時行為不變，只看本機。
 
 補歷史（merge 後由 DE 觸發；約 4 秒／日，勿在 unit CI 跑）：
@@ -208,6 +210,7 @@ gcloud run deploy stockalert \
 | `GET /api/freshness` | 各表 `{table, last_date, days_ago, stale, empty}`，以及整體 `stale` / `empty` |
 | `GET /api/summary` | 原有 KPI，另含同一個 `freshness` 物件 |
 | `GET /api/scanner/chip_zscore` | 多檔籌碼 z-score（`tickers`、`window` 預設 20、`asof`、`min_periods`）。見 `docs/chip_zscore.md`。掃描分頁散布圖讀這支 |
+| `GET /api/scanner/broker_main_force` | 多檔熱門股分點主力（`tickers`、`asof`、`k` 預設 5）。只讀已入庫熱門 N，不是全市場。見 `docs/broker_main_force.md` |
 | `GET /health` | JSON：`status`/`ok` 表示**行程活著**（HTTP **一律 200**）。資料過期是 payload 的 `freshness.stale`／`empty`，**不會因此回 503**，方便之後 Cloud Run 探活依欄位延伸。 |
 
 ### 儀表板分區

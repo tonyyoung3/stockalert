@@ -44,6 +44,7 @@ from alertsdb.store import (
 )
 from data import market_db
 from market import broker_branch as broker_branch_mod
+from web import broker_main_force as broker_main_force_mod
 from web import chip_zscore as chip_zscore_mod
 from web import freshness as freshness_mod
 
@@ -667,6 +668,8 @@ def _api(path, qs):
         return body
     if path == "/api/scanner/chip_zscore":
         return chip_zscore_mod.api_chip_zscore(_request_conn.get(), qs)
+    if path == "/api/scanner/broker_main_force":
+        return broker_main_force_mod.api_broker_main_force(_request_conn.get(), qs)
     return None
 
 

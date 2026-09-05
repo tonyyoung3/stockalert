@@ -754,7 +754,7 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
         <option value="730">近 2 年</option>
       </select>
     </div>
-    <p class="hint days-hint">全域天數影響指數／籌碼／個股圖；外資排行用自己的日期區間。熱門股分點動向也用自己的當日／近 N 日，不是 T86。</p>
+    <p class="hint days-hint">全域天數影響指數／籌碼／個股圖；外資排行用自己的日期區間。熱門股分點動向也用自己的當日／近 N 日；個股分點用該檔日期，都不是 T86。</p>
   </div>
 </header>
 <nav class="page-nav" role="tablist" aria-label="儀表板分區">
@@ -885,6 +885,29 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
   <canvas id="c-stock" style="display:none"></canvas>
   <canvas id="c-stock-margin" style="display:none;margin-top:16px"></canvas>
   <div id="stock-table" class="table-scroll"></div>
+</section>
+<section class="card bb-card" id="stock-broker-branch-card" style="margin-bottom:16px">
+  <div class="chart-head">
+    <h3 id="sbb-title">券商分點買賣超</h3>
+    <span class="top-range">
+      <input type="date" id="sbb-date" onchange="onSbbDate()" aria-label="個股分點日期">
+      <span class="hint">此日期只控制該檔分點，與上方個股圖、全域天數無關。空白＝表內最新日</span>
+    </span>
+  </div>
+  <p class="bb-sub" id="sbb-sub">該檔讀已入庫熱門前 N 列（熱門股分點，非全市場）。來源 FinMind 分點（約 21:00），不是證交所 T86 外資排行。</p>
+  <div class="bb-fresh" id="sbb-fresh" role="status">分點新鮮度獨立於 T86（21:00 截止）。載入中…</div>
+  <div class="bb-warn" id="sbb-fixture-warn" hidden>示範資料（本機 fixture），不是已接上的 FinMind 行情。</div>
+  <div class="bb-empty" id="sbb-empty">請先選股（搜尋代號／名稱，或用網址 ?stock=），才會載入該檔分點買賣超。來源 FinMind 分點（約 21:00），不是 T86 外資排行。熱門前 N 才有列，非全市場。</div>
+  <div class="bb-lists" id="sbb-lists" hidden>
+    <div class="bb-list-wrap">
+      <h3 id="sbb-buy-h">買超分點 Top</h3>
+      <div class="bb-list table-scroll" id="sbb-buy"></div>
+    </div>
+    <div class="bb-list-wrap">
+      <h3 id="sbb-sell-h">賣超分點 Top</h3>
+      <div class="bb-list table-scroll" id="sbb-sell"></div>
+    </div>
+  </div>
 </section>
 </div>
 
@@ -1271,7 +1294,7 @@ function selectStock(id, name, opts){
     if(box) box.scrollIntoView({behavior:'smooth', block:'start'});
     if(el) el.focus();
   }
-  if(opts.load !== false) loadStock();
+  if(opts.load !== false){ loadStock(); loadStockBrokerBranch(); }
 }
 function showStock(id, name){ selectStock(id, name); }
 
@@ -1324,7 +1347,7 @@ function onStockInput(){
   const q = document.getElementById('sid').value;
   stockId = '';
   clearTimeout(sidTimer);
-  if(!q.trim()){ hideStockMenu(); syncStockUrl(''); return; }
+  if(!q.trim()){ hideStockMenu(); syncStockUrl(''); loadStockBrokerBranch(); return; }
   sidTimer = setTimeout(async ()=>{
     sidActive = -1;
     renderStockMenu(await fetchStockHits(q));
@@ -1888,6 +1911,115 @@ async function loadBrokerBranch(){
     if(listsEl) listsEl.hidden = true;
     if(warnEl) warnEl.hidden = true;
     const freshEl = document.getElementById('bb-fresh');
+    if(freshEl) freshEl.textContent = '分點新鮮度無法載入（21:00 截止，不併入 T86 /api/freshness）。';
+  }
+}
+
+const SBB_TITLE = '券商分點買賣超';
+const SBB_EMPTY_PICK = '請先選股（搜尋代號／名稱，或用網址 ?stock=），才會載入該檔分點買賣超。來源 FinMind 分點（約 21:00），不是 T86 外資排行。熱門前 N 才有列，非全市場。';
+const SBB_EMPTY_NODATA = '此檔當日沒有分點列（熱門前 N 檔才會入庫，非全市場）。不是空白圖表，也不是 T86 外資。';
+
+function sbbDateParam(){
+  const el = document.getElementById('sbb-date');
+  const v = el && el.value ? el.value : '';
+  return v ? '&date='+encodeURIComponent(v) : '';
+}
+function onSbbDate(){ loadStockBrokerBranch(); }
+function sbbSafeTitle(title){
+  if(!title || String(title).indexOf('全市場')>=0) return SBB_TITLE;
+  return SBB_TITLE;
+}
+function renderSbbFresh(fresh, stock){
+  const el = document.getElementById('sbb-fresh');
+  if(!el) return;
+  const f = fresh || (stock && stock.freshness) || {};
+  const last = f.last_date || '尚無';
+  const expected = f.expected_trade_date || '–';
+  const hour = f.expected_after_hour || 21;
+  const n = (stock && (stock.hot_n || stock.hot_n_default)) || 80;
+  let line = '截至 '+last+' · 預期交易日 '+expected+'（台灣時間 '+hour+':00 後）· 該檔讀已入庫熱門前 '+n+' 列，非全市場。來源／時間在此卡內，不併入上方 T86 freshness。';
+  if(stock && stock.stock_id){
+    const nm = stock.stock_name && stock.stock_name!==stock.stock_id ? ' '+stock.stock_name : '';
+    const day = stock.trade_date || '';
+    line += ' 查詢 '+stock.stock_id+nm+(day ? ' · '+day : '')+'。';
+  }
+  if(f.empty) line += ' 分點表空白。';
+  else if(f.stale) line += ' 資料早於預期交易日。';
+  el.textContent = line;
+  el.className = 'bb-fresh' + (f.empty || f.stale ? (f.empty ? ' is-empty' : ' is-stale') : '');
+}
+function sbbEmptyCopy(stock, fresh){
+  const mode = (stock && stock.data_mode) || (fresh && fresh.data_mode) || '';
+  const token = !!(stock && stock.token_present) || !!(fresh && fresh.token_present);
+  if(!token || mode==='empty_awaiting_token') return BB_EMPTY_TOKEN;
+  return SBB_EMPTY_NODATA;
+}
+async function loadStockBrokerBranch(){
+  const emptyEl = document.getElementById('sbb-empty');
+  const listsEl = document.getElementById('sbb-lists');
+  const titleEl = document.getElementById('sbb-title');
+  const subEl = document.getElementById('sbb-sub');
+  const warnEl = document.getElementById('sbb-fixture-warn');
+  const buyH = document.getElementById('sbb-buy-h');
+  const sellH = document.getElementById('sbb-sell-h');
+  const sid = stockId || parseStockId((document.getElementById('sid')||{}).value||'');
+  if(titleEl) titleEl.textContent = sbbSafeTitle(SBB_TITLE);
+  if(!sid){
+    if(emptyEl){ emptyEl.hidden = false; emptyEl.textContent = SBB_EMPTY_PICK; }
+    if(listsEl) listsEl.hidden = true;
+    if(warnEl) warnEl.hidden = true;
+    if(subEl){
+      subEl.textContent = '該檔讀已入庫熱門前 N 列（熱門股分點，非全市場）。來源 FinMind 分點（約 21:00），不是證交所 T86 外資排行。';
+    }
+    try {
+      const fresh = await j('/api/broker_branch/freshness');
+      renderSbbFresh(fresh, null);
+    } catch(e){
+      const freshEl = document.getElementById('sbb-fresh');
+      if(freshEl) freshEl.textContent = '分點新鮮度無法載入（21:00 截止，不併入 T86 /api/freshness）。';
+    }
+    return;
+  }
+  try {
+    const [stock, fresh] = await Promise.all([
+      j('/api/broker_branch/stock?id='+encodeURIComponent(sid)+sbbDateParam()),
+      j('/api/broker_branch/freshness'),
+    ]);
+    if(titleEl) titleEl.textContent = sbbSafeTitle(stock && stock.title);
+    renderSbbFresh(fresh, stock);
+    const day = (stock && stock.trade_date) || '';
+    const n = (stock && (stock.hot_n || stock.hot_n_default)) || 80;
+    if(subEl){
+      subEl.textContent = '該檔讀已入庫熱門前 '+n+' 列（熱門股分點，非全市場）'
+        +(day ? ' · '+day : '')
+        +'。來源 FinMind 分點（約 21:00），不是證交所 T86 外資排行。';
+    }
+    if(buyH) buyH.textContent = (day ? day+' ' : '')+'買超分點 Top'+(stock && stock.k ? ' '+stock.k : '')+'（張）';
+    if(sellH) sellH.textContent = (day ? day+' ' : '')+'賣超分點 Top'+(stock && stock.k ? ' '+stock.k : '')+'（張）';
+    if(warnEl){
+      const fixture = stock && stock.data_mode==='dev_fixture';
+      warnEl.hidden = !fixture;
+    }
+    const rows = (stock && stock.data) || [];
+    const ranked = rows.map(r=>[r[0], r[1], r[4]]);
+    const buy = (stock && Array.isArray(stock.buy)) ? stock.buy : ranked.filter(r=>r[2]>0);
+    const sell = (stock && Array.isArray(stock.sell)) ? stock.sell : ranked.filter(r=>r[2]<0).sort((a,b)=>a[2]-b[2]);
+    const hasRows = buy.length || sell.length;
+    if(!hasRows){
+      if(emptyEl){ emptyEl.hidden = false; emptyEl.textContent = sbbEmptyCopy(stock, fresh); }
+      if(listsEl) listsEl.hidden = true;
+      return;
+    }
+    if(emptyEl) emptyEl.hidden = true;
+    if(listsEl) listsEl.hidden = false;
+    renderBbList('sbb-buy', buy);
+    renderBbList('sbb-sell', sell);
+  } catch(e){
+    if(titleEl) titleEl.textContent = SBB_TITLE;
+    if(emptyEl){ emptyEl.hidden = false; emptyEl.textContent = BB_EMPTY_TOKEN; }
+    if(listsEl) listsEl.hidden = true;
+    if(warnEl) warnEl.hidden = true;
+    const freshEl = document.getElementById('sbb-fresh');
     if(freshEl) freshEl.textContent = '分點新鮮度無法載入（21:00 截止，不併入 T86 /api/freshness）。';
   }
 }
@@ -2770,7 +2902,8 @@ if(btPresetSel){
 function loadAll(){ loadSummary(); loadKline(); loadTaiex(); loadMargin(); loadNet(); loadTaifexOi(); loadTop();
   loadBrokerBranch();
   loadAlerts(); loadPerformance();
-  if(stockId) loadStock(); }
+  if(stockId) loadStock();
+  loadStockBrokerBranch(); }
 function btApplyMobileBlockFolds(){
   const mobile = window.matchMedia('(max-width:768px)').matches;
   document.querySelectorAll('#bt-filter-blocks details.bt-block').forEach(el=>{

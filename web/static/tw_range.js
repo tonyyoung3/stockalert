@@ -2,8 +2,8 @@
  * Calendar is the #73 helper: web/tw_calendar.py
  *   taiwan_today / taiwan_now (Asia/Taipei; no date.today())
  *   is_tw_trading_day (weekends + TWSE closures; #47 table)
- * Used by scanner window/asof and 市場外資排行 (個股分點 date snap).
- * Not #84 overlay charts.
+ * Used by scanner window/asof, 市場外資排行 (個股分點 date snap),
+ * and #84 overlay lookback (same asof / window; series still /api/stock_ohlc).
  */
 (function (root, factory) {
   var api = factory();

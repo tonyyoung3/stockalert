@@ -870,6 +870,80 @@ class DashboardTwRangeTests(unittest.TestCase):
         self.assertIn("wa.asof", collect)
 
 
+class DashboardScannerOverlayTests(unittest.TestCase):
+    """#84: second price-overlay chart; scatter / chip_zscore path stays one fetch."""
+
+    def test_overlay_is_second_chart_reusing_picks_and_stock_ohlc(self):
+        html = dashboard.HTML
+        self.assertIn('src="/static/sc_overlay.js"', html)
+        self.assertIn('id="sc-overlay-panel"', html)
+        self.assertIn('id="c-scanner-overlay"', html)
+        self.assertIn('id="sc-ov-legend"', html)
+        self.assertIn('id="sc-ov-mode"', html)
+        self.assertIn(">正規化（首日=100）</option>", html)
+        self.assertIn(">絕對價</option>", html)
+        self.assertIn(">股價疊圖</h3>", html)
+        self.assertIn("function loadScannerOverlay(", html)
+        self.assertIn("function renderScannerOverlay(", html)
+        self.assertIn("function removeOverlaySeries(", html)
+        self.assertIn("function restoreOverlaySeries(", html)
+        self.assertIn("function scHideOverlay(", html)
+        self.assertIn("function renderOverlayLegend(", html)
+        self.assertIn("/api/stock_ohlc?id=", html)
+        self.assertIn("從疊圖移除", html)
+        self.assertIn("不改掃描標的", html)
+        self.assertIn("type:'line'", html[html.index("function renderScannerOverlay("):html.index("async function loadScannerOverlay(")])
+        self.assertIn("legend:{display:true}", html[html.index("function renderScannerOverlay("):html.index("async function loadScannerOverlay(")])
+        load = html[html.index("async function loadScanner("):html.index("async function loadAlerts(")]
+        self.assertIn("renderScannerChart()", load)
+        self.assertIn("loadScannerOverlay()", load)
+        self.assertEqual(load.count("/api/scanner/chip_zscore"), 1)
+        self.assertIn("/api/stock_ohlc?id=", load)
+        self.assertNotIn("renderScannerTable()", load)
+        ov = html[html.index("async function loadScannerOverlay("):html.index("async function loadAlerts(")]
+        self.assertIn("/api/stock_ohlc?id=", ov)
+        self.assertNotIn("/api/scanner/chip_zscore", ov)
+        self.assertIn("ScOverlay.sliceToWindow", ov)
+        self.assertIn("scPicks.map", ov)
+        self.assertEqual(html.count("j('/api/scanner/chip_zscore?"), 1)
+        self.assertIn("type:'scatter'", html[html.index("function renderScannerChart("):html.index("async function loadScanner(")])
+        src = Path(__file__).resolve().parents[1].joinpath("web/dashboard.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("stock_chips_daily", src)
+        self.assertIn("/api/stock_ohlc", src)
+        scanner = html[html.index('id="section-scanner"'):html.index('id="section-alerts"')]
+        self.assertIn('id="c-scanner"', scanner)
+        self.assertIn('id="c-scanner-overlay"', scanner)
+        stock = html[html.index('id="section-stock"'):html.index('id="section-scanner"')]
+        self.assertNotIn("c-scanner-overlay", stock)
+        self.assertNotIn("sc-overlay-panel", stock)
+
+    def test_remove_series_does_not_touch_picks_or_chip_zscore(self):
+        html = dashboard.HTML
+        remove = html[html.index("function removeOverlaySeries("):html.index("function restoreOverlaySeries(")]
+        self.assertIn("scOvHidden[id]", remove)
+        self.assertIn("renderScannerOverlay()", remove)
+        self.assertNotIn("removeScannerPick", remove)
+        self.assertNotIn("scPicks.splice", remove)
+        self.assertNotIn("loadScanner()", remove)
+        self.assertNotIn("/api/scanner/chip_zscore", remove)
+        self.assertNotIn("await j(", remove)
+        restore = html[html.index("function restoreOverlaySeries("):html.index("function renderOverlayLegend(")]
+        self.assertIn("scOvHidden = {}", restore)
+        self.assertIn("renderScannerOverlay()", restore)
+        self.assertNotIn("/api/scanner/chip_zscore", restore)
+        empty = html[html.index("function scShowEmpty("):html.index("function scShowLoading(")]
+        self.assertIn("scHideOverlay()", empty)
+        loading = html[html.index("function scShowLoading("):html.index("function scShowError(")]
+        self.assertIn("scHideOverlay()", loading)
+        self.assertIn("stockalert.sc.watchlist.v1", html)
+        self.assertIn("function syncScannerUrl(", html)
+        watch = html[html.index("const SC_WATCH_KEY"):html.index("function scHideChart(")]
+        self.assertNotIn("/api/stock_ohlc", watch)
+        self.assertNotIn("/api/scanner/chip_zscore", watch)
+
+
 class DashboardScannerTableTests(unittest.TestCase):
     """#80: sortable/filterable results table on the same chip_zscore payload."""
 

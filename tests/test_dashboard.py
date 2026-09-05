@@ -2,13 +2,14 @@ import json
 import sqlite3
 import tempfile
 import unittest
-from datetime import date, timedelta
+from datetime import timedelta
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from alertsdb import store as alerts_db
 from data import market_db
 from web import dashboard
+from web.tw_calendar import taiwan_today
 
 
 class DashboardAlertsAPITests(unittest.TestCase):
@@ -53,6 +54,7 @@ class DashboardAlertsAPITests(unittest.TestCase):
         self.assertNotIn("onclick=\"showStock(", dashboard.HTML)
         self.assertIn("fresh-banner", dashboard.HTML)
         self.assertIn("請跑 python -m market.update_market_data", dashboard.HTML)
+        self.assertIn("樣本不足", dashboard.HTML)
 
     def test_html_stock_lookup_wires_ranking_search_and_deeplink(self):
         html = dashboard.HTML
@@ -97,7 +99,7 @@ class DashboardAlertsAPITests(unittest.TestCase):
     def test_alerts_lists_recent_and_attaches_name(self):
         self._init_screener()
         self._init_market_names()
-        today = date.today()
+        today = taiwan_today()
         recent = str(today - timedelta(days=2))
         old = str(today - timedelta(days=40))
         alerts_db.save_alert("2330", "upper_shadow_reversal", recent, 1450.0)

@@ -15,10 +15,16 @@
 - 每次回測都自動附上:t檢定、前後半穩定性、區塊拔靴95%CI、成本敏感度。
 """
 from __future__ import annotations
+import os
 import sqlite3
 import numpy as np
 import pandas as pd
 from scipy import stats
+
+# Hide/downgrade win-rate/EV inference when n is below this (documented default).
+# Override with BACKTEST_MIN_TRADES (positive integer).
+DEFAULT_MIN_TRADES = 20
+SAMPLE_INSUFFICIENT_NOTE = "樣本不足"
 
 
 # ==================================================================
@@ -683,12 +689,37 @@ def _block_bootstrap_ci(returns: np.ndarray, block=20, n_boot=3000, seed=0):
     return {"lo": float(lo), "hi": float(hi), "block": block, "n_blocks": nb}
 
 
-def compute_stats(trades: pd.DataFrame) -> dict:
+def min_trades_threshold(env=None, override: int | None = None) -> int:
+    """Minimum n before win-rate / EV / significance are treated as usable."""
+    if override is not None:
+        try:
+            return max(1, int(override))
+        except (TypeError, ValueError):
+            return DEFAULT_MIN_TRADES
+    env = os.environ if env is None else env
+    raw = (env.get("BACKTEST_MIN_TRADES") or "").strip()
+    if not raw:
+        return DEFAULT_MIN_TRADES
+    try:
+        return max(1, int(raw))
+    except (TypeError, ValueError):
+        return DEFAULT_MIN_TRADES
+
+
+def compute_stats(trades: pd.DataFrame, min_trades: int | None = None) -> dict:
     if trades.empty:
-        return {"n": 0, "error": "沒有任何交易被觸發,請調整規則或篩選條件"}
+        return {
+            "n": 0,
+            "error": "沒有任何交易被觸發,請調整規則或篩選條件",
+            "min_trades": min_trades_threshold(override=min_trades),
+            "sample_insufficient": True,
+            "sample_note": SAMPLE_INSUFFICIENT_NOTE,
+        }
 
     r = trades["ret_net"].values
     n = len(r)
+    threshold = min_trades_threshold(override=min_trades)
+    insufficient = n < threshold
     mean = float(np.mean(r)); std = float(np.std(r, ddof=1)) if n > 1 else 0.0
     win_rate = float((r > 0).mean())
     t, p = stats.ttest_1samp(r, 0) if n > 1 else (np.nan, np.nan)
@@ -728,15 +759,24 @@ def compute_stats(trades: pd.DataFrame) -> dict:
 
     result = {
         "n": n, "win_rate": round(win_rate*100, 2), "ev_pct": round(mean*100, 4),
-        "t_stat": None if np.isnan(t) else round(float(t), 3),
-        "p_value": None if np.isnan(p) else round(float(p), 4),
-        "sharpe": None if np.isnan(sharpe) else round(float(sharpe), 3),
+        "min_trades": threshold,
+        "sample_insufficient": insufficient,
+        "sample_note": SAMPLE_INSUFFICIENT_NOTE if insufficient else None,
+        "t_stat": None if (insufficient or np.isnan(t)) else round(float(t), 3),
+        "p_value": None if (insufficient or np.isnan(p)) else round(float(p), 4),
+        "sharpe": None if (insufficient or np.isnan(sharpe)) else round(float(sharpe), 3),
         "std_pct": round(std*100, 4),
         "worst_pct": round(float(r.min())*100, 3), "best_pct": round(float(r.max())*100, 3),
         "front_half_ev_pct": None if np.isnan(front) else round(front*100, 4),
         "back_half_ev_pct": None if np.isnan(back) else round(back*100, 4),
-        "block_bootstrap_ci": boot and {"lo_pct": round(boot["lo"]*100, 4), "hi_pct": round(boot["hi"]*100, 4),
-                                          "n_blocks": boot["n_blocks"], "block_days": boot["block"]},
+        "block_bootstrap_ci": (
+            None if (insufficient or not boot) else {
+                "lo_pct": round(boot["lo"]*100, 4),
+                "hi_pct": round(boot["hi"]*100, 4),
+                "n_blocks": boot["n_blocks"],
+                "block_days": boot["block"],
+            }
+        ),
         "cost_sensitivity": cost_curve,
         "by_weekday": sorted(dow_stats, key=lambda x: x["dow"]),
         "equity_curve": [{"date": d.strftime("%Y-%m-%d"), "equity": round(float(e), 4)}

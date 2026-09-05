@@ -389,5 +389,62 @@ class EngineGuardTests(_EngineCase):
         self.assertListEqual(gap_down.tolist(), [False, True, False])
 
 
+def _stat_trades(n, win=True):
+    rows = []
+    day = date(2024, 1, 8)
+    for _ in range(n):
+        while day.weekday() >= 5:
+            day += timedelta(days=1)
+        ret = 0.01 if win else -0.01
+        rows.append(
+            {
+                "trade_date": pd.Timestamp(day),
+                "dow": day.weekday(),
+                "ret_net": ret,
+                "ret_gross": ret + 0.0003,
+                "entry_price": 100.0,
+                "exit_price": 101.0,
+                "stopped": False,
+            }
+        )
+        day += timedelta(days=1)
+    df = pd.DataFrame(rows)
+    df.attrs["cost_pct"] = 0.03
+    return df
+
+
+class ComputeStatsThresholdTests(unittest.TestCase):
+    def test_default_threshold_is_20(self):
+        self.assertEqual(backtest_engine.DEFAULT_MIN_TRADES, 20)
+        self.assertEqual(backtest_engine.min_trades_threshold({}), 20)
+        self.assertEqual(backtest_engine.min_trades_threshold({"BACKTEST_MIN_TRADES": "8"}), 8)
+        self.assertEqual(backtest_engine.min_trades_threshold(override=5), 5)
+
+    def test_small_n_flags_sample_insufficient_and_drops_inference(self):
+        stats = backtest_engine.compute_stats(_stat_trades(3), min_trades=20)
+        self.assertEqual(stats["n"], 3)
+        self.assertTrue(stats["sample_insufficient"])
+        self.assertEqual(stats["sample_note"], "樣本不足")
+        self.assertEqual(stats["min_trades"], 20)
+        self.assertEqual(stats["win_rate"], 100.0)
+        self.assertIsNone(stats["t_stat"])
+        self.assertIsNone(stats["p_value"])
+        self.assertIsNone(stats["sharpe"])
+        self.assertIsNone(stats["block_bootstrap_ci"])
+
+    def test_enough_trades_keeps_inference(self):
+        stats = backtest_engine.compute_stats(_stat_trades(8), min_trades=5)
+        self.assertFalse(stats["sample_insufficient"])
+        self.assertIsNone(stats["sample_note"])
+        self.assertIsNotNone(stats["t_stat"])
+        self.assertIsNotNone(stats["p_value"])
+
+    def test_empty_is_insufficient(self):
+        stats = backtest_engine.compute_stats(pd.DataFrame(), min_trades=20)
+        self.assertEqual(stats["n"], 0)
+        self.assertTrue(stats["sample_insufficient"])
+        self.assertEqual(stats["sample_note"], "樣本不足")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -38,7 +38,7 @@ from market.collector import (get_conn, fetch_t86, persist_t86,
                        fetch_tpex_stock_day_all, persist_stock_daily,
                        update_stock_master, MIN_COMBINED_STOCK_DAILY,
                        HEADERS)
-from web.tw_calendar import is_tw_trading_day
+from web.tw_calendar import is_tw_trading_day, taiwan_today
 
 log = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -90,10 +90,11 @@ def existing_dates(conn, table, since: str | None = None) -> set:
 def backfill_ohlc(days: int):
     """逐月回補日 K(每月一次請求)。"""
     conn = get_conn()
-    start = date.today() - timedelta(days=days)
+    start = taiwan_today() - timedelta(days=days)
     month = date(start.year, start.month, 1)
     n = 0
-    while month <= date.today():
+    today = taiwan_today()
+    while month <= today:
         try:
             rows = fetch_taiex_ohlc_month(month)
             if rows:
@@ -114,7 +115,7 @@ def backfill_stocks(stock_ids: list[str] | None, days: int):
     stock_ids 為 None 時回補 stocks 主檔的全部股票(會先要求確認)。
     已涵蓋回補區間的股票自動跳過,中斷後可續跑。"""
     conn = get_conn()
-    start = date.today() - timedelta(days=days)
+    start = taiwan_today() - timedelta(days=days)
     if stock_ids is None:
         stock_ids = [r[0] for r in conn.execute(
             "SELECT stock_id FROM stocks ORDER BY stock_id")]
@@ -131,14 +132,14 @@ def backfill_stocks(stock_ids: list[str] | None, days: int):
         "SELECT stock_id FROM stock_daily GROUP BY stock_id "
         "HAVING MIN(trade_date) <= ? AND MAX(trade_date) >= ?",
         ((start + timedelta(days=40)).isoformat(),
-         (date.today() - timedelta(days=40)).isoformat()))}
+         (taiwan_today() - timedelta(days=40)).isoformat()))}
     skip = [s for s in stock_ids if s in done]
     if skip:
         log.info("跳過已完成的 %d 檔", len(skip))
     n = 0
     for sid in [s for s in stock_ids if s not in done]:
         month = date(start.year, start.month, 1)
-        while month <= date.today():
+        while month <= taiwan_today():
             try:
                 rows = fetch_stock_month(sid, month)
                 if rows:
@@ -186,7 +187,7 @@ def backfill_stock_daily(
     Catch-up counts are limited to the window so we do not GROUP BY the full table.
     """
     conn = get_conn()
-    today = today or date.today()
+    today = today or taiwan_today()
     start = today - timedelta(days=days)
     counts = stock_daily_counts(conn, since=start.isoformat())
     end = window_end(today, include_today)
@@ -253,7 +254,7 @@ def backfill_stock_daily(
 def backfill(days: int, do_index=True, do_foreign=True, do_margin=True,
              today: date | None = None, include_today: bool = False):
     conn = get_conn()
-    today = today or date.today()
+    today = today or taiwan_today()
     start = today - timedelta(days=days)
     since = start.isoformat()
     have_idx = (existing_dates(conn, "taiex_hourly", since=since)
@@ -495,7 +496,7 @@ def backfill_institutional_gaps(
     locally, are not re-downloaded.
     """
     conn = get_conn()
-    today = today or date.today()
+    today = today or taiwan_today()
     since = (today - timedelta(days=days)).isoformat() if days is not None else None
     loaded = None
     try:

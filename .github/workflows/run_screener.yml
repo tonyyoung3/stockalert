@@ -13,13 +13,12 @@ jobs:
   run:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          # Need a token with write access so we can push screener.db back
-          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 20
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -32,11 +31,36 @@ jobs:
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
+      - name: Restore screener database
+        uses: actions/cache/restore@v4
+        with:
+          path: screener.db
+          key: screener-db-${{ github.run_id }}
+          restore-keys: |
+            screener-db-
+
+      - name: Seed screener.db from git history if cache miss
+        run: |
+          if [ -f screener.db ]; then
+            echo "screener.db already present"
+            exit 0
+          fi
+          echo "No cached screener.db; trying last git copy (transition after untracking)"
+          for sha in $(git log --pretty=format:%H -- screener.db); do
+            if git cat-file -e "$sha:screener.db" 2>/dev/null; then
+              git checkout "$sha" -- screener.db
+              echo "Seeded screener.db from $sha"
+              exit 0
+            fi
+          done
+          echo "No historical screener.db found; starting empty (Turso upsert will not delete remote rows)"
+
       - name: Run unit tests
         run: python -m unittest discover -s tests -v
 
       - name: Run screener
         env:
+          TZ: Asia/Taipei
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
@@ -51,16 +75,25 @@ jobs:
           python -m notify.screener
 
       - name: Check alert performance
+        env:
+          TZ: Asia/Taipei
         run: python -m notify.performance_checker
 
-      - name: Persist alert database
-        run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add screener.db
-          # Only commit if screener.db actually changed
-          git diff --cached --quiet || git commit -m "chore: update screener.db [skip ci]"
-          git push
+      - name: Save screener database
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: screener.db
+          key: screener-db-${{ github.run_id }}
+
+      - name: Upload screener database artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screener-db
+          path: screener.db
+          if-no-files-found: warn
+          retention-days: 90
 
       - name: Push alerts to Turso
         env:
@@ -72,5 +105,3 @@ jobs:
     concurrency:
       group: run-screener
       cancel-in-progress: false
-
-

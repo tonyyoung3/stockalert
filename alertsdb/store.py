@@ -4,6 +4,7 @@ from pathlib import Path
 from datetime import date, timedelta
 
 from data.sqlite_util import configure_local
+from web.tw_calendar import taiwan_today
 
 # Repo root, not alertsdb/. Default file stays screener.db next to screener.py.
 _ROOT = Path(__file__).resolve().parent.parent
@@ -121,7 +122,7 @@ def save_performance(
 
 def get_pending_alerts(min_age_days: int = 28):
     """Alerts old enough that have no performance row at all (any horizon)."""
-    cutoff = str(date.today() - timedelta(days=min_age_days))
+    cutoff = str(taiwan_today() - timedelta(days=min_age_days))
     with get_conn() as conn:
         rows = conn.execute(
             """
@@ -144,7 +145,7 @@ def get_pending_horizon_jobs(
     """Alerts missing a row for a given trading-day horizon and old enough to try."""
     from data.prices import calendar_buffer_days
 
-    today = today or date.today()
+    today = today or taiwan_today()
     jobs = []
     with get_conn() as conn:
         for horizon_td in horizons:

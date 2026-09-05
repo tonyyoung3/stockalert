@@ -21,7 +21,7 @@ import requests
 
 from data.paths import repo_file
 from data.sqlite_util import configure_local
-from web.tw_calendar import is_tw_trading_day
+from web.tw_calendar import is_tw_trading_day, taiwan_today
 
 DB_PATH = repo_file("twse_data.db")
 # MI_INDEX listed-only is ~1,300–1,400 names; listed+OTC is ~2,300.
@@ -324,7 +324,7 @@ def fetch_taiex_ohlc_month(day: date) -> list[tuple]:
 
 def save_taiex_ohlc(day: date | None = None):
     """抓當月(或指定月份)的每日開高低收並寫入。"""
-    rows = fetch_taiex_ohlc_month(day or date.today())
+    rows = fetch_taiex_ohlc_month(day or taiwan_today())
     if not rows:
         log.warning("抓不到日 K 資料")
         return
@@ -378,7 +378,7 @@ def save_open_5sec(conn: sqlite3.Connection, day: date, raw: list[tuple]):
 
 
 def save_hourly_ohlc(day: date | None = None):
-    day = day or date.today()
+    day = day or taiwan_today()
     raw = fetch_index_5sec(day)
     rows = hourly_ohlc_from_5sec(day, raw)
     if not rows:
@@ -550,7 +550,7 @@ def persist_t86(conn: sqlite3.Connection, tables: T86Tables) -> int:
 
 def save_foreign(day: date | None = None):
     """抓指定日 T86(外資+投信+自營商);無資料則往前找最近交易日(最多 7 天)。"""
-    day = day or date.today()
+    day = day or taiwan_today()
     for _ in range(7):
         tables = fetch_t86(day)
         if tables.foreign:
@@ -612,7 +612,7 @@ def fetch_margin(day: date) -> tuple[list, list]:
 
 def save_margin(day: date | None = None):
     """抓指定日(預設今天);無資料則往前找最近交易日(最多 7 天)。"""
-    day = day or date.today()
+    day = day or taiwan_today()
     for _ in range(7):
         totals, stocks = fetch_margin(day)
         if stocks:
@@ -788,7 +788,7 @@ def official_session_bars(
 
 def save_stock_day_all(day: date | None = None):
     """抓指定日(預設今天)上市+上櫃個股日K;無資料則往前找(最多 7 天)。"""
-    day = day or date.today()
+    day = day or taiwan_today()
     for _ in range(7):
         twse_err = tpex_err = None
         try:

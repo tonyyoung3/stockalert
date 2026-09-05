@@ -60,8 +60,10 @@ venv.bak/
 charts/
 charts_interactive/
 
-# Market databases (restored from Actions cache / artifacts, do not commit)
+# Local / Actions SQLite (cache + artifact + Turso; do not commit)
+screener.db
 twse_data.db
 us_data.db
+*.db
 *.db-shm
 *.db-wal

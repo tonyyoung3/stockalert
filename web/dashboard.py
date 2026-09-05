@@ -2203,10 +2203,10 @@ function btApplyBlocks(blocks){
   const dataset = BT_DATASETS.indexOf(blocks.dataset)>=0 ? blocks.dataset : '2y_hourly';
   let mode = BT_MODES.indexOf(blocks.mode)>=0 ? blocks.mode : 'intraday';
   document.getElementById('bt-dataset').value = dataset;
-  btApplyDatasetConstraints();
   if(dataset==='15y_daily' && mode==='intraday') mode = 'overnight';
   const radio = document.querySelector('input[name="bt-mode"][value="'+mode+'"]');
   if(radio && !radio.disabled) radio.checked = true;
+  btApplyDatasetConstraints();
   const cost = blocks.cost_pct;
   document.getElementById('bt-cost').value = (cost==null || cost==='') ? '0.03' : cost;
   const entry = blocks.entry || {};

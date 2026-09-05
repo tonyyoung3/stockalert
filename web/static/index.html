@@ -1882,6 +1882,7 @@ async function loadScanner(){
     const r = await j('/api/scanner/chip_zscore?'+qs.toString());
     if(!r || r.error==='missing_tickers'){
       scLastPayload = null;
+      syncScannerUrl();
       scShowEmpty();
       return;
     }
@@ -1891,6 +1892,7 @@ async function loadScanner(){
     renderScannerChart();
   }catch(e){
     scLastPayload = null;
+    syncScannerUrl();
     scShowError('掃描資料載入失敗（'+e+'）。沒有假資料可畫。');
   }
 }
@@ -3834,6 +3836,7 @@ window.addEventListener('resize', resizeCharts);
   loadAll();
   showSection(resolveSection(), {updateHash:false});
   if(scShouldLoad) loadScanner();
+  else if(scFromUrl) syncScannerUrl();
 })();
 </script>
 </body>

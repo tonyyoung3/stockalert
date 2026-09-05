@@ -281,6 +281,32 @@ class DashboardNavTests(unittest.TestCase):
         title_tag = html[html.index("id=\"bb-title\""):html.index("id=\"bb-title\"") + 40]
         self.assertIn("熱門股分點動向", title_tag)
 
+    def test_pm_locked_copy_gates_issue_55(self):
+        """PM copy/gates for #55: hot-N title, token empty, not T86, no live FinMind."""
+        html = dashboard.HTML
+        card = html[html.index("id=\"broker-branch-card\""):html.index("id=\"section-stock\"")]
+        self.assertIn(">熱門股分點動向</h3>", card)
+        self.assertIn("依成交額前 N 檔彙總，非全市場", card)
+        self.assertIn("尚未接上 FinMind token", card)
+        self.assertIn("empty_awaiting_token", html)
+        self.assertIn("買超分點 Top", card)
+        self.assertIn("賣超分點 Top", card)
+        self.assertIn("台灣時間", html)
+        self.assertIn("21:00", card)
+        self.assertLess(html.index("外資買賣超排行"), html.index("id=\"broker-branch-card\""))
+        self.assertIn(".bb-lists{grid-template-columns:1fr}", html)
+        self.assertNotIn("全市場分點", card)
+        self.assertNotIn("全市場分點買賣超", card)
+        self.assertNotIn("api.finmindtrade.com", html)
+        self.assertNotIn("live_ingest: true", html)
+        from market import broker_branch
+        self.assertFalse(broker_branch.ingest_status({}).get("live_ingest"))
+        self.assertFalse(broker_branch.ingest_status({"FINMIND_TOKEN": "x"}).get("live_ingest"))
+        self.assertEqual(broker_branch.market_title("empty"), "熱門股分點動向")
+        self.assertEqual(broker_branch.market_title("hot_n"), "熱門股分點動向")
+        self.assertNotIn("全市場", broker_branch.market_title("empty"))
+        self.assertNotIn("全市場", broker_branch.market_title("hot_n"))
+
     def test_js_hash_and_selectstock_switch_sections(self):
         html = dashboard.HTML
         self.assertIn("const PAGE_SECTIONS", html)

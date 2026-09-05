@@ -121,12 +121,51 @@ def _remote_date_counts(remote, table: str, date_col: str, since: str | None) ->
         return {}
 
 
+def remote_distinct_dates(
+    table: str,
+    since: str | None = None,
+    remote=None,
+    date_col: str = "trade_date",
+) -> set[str]:
+    """Distinct date values from Turso. Empty if not configured or the table is missing.
+
+    Used by institutional gap detection so Actions-cache local foreign_daily
+    (often ~85 days) is not treated as the full Turso foreign span (~510 days).
+    """
+    table = _ident(table)
+    date_col = _ident(date_col)
+    close = False
+    if remote is None:
+        if not configured():
+            return set()
+        remote = connect_remote()
+        close = True
+    try:
+        sql = f"SELECT DISTINCT {date_col} FROM {table}"
+        params: tuple = ()
+        if since:
+            sql += f" WHERE {date_col} >= ?"
+            params = (since,)
+        return {row[0] for row in remote.execute(sql, params).fetchall() if row[0]}
+    except Exception:
+        log.warning("Turso distinct dates unavailable for %s", table)
+        return set()
+    finally:
+        if close:
+            remote.close()
+
+
 def _skip_complete_dates(
     rows: list,
     date_idx: int,
     remote_counts: dict,
 ) -> tuple[list, int]:
-    """Drop dates Turso already has in full, but always re-upsert the latest day."""
+    """Drop dates Turso already has in full, but always re-upsert the latest day.
+
+    Completeness is per table. A date that is complete in foreign_daily must
+    not suppress trust_daily / dealer_daily rows for that same date — those
+    tables are counted separately when copy_table runs.
+    """
     if not rows or not remote_counts:
         return rows, 0
     local_counts: dict = {}
@@ -161,7 +200,12 @@ def _insert_chunks(remote, table: str, cols: list[str], rows: list) -> None:
         remote.commit()
 
 
-def copy_table(local: sqlite3.Connection, remote, table: str, since: str | None) -> int:
+def copy_table(
+    local: sqlite3.Connection,
+    remote,
+    table: str,
+    since: str | None,
+) -> int:
     table = _ident(table)
     cols = _columns(local, table)
     if not cols:
@@ -187,7 +231,12 @@ def copy_table(local: sqlite3.Connection, remote, table: str, since: str | None)
     return len(rows)
 
 
-def push_file(path: Path, remote, since: str | None = None) -> dict[str, int]:
+def push_file(
+    path: Path,
+    remote,
+    since: str | None = None,
+    tables: tuple[str, ...] | list[str] | None = None,
+) -> dict[str, int]:
     if not path.exists():
         log.info("skip missing %s", path.name)
         return {}
@@ -195,13 +244,16 @@ def push_file(path: Path, remote, since: str | None = None) -> dict[str, int]:
     try:
         ensure_schema(local, remote)
         # Views (stock_chips_daily) are created in ensure_schema; do not INSERT them.
-        tables = [
+        found = [
             name for (name,) in local.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
             )
         ]
+        if tables is not None:
+            wanted = set(tables)
+            found = [name for name in found if name in wanted]
         counts = {}
-        for table in tables:
+        for table in found:
             n = copy_table(local, remote, table, since)
             counts[table] = n
             log.info("%s %s: %s rows", path.name, table, n)
@@ -215,6 +267,7 @@ def _push_paths(
     days: int | None,
     today: date | None,
     remote=None,
+    tables: tuple[str, ...] | list[str] | None = None,
 ) -> dict[str, dict[str, int]]:
     if not configured() and remote is None:
         log.info("Turso not configured; leaving data in local sqlite")
@@ -225,7 +278,7 @@ def _push_paths(
         since = ((today or date.today()) - timedelta(days=days)).isoformat()
     out = {}
     for path in files:
-        out[path.name] = push_file(path, remote, since)
+        out[path.name] = push_file(path, remote, since, tables=tables)
     return out
 
 
@@ -234,8 +287,9 @@ def push_market_files(
     days: int | None = 14,
     today: date | None = None,
     remote=None,
+    tables: tuple[str, ...] | list[str] | None = None,
 ) -> dict[str, dict[str, int]]:
-    return _push_paths(files or DEFAULT_FILES, days, today, remote)
+    return _push_paths(files or DEFAULT_FILES, days, today, remote, tables=tables)
 
 
 def push_alert_files(

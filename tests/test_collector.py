@@ -768,6 +768,171 @@ class TestBackfill(DBTestCase):
             backfill.backfill_institutional_gaps(days=3, today=date(2026, 8, 31))
         self.assertEqual(seen, [date(2026, 8, 31)])
 
+    def test_missing_dates_include_turso_foreign_not_in_local_cache(self):
+        """Actions cache may have ~85 foreign dates; Turso can have ~510."""
+        collector.get_conn().close()
+        con = sqlite3.connect(self.db)
+        with con:
+            con.execute(
+                "INSERT INTO foreign_daily VALUES (?,?,?,?,?,?)",
+                ("2026-08-31", "2330", "台積電", 1, 1, 0),
+            )
+            con.execute(
+                "INSERT INTO trust_daily VALUES (?,?,?,?,?,?)",
+                ("2026-08-31", "2330", "台積電", 1, 0, 1),
+            )
+            con.execute(
+                "INSERT INTO dealer_daily VALUES (?,?,?,?,?,?)",
+                ("2026-08-31", "2330", "台積電", 1, 0, 1),
+            )
+        con.close()
+        remote = {
+            "foreign_daily": {"2026-01-05", "2026-08-31"},
+            "trust_daily": {"2026-08-31"},
+            "dealer_daily": {"2026-08-31"},
+        }
+        conn = collector.get_conn()
+        try:
+            missing = backfill.missing_institutional_dates(conn, remote_dates=remote)
+        finally:
+            conn.close()
+        self.assertEqual(missing, ["2026-01-05"])
+
+    def test_missing_dates_skip_when_turso_already_has_trust_and_dealer(self):
+        collector.get_conn().close()
+        con = sqlite3.connect(self.db)
+        with con:
+            con.execute(
+                "INSERT INTO foreign_daily VALUES (?,?,?,?,?,?)",
+                ("2026-01-05", "2330", "台積電", 1, 1, 0),
+            )
+        con.close()
+        remote = {
+            "foreign_daily": {"2026-01-05"},
+            "trust_daily": {"2026-01-05"},
+            "dealer_daily": {"2026-01-05"},
+        }
+        conn = collector.get_conn()
+        try:
+            missing = backfill.missing_institutional_dates(conn, remote_dates=remote)
+        finally:
+            conn.close()
+        self.assertEqual(missing, [])
+
+    def test_missing_dates_skip_fetch_when_local_already_complete(self):
+        """Local trust/dealer present → no T86; Turso push still sees the gap."""
+        collector.get_conn().close()
+        con = sqlite3.connect(self.db)
+        with con:
+            con.execute(
+                "INSERT INTO foreign_daily VALUES (?,?,?,?,?,?)",
+                ("2026-01-05", "2330", "台積電", 1, 1, 0),
+            )
+            con.execute(
+                "INSERT INTO trust_daily VALUES (?,?,?,?,?,?)",
+                ("2026-01-05", "2330", "台積電", 1, 0, 1),
+            )
+            con.execute(
+                "INSERT INTO dealer_daily VALUES (?,?,?,?,?,?)",
+                ("2026-01-05", "2330", "台積電", 1, 0, 1),
+            )
+        con.close()
+        remote = {
+            "foreign_daily": {"2026-01-05"},
+            "trust_daily": set(),
+            "dealer_daily": set(),
+        }
+        conn = collector.get_conn()
+        try:
+            missing = backfill.missing_institutional_dates(conn, remote_dates=remote)
+            days = backfill.institutional_push_days(
+                conn, date(2026, 8, 31), remote_dates=remote, default=14,
+            )
+        finally:
+            conn.close()
+        self.assertEqual(missing, [])
+        self.assertGreaterEqual(days, (date(2026, 8, 31) - date(2026, 1, 5)).days)
+
+    def test_institutional_gaps_fetches_turso_only_foreign_dates(self):
+        collector.get_conn().close()
+        con = sqlite3.connect(self.db)
+        with con:
+            con.execute(
+                "INSERT INTO foreign_daily VALUES (?,?,?,?,?,?)",
+                ("2026-08-31", "2330", "台積電", 1, 1, 0),
+            )
+            con.execute(
+                "INSERT INTO trust_daily VALUES (?,?,?,?,?,?)",
+                ("2026-08-31", "2330", "台積電", 1, 0, 1),
+            )
+            con.execute(
+                "INSERT INTO dealer_daily VALUES (?,?,?,?,?,?)",
+                ("2026-08-31", "2330", "台積電", 1, 0, 1),
+            )
+        con.close()
+        seen = []
+
+        def fake(day):
+            seen.append(day)
+            return self._t86_day(day)
+
+        remote = {
+            "foreign_daily": {"2026-01-05", "2026-08-31"},
+            "trust_daily": {"2026-08-31"},
+            "dealer_daily": {"2026-08-31"},
+        }
+        with patch.object(backfill, "fetch_t86", side_effect=fake), \
+             patch.object(backfill.time, "sleep"):
+            n = backfill.backfill_institutional_gaps(
+                today=date(2026, 8, 31), remote_dates=remote,
+            )
+        self.assertEqual(seen, [date(2026, 1, 5)])
+        self.assertEqual(n, 1)
+        self.assertEqual(
+            self.rows("SELECT trust_net FROM trust_daily WHERE trade_date=?",
+                      ("2026-01-05",))[0][0],
+            2,
+        )
+
+    def test_institutional_days_window_filters_turso_remote_dates(self):
+        collector.get_conn().close()
+        remote = {
+            "foreign_daily": {"2026-01-05", "2026-08-31"},
+            "trust_daily": set(),
+            "dealer_daily": set(),
+        }
+        conn = collector.get_conn()
+        try:
+            missing = backfill.missing_institutional_dates(
+                conn, since="2026-08-28", remote_dates=remote,
+            )
+        finally:
+            conn.close()
+        self.assertEqual(missing, ["2026-08-31"])
+
+    def test_institutional_push_days_uses_oldest_turso_gap(self):
+        collector.get_conn().close()
+        con = sqlite3.connect(self.db)
+        with con:
+            con.execute(
+                "INSERT INTO foreign_daily VALUES (?,?,?,?,?,?)",
+                ("2026-08-31", "2330", "台積電", 1, 1, 0),
+            )
+        con.close()
+        remote = {
+            "foreign_daily": {"2025-09-01", "2026-08-31"},
+            "trust_daily": {"2026-08-31"},
+            "dealer_daily": {"2026-08-31"},
+        }
+        conn = collector.get_conn()
+        try:
+            days = backfill.institutional_push_days(
+                conn, date(2026, 8, 31), remote_dates=remote, default=14,
+            )
+        finally:
+            conn.close()
+        self.assertEqual(days, (date(2026, 8, 31) - date(2025, 9, 1)).days + 7)
+
 
 # ---------------------------------------------------------------- 儀表板
 

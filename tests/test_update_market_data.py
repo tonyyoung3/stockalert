@@ -85,6 +85,41 @@ class DryRunTests(unittest.TestCase):
         self.assertEqual(code, 0)
         push.assert_called_once()
 
+    def test_institutional_gaps_push_uses_t86_tables_and_span(self):
+        tmp = Path(tempfile.mkdtemp())
+        try:
+            twse = tmp / "twse_data.db"
+            conn = sqlite3.connect(twse)
+            conn.execute("CREATE TABLE foreign_daily (trade_date TEXT)")
+            conn.execute("INSERT INTO foreign_daily VALUES ('2026-08-31')")
+            conn.commit()
+            conn.close()
+            with patch.object(umd, "run_jobs", return_value=[]), \
+                 patch.object(umd, "coverage_lines", return_value=["ok"]), \
+                 patch("data.cloud_db.configured", return_value=True), \
+                 patch("data.cloud_db.push_market_files", return_value={
+                     "twse_data.db": {"trust_daily": 10},
+                 }) as push, \
+                 patch("market.backfill.institutional_push_days", return_value=400), \
+                 patch("market.backfill.load_remote_institutional_dates",
+                       return_value={"foreign_daily": set()}), \
+                 patch("market.collector.get_conn") as gc, \
+                 patch("market.taifex_collector.get_conn") as tc, \
+                 patch("market.us_collector.get_conn") as uc, \
+                 patch("data.paths.REPO_ROOT", tmp):
+                for m in (gc, tc, uc):
+                    m.return_value.close.return_value = None
+                code = umd.main(["--institutional-gaps-only", "--exclude-today"])
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+        self.assertEqual(code, 0)
+        kwargs = push.call_args.kwargs
+        self.assertEqual(kwargs["days"], 400)
+        self.assertEqual(
+            kwargs["tables"],
+            ("foreign_daily", "trust_daily", "dealer_daily"),
+        )
+
     def test_main_skips_turso_when_asked(self):
         with patch.object(umd, "run_jobs", return_value=[]), \
              patch.object(umd, "coverage_lines", return_value=["ok"]), \

@@ -19,23 +19,17 @@
 
 資料區間約 2021-06-30 起（FinMind）。官方 BSR 下午 3–4 點才出當日。
 
-### 契約（#54，2026-09-05，路徑 A 已鎖定）
+### 契約（#54）＋ live ingest（#61，2026-09-05，路徑 A）
 
 書面定案與 API／SQL 在 **`docs/broker_branch.md`**。空表在 `collector.init_db`。
-**Live ingest 尚未實作。無 token 不可 merge live FinMind。**
 
-- **路徑 A（預設）：** 熱門前 N（`stock_daily` 最新日成交額）驅動市場 Top；同一套表給個股讀取。標題「**熱門股分點動向**」，**禁止**寫「全市場」。
+- **路徑 A（預設）：** 熱門前 N（`stock_daily` 最新日成交額，`BROKER_BRANCH_HOT_N` 預設 80）驅動市場 Top；同一套表給個股讀取。標題「**熱門股分點動向**」，**不是**全市場。
+- **Live ingest：** 有 `FINMIND_TOKEN` 時打 FinMind `TaiwanStockTradingDailyReportSecIdAgg`，寫入 `broker_branch_daily` / `brokers`。週一至週五約 21:00 台灣時間（`update_broker_branch.yml`）。無 token：不打 FinMind，API 維持 empty／connect-token。
 - **路徑 B（備案）：** 單檔 on-demand、市場不排行。主人之後才可能改選；**不要當預設實作**。
 
-無 token：不打 FinMind；fixture 僅 TEST/DEV（`python -m market.broker_branch load-fixture --dev`），不可當 production merge。
+Fixture 僅 TEST/DEV（`python -m market.broker_branch load-fixture --dev`），不可當 production merge，也不可當 Turso 正式行情。
 
-#57 個股 tab UI 殼：選股後讀 `/api/broker_branch/stock`，未選股／token／該檔無列都要誠實空狀態。不實作 #56。
-
-### 建議做法（ingest 等裁示後）
-
-1. 有 FinMind token：接 `TaiwanStockTradingDailyReportSecIdAgg`（指定個股分點排行），或 SponsorPro 整日 parquet 再 `GROUP BY` 分點算買賣超。
-2. 沒有 token：不要先爬 BSR（驗證碼 + 2000 檔）。除非只做少數指定個股。
-3. 存庫用 `(trade_date, stock_id, broker_id)` 日彙總，不要存價位明細。
+#57 個股 tab UI 殼：選股後讀 `/api/broker_branch/stock`，未選股／token／該檔無列都要誠實空狀態。#56 下鑽等 live 列入庫後再派。
 
 ### 不做（除非上面走不通）
 

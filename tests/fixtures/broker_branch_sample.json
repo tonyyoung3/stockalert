@@ -1,5 +1,5 @@
 {
-  "_comment": "TEST/DEV fixture only for #55 UI parallel and unit tests. Not production. Do not merge these rows as live FinMind data. Do not push to Turso as a real feed. live_ingest is always false.",
+  "_comment": "TEST/DEV fixture only for #55 UI parallel and unit tests. Not production. Do not merge these rows as live FinMind data. Do not push to Turso as a real feed. load-fixture keeps live_ingest false.",
   "production": false,
   "data_mode": "dev_fixture",
   "coverage": "hot_n",

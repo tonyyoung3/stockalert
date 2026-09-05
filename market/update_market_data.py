@@ -137,6 +137,7 @@ def coverage_lines(twse_path: Path, us_path: Path) -> list[str]:
                 "taifex_opt_oi",
                 "broker_branch_daily",
                 "brokers",
+                "broker_branch_meta",
             ):
                 n, lo, hi = _table_span(conn, table)
                 lines.append(f"{table}: {n:,} rows, {lo or '–'} ~ {hi or '–'}")

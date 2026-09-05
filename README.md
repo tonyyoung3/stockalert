@@ -49,7 +49,7 @@ Slack bot 預設只認 ticker / help。設 `HARNESS_ENABLED=1` 且有 API key，
 python -m unittest discover -s tests -v
 ```
 
-PTT 股板週報跟 Reddit 投資想法週報都是本機整理、印到 stdout（可加 `--json`）。`python -m notify.daily_digest` 抓近 1 天重點（PTT 題材／標的／盤後閒聊，Reddit DD）打到同一個 Slack channel。GitHub Actions 每天 **22:00 台灣時間** 跑（排程只在 `main`；沒 merge 不會送）。Reddit 預設看 r/SecurityAnalysis、r/ValueInvesting、r/investing、r/stocks、r/wallstreetbets；WSB 只收 DD / 研究類 flair。雲端 IP 常被 Reddit 擋（403），會改走 [Arctic Shift](https://arctic-shift.photon-reddit.com) 封存。分點買賣超契約在 `docs/broker_branch.md`（#54）。v1 是**熱門股**分點動向（成交額前 N 驅動市場 Top，同表可讀個股），**不是**全市場、也**不是** T86 外資。空表已建；**無 FinMind token、尚未 live ingest**（無 token 不 merge live）。#55 可用 stub API 或本機 `python -m market.broker_branch load-fixture --dev`（TEST/DEV，不是 production）。
+PTT 股板週報跟 Reddit 投資想法週報都是本機整理、印到 stdout（可加 `--json`）。`python -m notify.daily_digest` 抓近 1 天重點（PTT 題材／標的／盤後閒聊，Reddit DD）打到同一個 Slack channel。GitHub Actions 每天 **22:00 台灣時間** 跑（排程只在 `main`；沒 merge 不會送）。Reddit 預設看 r/SecurityAnalysis、r/ValueInvesting、r/investing、r/stocks、r/wallstreetbets；WSB 只收 DD / 研究類 flair。雲端 IP 常被 Reddit 擋（403），會改走 [Arctic Shift](https://arctic-shift.photon-reddit.com) 封存。分點買賣超契約在 `docs/broker_branch.md`（#54 / #61）。v1 是**熱門股**分點動向（成交額前 N 驅動市場 Top，同表可讀個股），**不是**全市場、也**不是** T86 外資。有 `FINMIND_TOKEN` 時週一至週五約 **21:00 台灣時間**跑 `python -m market.broker_branch ingest`（熱門前 N，預設 80）。無 token 時 API 維持空狀態／請接 token，不會假裝行情。本機 fixture：`python -m market.broker_branch load-fixture --dev`（TEST/DEV，不是 production）。
 
 ## 台股資料收集器
 
@@ -186,7 +186,7 @@ gcloud run deploy stockalert \
 
 Header **顯示範圍**（全域 `days`）只影響加權 K 線／走勢、外資合計、融資融券、台指期未平倉、個股圖。外資買賣超排行用自己的當日／近 N 日／自訂區間，不受全域天數控制。
 
-市場 tab 另有獨立卡 **「熱門股分點動向」**（不是「全市場」、也不是 T86 外資排行）：買超／賣超分點 Top 讀 `GET /api/broker_branch/top`，新鮮度讀 `GET /api/broker_branch/freshness`（21:00 截止，不併入 `/api/freshness`）。無 token／空表顯示「尚未接上 FinMind token」，不是空白圖。手機兩塊列表直向堆疊、各自捲動。本機可用 `python -m market.broker_branch load-fixture --dev` 看示範列，**不要**把 fixture 當 production。
+市場 tab 另有獨立卡 **「熱門股分點動向」**（不是「全市場」、也不是 T86 外資排行）：買超／賣超分點 Top 讀 `GET /api/broker_branch/top`，新鮮度讀 `GET /api/broker_branch/freshness`（21:00 截止，不併入 `/api/freshness`）。有 token 且已 ingest 時顯示熱門前 N 真實列；無 token／空表顯示「尚未接上 FinMind token」，不是空白圖。手機兩塊列表直向堆疊、各自捲動。本機可用 `python -m market.broker_branch load-fixture --dev` 看示範列，**不要**把 fixture 當 production。
 
 個股 tab 在外資圖旁有獨立卡 **「券商分點買賣超」**：選股後（含 `?stock=` / `selectStock`）讀 `GET /api/broker_branch/stock?id=`（可帶 `date`）。未選股先引導選股；無 token 用與市場卡相同的「尚未接上 FinMind token」文案；該檔不在熱門前 N 則明示空狀態，不是空白圖。同樣標 FinMind 分點約 21:00、不是 T86，**禁止**寫「全市場」。
 

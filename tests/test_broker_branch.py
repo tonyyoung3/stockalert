@@ -49,7 +49,7 @@ class SchemaTests(unittest.TestCase):
             {r[1] for r in info if r[5]},
             {"trade_date", "stock_id", "broker_id"},
         )
-        indexes = {r[1] for r in con.execute(
+        indexes = {r[0] for r in con.execute(
             "SELECT name FROM sqlite_master WHERE type='index'")}
         self.assertIn("idx_broker_branch_date_net", indexes)
         self.assertIn("idx_broker_branch_stock_date", indexes)

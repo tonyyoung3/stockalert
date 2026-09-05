@@ -110,17 +110,59 @@ python -m market.us_collector hourly
 
 儀表板可以丟上 Cloud Run：閒置不計費，有人打開才跑。區域選 `us-central1`（或 `us-east1` / `us-west1`）才算免費額度。
 
-先在本機確認 Turso 已有資料（`python -m data.cloud_db status`），再：
+### 存取控制（必設再開公網）
+
+這是個人研究工具。`DASHBOARD_USER` 與 `DASHBOARD_PASSWORD` **兩個都有非空值**時，啟用 HTTP Basic Auth：
+
+- 受保護：HTML（`/`、`/index.html`）與所有 `/api/*`（含 `POST /api/backtest`）
+- 永遠開放：`GET /health`（Cloud Run 探活；HTTP 200 + freshness JSON，與今天相同）
+- 未帶帳密或密碼錯誤：HTTP **401**，`WWW-Authenticate: Basic realm="stockalert"`，內容只有通用 `{"error":"unauthorized"}`（不回內部路徑、DB、stack）
+- 瀏覽器對同網域的 `/api/*` 與回測 `fetch` 會自動帶 Basic（前端用 `credentials: 'same-origin'`，**不要把密碼寫進 JS**）
+- Auth 開啟時，`POST /api/backtest` 另有簡易記憶體限流（每 IP 每分鐘約 10 次）
+
+**任一變數未設：不做驗證。** 只適合本機；**不要在沒設這兩個變數的情況下公開部署**。Cloud Run IAM 維持 `--allow-unauthenticated` 沒問題——那只表示任何人打得到服務，擋人的是應用層 Basic。IAM 全開 + 應用層 Basic 是個人部署的預期組合；沒設 Basic 環境變數時，網站是全開的。
+
+本機（無驗證，僅本機）：
+
+```bash
+python -m web.dashboard
+```
+
+本機也要登入時：
+
+```bash
+DASHBOARD_USER=me DASHBOARD_PASSWORD=change-me python -m web.dashboard
+```
+
+先在本機確認 Turso 已有資料（`python -m data.cloud_db status`），再建 Secret（或直接用 env，較不建議）：
+
+```bash
+printf '%s' "$DASHBOARD_USER" | gcloud secrets create DASHBOARD_USER --data-file=-
+printf '%s' "$DASHBOARD_PASSWORD" | gcloud secrets create DASHBOARD_PASSWORD --data-file=-
+```
+
+已存在的 secret 用 `gcloud secrets versions add … --data-file=-`。Cloud Run 預設運算服務帳號要能讀 secret（`roles/secretmanager.secretAccessor`）。
 
 ```bash
 gcloud run deploy stockalert \
   --source . \
   --region us-central1 \
   --allow-unauthenticated \
-  --set-env-vars TURSO_DATABASE_URL="$TURSO_DATABASE_URL",TURSO_AUTH_TOKEN="$TURSO_AUTH_TOKEN"
+  --set-env-vars TURSO_DATABASE_URL="$TURSO_DATABASE_URL",TURSO_AUTH_TOKEN="$TURSO_AUTH_TOKEN" \
+  --set-secrets DASHBOARD_USER=DASHBOARD_USER:latest,DASHBOARD_PASSWORD=DASHBOARD_PASSWORD:latest
 ```
 
-會給一個 `*.run.app` 網址。設了那兩個 Turso 變數就讀雲端，不帶本機 `twse_data.db`。回測會把需要的表快照進暫存 sqlite，pandas 不用改。
+或把帳密一併寫進環境變數（會出現在服務設定裡，只建議暫時用）：
+
+```bash
+gcloud run deploy stockalert \
+  --source . \
+  --region us-central1 \
+  --allow-unauthenticated \
+  --set-env-vars TURSO_DATABASE_URL="$TURSO_DATABASE_URL",TURSO_AUTH_TOKEN="$TURSO_AUTH_TOKEN",DASHBOARD_USER="$DASHBOARD_USER",DASHBOARD_PASSWORD="$DASHBOARD_PASSWORD"
+```
+
+會給一個 `*.run.app` 網址。設了那兩個 Turso 變數就讀雲端，不帶本機 `twse_data.db`。回測會把需要的表快照進暫存 sqlite，pandas 不用改。既有服務在 merge 後也要把 `DASHBOARD_USER` / `DASHBOARD_PASSWORD` 設成 secret 或 env，否則站點仍全開。
 
 ### 資料新鮮度與 `/health`
 

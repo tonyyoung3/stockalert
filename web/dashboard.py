@@ -1896,9 +1896,9 @@ function btFillAddMenu(){
   if(!sel) return;
   sel.innerHTML = BT_FILTER_CATALOG.map(c=>{
     const taken = used.has(c.type);
-    const blocked = intra && c.closeDecided;
-    const note = taken ? '（已加入）' : (blocked ? '（日內不可用）' : '');
-    return '<option value="'+c.type+'"'+(taken||blocked?' disabled':'')+'>'+c.label+note+'</option>';
+    const warn = intra && c.closeDecided && !taken;
+    const note = taken ? '（已加入）' : (warn ? '（日內會收合,不套用）' : '');
+    return '<option value="'+c.type+'"'+(taken?' disabled':'')+'>'+c.label+note+'</option>';
   }).join('');
   const btn = document.getElementById('bt-add-filter-btn');
   if(btn) btn.disabled = ![...sel.options].some(o=>!o.disabled);
@@ -1929,7 +1929,6 @@ function btAddFilter(){
   const type = sel && sel.value;
   const spec = btCatalog(type);
   if(!spec || btFilters.some(b=>b.type===type)) return;
-  if(btMode()==='intraday' && spec.closeDecided) return;
   btFilters.push({id:btFilterSeq++, type:type, params:Object.assign({}, spec.defaults)});
   btRenderFilters();
 }
@@ -2280,6 +2279,12 @@ btRenderFilters();
 function loadAll(){ loadSummary(); loadKline(); loadTaiex(); loadMargin(); loadNet(); loadTaifexOi(); loadTop();
   loadAlerts(); loadPerformance();
   if(stockId) loadStock(); }
+function btApplyMobileBlockFolds(){
+  const mobile = window.matchMedia('(max-width:768px)').matches;
+  document.querySelectorAll('#bt-filter-blocks details.bt-block').forEach(el=>{
+    if(mobile || el.classList.contains('is-incompat')) el.open = false;
+  });
+}
 function initBtFolds(){
   const mobile = window.matchMedia('(max-width:768px)').matches;
   document.querySelectorAll('details[data-bt-fold]').forEach(el=>{
@@ -2287,7 +2292,11 @@ function initBtFolds(){
     if(key==='dataset'){ el.open = true; return; }
     if(key==='filters' || key==='entry' || key==='exit') el.open = !mobile;
   });
+  btApplyMobileBlockFolds();
 }
+window.matchMedia('(max-width:768px)').addEventListener('change', ()=>{
+  initBtFolds();
+});
 window.addEventListener('resize', resizeCharts);
 (function(){
   const id = parseStockQuery(location.search);

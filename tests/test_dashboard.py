@@ -270,6 +270,8 @@ class DashboardNavTests(unittest.TestCase):
         self.assertIn("拖曳／雙指縮放", html)
         self.assertNotIn("滾輪縮放", html)
         self.assertIn("function initBtFolds(", html)
+        self.assertIn("function btApplyMobileBlockFolds(", html)
+        self.assertIn("日內會收合,不套用", html)
         self.assertIn('<details class="bt-box" data-bt-fold="filters" open>', html)
         self.assertIn('<details class="bt-box" data-bt-fold="entry" open>', html)
         self.assertIn('data-bt-fold="exit"', html)

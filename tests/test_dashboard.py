@@ -318,7 +318,8 @@ class DashboardNavTests(unittest.TestCase):
         self.assertIn("熱門股分點動向", html)
         self.assertIn("買超分點 Top", html)
         self.assertIn("賣超分點 Top", html)
-        self.assertIn("尚未接上 FinMind token", html)
+        self.assertIn("不會即時拉 FinMind", html)
+        self.assertIn("尚無入庫資料", html)
         self.assertIn("示範資料（本機 fixture）", html)
         self.assertIn("依成交額前 N 檔彙總，非全市場", html)
         self.assertIn("/api/broker_branch/top", html)
@@ -343,18 +344,22 @@ class DashboardNavTests(unittest.TestCase):
         self.assertNotIn("全市場分點", bb_card)
         self.assertNotIn("selectStock(", bb_card)
         self.assertIn("bbSafeTitle", html)
-        self.assertIn("empty_awaiting_token", html)
+        self.assertIn("BB_EMPTY_DB", html)
+        self.assertNotIn("empty_awaiting_token", html)
         title_tag = html[html.index("id=\"bb-title\""):html.index("id=\"bb-title\"") + 40]
         self.assertIn("熱門股分點動向", title_tag)
 
     def test_pm_locked_copy_gates_issue_55(self):
-        """PM copy/gates for #55: hot-N title, token empty, not T86, not 全市場."""
+        """PM copy/gates for #55: hot-N title, empty DB honesty, not T86, not 全市場."""
         html = dashboard.HTML
         card = html[html.index("id=\"broker-branch-card\""):html.index("id=\"section-stock\"")]
         self.assertIn(">熱門股分點動向</h3>", card)
         self.assertIn("依成交額前 N 檔彙總，非全市場", card)
-        self.assertIn("尚未接上 FinMind token", card)
-        self.assertIn("empty_awaiting_token", html)
+        self.assertIn("不會即時拉 FinMind", card)
+        self.assertIn("尚無入庫資料", card)
+        self.assertIn("BB_EMPTY_DB", html)
+        self.assertNotIn("empty_awaiting_token", html)
+        self.assertNotIn("尚未接上 FinMind token", html)
         self.assertIn("買超分點 Top", card)
         self.assertIn("賣超分點 Top", card)
         self.assertIn("台灣時間", html)
@@ -366,8 +371,9 @@ class DashboardNavTests(unittest.TestCase):
         self.assertNotIn("api.finmindtrade.com", html)
         self.assertNotIn("live_ingest: true", html)
         from market import broker_branch
-        self.assertFalse(broker_branch.ingest_status({}).get("live_ingest"))
-        self.assertTrue(broker_branch.ingest_status({"FINMIND_TOKEN": "x"}).get("live_ingest"))
+        self.assertFalse(broker_branch.ingest_status({}).get("ingest_configured"))
+        self.assertTrue(broker_branch.ingest_status({"FINMIND_TOKEN": "x"}).get("ingest_configured"))
+        self.assertNotIn("live_ingest", broker_branch.ingest_status({}))
         self.assertEqual(broker_branch.market_title("empty"), "熱門股分點動向")
         self.assertEqual(broker_branch.market_title("hot_n"), "熱門股分點動向")
         self.assertNotIn("全市場", broker_branch.market_title("empty"))
@@ -424,8 +430,10 @@ class DashboardNavTests(unittest.TestCase):
         self.assertIn("分點（名稱＋代號）", html)
         self.assertIn("/api/broker_branch/top", html)
         self.assertIn("/api/broker_branch/broker?broker_id=", html)
-        self.assertIn("empty_awaiting_token", html)
-        self.assertIn("尚未接上 FinMind token", card)
+        self.assertIn("BB_EMPTY_DB", html)
+        self.assertNotIn("empty_awaiting_token", html)
+        self.assertIn("不會即時拉 FinMind", card)
+        self.assertNotIn("尚未接上 FinMind token", card)
         self.assertIn(".bb-row-click", html)
         self.assertIn(".bb-drill[hidden]", html)
         self.assertIn(".bb-lists{grid-template-columns:1fr}", html)
@@ -457,17 +465,18 @@ class DashboardNavTests(unittest.TestCase):
         self.assertIn("非全市場", stock)
         self.assertIn("21:00", stock)
         self.assertIn("不是 T86", stock)
-        self.assertIn("尚未接上 FinMind token", html)
+        self.assertIn("不會即時拉 FinMind", html)
         self.assertIn("/api/broker_branch/stock?id=", html)
         self.assertIn("function loadStockBrokerBranch(", html)
         self.assertIn("loadStock(); loadStockBrokerBranch();", html)
         self.assertIn("if(stockId) loadStock();", html)
         self.assertIn("loadStockBrokerBranch();", html)
         self.assertIn("sbbSafeTitle", html)
-        self.assertIn("empty_awaiting_token", html)
+        self.assertIn("BB_EMPTY_DB", html)
+        self.assertNotIn("empty_awaiting_token", html)
         self.assertIn("SBB_EMPTY_NODATA", html)
         self.assertIn("SBB_EMPTY_PICK", html)
-        self.assertIn("BB_EMPTY_TOKEN", html)
+        self.assertNotIn("BB_EMPTY_TOKEN", html)
         self.assertLess(stock.index('id="stock-lookup"'), stock.index('id="stock-broker-branch-card"'))
         self.assertNotIn("<canvas", stock[stock.index("id=\"stock-broker-branch-card\""):])
         self.assertNotIn("ticker-link", stock[stock.index("id=\"stock-broker-branch-card\""):])
@@ -478,7 +487,7 @@ class DashboardNavTests(unittest.TestCase):
         self.assertNotIn("live_ingest: true", html)
 
     def test_pm_locked_copy_gates_issue_57(self):
-        """PM copy/gates for #57: stock-tab card, token empty, hot-N empty, no 全市場."""
+        """PM copy/gates for #57: stock-tab card, empty DB honesty, hot-N empty, no 全市場."""
         html = dashboard.HTML
         stock = html[html.index('id="section-stock"'):html.index('id="section-scanner"')]
         card = stock[stock.index('id="stock-broker-branch-card"'):]
@@ -491,10 +500,11 @@ class DashboardNavTests(unittest.TestCase):
         self.assertIn("?stock=", card)
         self.assertIn("熱門前 N 檔才會入庫", html)
         self.assertIn("不是空白圖表", html)
-        self.assertIn("尚未接上 FinMind token", html)
-        self.assertIn("empty_awaiting_token", html)
+        self.assertIn("不會即時拉 FinMind", html)
+        self.assertNotIn("尚未接上 FinMind token", html)
+        self.assertNotIn("empty_awaiting_token", html)
         self.assertIn("function sbbEmptyCopy(", html)
-        self.assertIn("if(!mode || mode==='empty_awaiting_token') return BB_EMPTY_TOKEN;", html)
+        self.assertIn("return BB_EMPTY_DB;", html)
         self.assertIn("return SBB_EMPTY_NODATA;", html)
         self.assertIn("示範資料（本機 fixture）", card)
         self.assertIn("買超分點 Top", card)
@@ -506,7 +516,7 @@ class DashboardNavTests(unittest.TestCase):
         self.assertNotIn("api.finmindtrade.com", html)
         self.assertNotIn("live_ingest: true", html)
         from market import broker_branch
-        self.assertFalse(broker_branch.ingest_status({}).get("live_ingest"))
+        self.assertFalse(broker_branch.ingest_status({}).get("ingest_configured"))
         self.assertEqual(broker_branch.market_title("single_stock"), "個股分點買賣超")
         self.assertNotIn("全市場", broker_branch.market_title("single_stock"))
 

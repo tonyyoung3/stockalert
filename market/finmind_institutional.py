@@ -32,7 +32,12 @@ from typing import Iterable
 
 import requests
 
-from market.broker_branch import FinMindError, finmind_headers, token_value
+from market.broker_branch import (
+    FinMindError,
+    finmind_headers,
+    require_finmind_http,
+    token_value,
+)
 from market.collector import T86Tables
 
 log = logging.getLogger(__name__)
@@ -219,7 +224,9 @@ def fetch_institutional_day(
     """One FinMind v4/data call. All-stocks when stock_id is omitted.
 
     Token is Bearer-only. Never log it. Caller must pace between dates.
+    CLI / Actions only — dashboard request context refuses.
     """
+    require_finmind_http()
     if not token:
         raise FinMindError("FINMIND_TOKEN missing; refusing to call FinMind")
     params = {

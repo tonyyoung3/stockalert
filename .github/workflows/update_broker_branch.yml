@@ -64,7 +64,7 @@ jobs:
         run: |
           set -o pipefail
           if [ -z "${FINMIND_TOKEN}" ]; then
-            echo "FINMIND_TOKEN is not set; refusing to call FinMind (honest empty / connect-token)."
+            echo "FINMIND_TOKEN is not set; refusing to call FinMind. Dashboard reads DB only."
             exit 2
           fi
           DATE_ARG=""

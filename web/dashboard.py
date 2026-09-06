@@ -636,6 +636,8 @@ def health_payload() -> dict:
 
 
 def api(path, qs):
+    # Actions write, service reads: no FinMind HTTP on this request (#108).
+    finmind_token = broker_branch_mod.forbid_request_time_finmind()
     conn = market_db.connect()
     token = _request_conn.set(conn)
     try:
@@ -643,6 +645,7 @@ def api(path, qs):
     finally:
         _request_conn.reset(token)
         conn.close()
+        broker_branch_mod.reset_request_time_finmind(finmind_token)
 
 
 def _api(path, qs):

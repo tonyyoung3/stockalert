@@ -381,7 +381,7 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
   <p class="bb-sub" id="bb-sub">依成交額前 N 檔彙總，非全市場。來源 FinMind 分點（約 21:00），不是證交所 T86 外資排行。</p>
   <div class="bb-fresh" id="bb-fresh" role="status">分點新鮮度獨立於 T86（21:00 截止）。載入中…</div>
   <div class="bb-warn" id="bb-fixture-warn" hidden>示範資料（本機 fixture），不是已接上的 FinMind 行情。</div>
-  <div class="bb-empty" id="bb-empty">尚未接上 FinMind token。熱門股分點動向需接上 token 後才會依成交額前 N 檔彙總，不會假裝沒有行情。這不是 T86 外資排行。</div>
+  <div class="bb-empty" id="bb-empty">熱門股分點尚無入庫資料（依成交額前 N 檔彙總，非全市場）。由 GitHub Actions 約 21:00 寫入，網站只讀資料庫、不會即時拉 FinMind。這不是 T86 外資排行。</div>
   <div class="bb-lists" id="bb-lists" hidden>
     <div class="bb-list-wrap">
       <h3 id="bb-buy-h">買超分點 Top</h3>
@@ -2878,7 +2878,7 @@ async function loadTop(){
 }
 
 const BB_TITLE = '熱門股分點動向';
-const BB_EMPTY_TOKEN = '尚未接上 FinMind token。熱門股分點動向需接上 token 後才會依成交額前 N 檔彙總，不會假裝沒有行情。這不是 T86 外資排行。';
+const BB_EMPTY_DB = '熱門股分點尚無入庫資料（依成交額前 N 檔彙總，非全市場）。由 GitHub Actions 約 21:00 寫入，網站只讀資料庫、不會即時拉 FinMind。這不是 T86 外資排行。';
 const BB_EMPTY_NODATA = '熱門股分點尚無資料（依成交額前 N 檔彙總，非全市場）。不是 T86 外資、也不是空白圖表。';
 const BB_DRILL_UNSUPPORTED = '此切片未支援。下鑽只看當日已入庫熱門前 N 檔，近 N 日累計請改選「當日」。';
 const BB_DRILL_EMPTY = '此分點在熱門前 N 檔內沒有貢獻標的。不是空白圖表，也不是 T86 外資。';
@@ -2906,8 +2906,8 @@ function bbSafeTitle(title){
 }
 function bbEmptyCopy(top, fresh){
   const mode = (top && top.data_mode) || (fresh && fresh.data_mode) || '';
-  const token = !!(top && top.token_present) || !!(fresh && fresh.token_present);
-  if(!token || mode==='empty_awaiting_token') return BB_EMPTY_TOKEN;
+  const f = (fresh && fresh.empty) || (top && top.freshness && top.freshness.empty);
+  if(!mode || mode==='empty' || f) return BB_EMPTY_DB;
   return BB_EMPTY_NODATA;
 }
 function renderBbFresh(fresh, top){
@@ -3138,7 +3138,7 @@ async function loadBrokerBranch(){
   } catch(e){
     bbLastTop = null;
     if(titleEl) titleEl.textContent = BB_TITLE;
-    if(emptyEl){ emptyEl.hidden = false; emptyEl.textContent = BB_EMPTY_TOKEN; }
+    if(emptyEl){ emptyEl.hidden = false; emptyEl.textContent = BB_EMPTY_DB; }
     if(listsEl) listsEl.hidden = true;
     if(warnEl) warnEl.hidden = true;
     const hintEl = document.getElementById('bb-drill-hint');
@@ -3186,9 +3186,10 @@ function renderSbbFresh(fresh, stock){
 }
 function sbbEmptyCopy(stock, fresh){
   const mode = (stock && stock.data_mode) || (fresh && fresh.data_mode) || '';
-  // Empty table / no ingest → same token copy as the market card.
+  const f = (fresh && fresh.empty) || (stock && stock.freshness && stock.freshness.empty);
+  // Empty table / no ingest → same DB-honesty copy as the market card.
   // Table has rows (dev_fixture or later live) but this ticker is absent → hot-N miss.
-  if(!mode || mode==='empty_awaiting_token') return BB_EMPTY_TOKEN;
+  if(!mode || mode==='empty' || f) return BB_EMPTY_DB;
   return SBB_EMPTY_NODATA;
 }
 async function loadStockBrokerBranch(){
@@ -3253,7 +3254,7 @@ async function loadStockBrokerBranch(){
     renderBbList('sbb-sell', sell);
   } catch(e){
     if(titleEl) titleEl.textContent = SBB_TITLE;
-    if(emptyEl){ emptyEl.hidden = false; emptyEl.textContent = BB_EMPTY_TOKEN; }
+    if(emptyEl){ emptyEl.hidden = false; emptyEl.textContent = BB_EMPTY_DB; }
     if(listsEl) listsEl.hidden = true;
     if(warnEl) warnEl.hidden = true;
     const freshEl = document.getElementById('sbb-fresh');

@@ -19,17 +19,17 @@
 
 資料區間約 2021-06-30 起（FinMind）。官方 BSR 下午 3–4 點才出當日。
 
-### 契約（#54）＋ live ingest（#61，2026-09-05，路徑 A）
+### 契約（#54）＋ 排程 ingest（#61／#108，路徑 A）
 
 書面定案與 API／SQL 在 **`docs/broker_branch.md`**。空表在 `collector.init_db`。
 
 - **路徑 A（預設）：** 熱門前 N（`stock_daily` 最新日成交額，`BROKER_BRANCH_HOT_N` 預設 80）驅動市場 Top；同一套表給個股讀取。標題「**熱門股分點動向**」，**不是**全市場。
-- **Live ingest：** 有 `FINMIND_TOKEN` 時打 FinMind `TaiwanStockTradingDailyReportSecIdAgg`，寫入 `broker_branch_daily` / `brokers`。週一至週五約 21:00 台灣時間（`update_broker_branch.yml`）。無 token：不打 FinMind，API 維持 empty／connect-token。
-- **路徑 B（備案）：** 單檔 on-demand、市場不排行。主人之後才可能改選；**不要當預設實作**。
+- **Actions 寫、服務讀：** `FINMIND_TOKEN` 只給 GitHub Actions／`python -m market.broker_branch ingest`。週一至週五約 21:00（`update_broker_branch.yml`）。Dashboard／API **請求時不打 FinMind**。無列 → empty／freshness，不是網站 live fetch。`ingest_configured` = 此行程有 token 可排程寫入。
+- **路徑 B（備案）：** 單檔 on-demand、市場不排行。主人之後才可能改選；**不要當預設，也不可從 HTTP 呼叫**。
 
 Fixture 僅 TEST/DEV（`python -m market.broker_branch load-fixture --dev`），不可當 production merge，也不可當 Turso 正式行情。
 
-#57 個股 tab UI 殼：選股後讀 `/api/broker_branch/stock`，未選股／token／該檔無列都要誠實空狀態。
+#57 個股 tab UI 殼：選股後讀 `/api/broker_branch/stock`，未選股／空表／該檔無列都要誠實空狀態。
 #56 市場卡下鑽：點當日分點列 → `GET /api/broker_branch/broker` 熱門前 N 貢獻標的；近 N 日累計「此切片未支援」。不另開 ingest。
 
 ### 不做（除非上面走不通）

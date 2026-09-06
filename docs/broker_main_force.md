@@ -1,6 +1,6 @@
 # 熱門股分點主力 — 掃描衍生指標（#98 / epic #76）
 
-**狀態：query-time 契約 + 掃描工作台面板（#101）。** 只讀路徑 A 已入庫的 `broker_branch_daily`（熱門前 N）。**零 FinMind 增量**。標題鎖定「**熱門股分點動向**」，禁止寫「全市場」。掃描工作台另塊面板讀本 API，與 chip_zscore 散布圖分開；同一套 `tickers`+`asof`。
+**狀態：query-time 契約 + 掃描工作台面板（#101）。** 只讀路徑 A 已入庫的 `broker_branch_daily`（熱門前 N）。**零 FinMind 呼叫**（Actions 寫、服務讀；#108）。標題鎖定「**熱門股分點動向**」，禁止寫「全市場」。掃描工作台另塊面板讀本 API，與 chip_zscore 散布圖分開；同一套 `tickers`+`asof`。
 
 來源：DE 評估 #85（零額度衍生）。資料契約見 `docs/broker_branch.md`。
 

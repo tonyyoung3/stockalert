@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
-"""Broker-branch (分點買賣超) — path A live ingest + read APIs.
+"""Broker-branch (分點買賣超) — path A scheduled ingest + read APIs.
 
-Path A (#61 / #54 / #53): 熱門前 N powers market Top; same tables
+Path A (#61 / #54 / #53 / #108): 熱門前 N powers market Top; same tables
 for single-stock reads. Titles say 熱門股, never 全市場.
 
-Live ingest reads FINMIND_TOKEN from env / local .env (never log it)
-and writes TaiwanStockTradingDailyReportSecIdAgg day aggregates into
-broker_branch_daily / brokers. Without a token the APIs stay honest
-empty / connect-token. Fixture load is TEST/DEV only.
-See docs/broker_branch.md.
+**Actions write, service reads.** FinMind HTTP runs only from
+`python -m market.broker_branch ingest` (GitHub Actions /
+``.github/workflows/update_broker_branch.yml``) or a scheduled CLI.
+Dashboard / API request handlers never call FinMind. Empty tables stay
+honest empty + freshness. ``ingest_configured`` means this process has
+FINMIND_TOKEN for *scheduled* ingest — not website live fetch.
+
+Fixture load is TEST/DEV only. See docs/broker_branch.md.
 """
 from __future__ import annotations
 
@@ -19,6 +22,7 @@ import os
 import sqlite3
 import sys
 import time
+from contextvars import ContextVar
 from datetime import date, datetime
 from pathlib import Path
 
@@ -46,8 +50,7 @@ TITLE_HOT_N = "熱門股分點動向"
 TITLE_FULL_MARKET = "全市場分點買賣超"
 TITLE_STOCK = "個股分點買賣超"
 
-DATA_MODE_EMPTY = "empty_awaiting_token"
-DATA_MODE_EMPTY_LIVE = "empty"
+DATA_MODE_EMPTY = "empty"
 DATA_MODE_FIXTURE = "dev_fixture"
 DATA_MODE_LIVE = "live"
 PATH = "A"
@@ -56,9 +59,20 @@ SOURCE_LIVE = "live"
 SOURCE_FIXTURE = "dev_fixture"
 
 BLOCKER = (
-    "FINMIND_TOKEN absent from GitHub secrets and local env. "
-    "Path A is locked (熱門前 N market Top; same tables for stock reads). "
-    "No live FinMind merge without a token."
+    "FINMIND_TOKEN absent from this process. "
+    "Scheduled ingest (GitHub Actions / `python -m market.broker_branch ingest`) "
+    "needs the secret. Dashboard/API never call FinMind. "
+    "Path A is locked (熱門前 N market Top; same tables for stock reads)."
+)
+REQUEST_TIME_REFUSAL = (
+    "FinMind HTTP is not allowed on dashboard/API request. "
+    "Actions write; service reads. Use `python -m market.broker_branch ingest`."
+)
+
+# Default True so CLI ingest / unit tests work. dashboard.api() sets False
+# for the request ContextVar so Path B / request-time fetch cannot run.
+_finmind_http_allowed: ContextVar[bool] = ContextVar(
+    "finmind_http_allowed", default=True
 )
 
 SCHEMA_SQL = """
@@ -126,6 +140,25 @@ def token_present(env: dict[str, str] | None = None) -> bool:
     return bool(token_value(env))
 
 
+def finmind_http_allowed() -> bool:
+    """False inside dashboard.api(); True for CLI ingest / tests."""
+    return bool(_finmind_http_allowed.get())
+
+
+def forbid_request_time_finmind():
+    """Disable FinMind HTTP for this request context. Returns a reset token."""
+    return _finmind_http_allowed.set(False)
+
+
+def reset_request_time_finmind(token) -> None:
+    _finmind_http_allowed.reset(token)
+
+
+def require_finmind_http() -> None:
+    if not finmind_http_allowed():
+        raise FinMindError(REQUEST_TIME_REFUSAL)
+
+
 def configured_hot_n(env: dict[str, str] | None = None) -> int:
     raw = (_env(env).get("BROKER_BRANCH_HOT_N") or "").strip()
     if not raw:
@@ -146,19 +179,22 @@ def market_title(coverage: str) -> str:
 
 
 def ingest_status(env: dict[str, str] | None = None) -> dict:
+    """Token / path metadata. Does not fetch. ingest_configured ≠ website live."""
     present = token_present(env)
     return {
         "kind": "broker_branch",
         "not": "t86_foreign",
         "dataset": DATASET,
         "token_present": present,
-        "live_ingest": present,
+        "ingest_configured": present,
         "path": PATH,
         "slice_decision": SLICE_DECISION,
         "blocker": None if present else BLOCKER,
         "hot_n": configured_hot_n(env),
         "hot_n_default": DEFAULT_HOT_N,
         "expected_after_hour": EXPECTED_AFTER_HOUR,
+        "writes": "actions_or_cli",
+        "reads": "db",
     }
 
 
@@ -270,7 +306,9 @@ def data_mode(conn: sqlite3.Connection, env: dict[str, str] | None = None) -> st
     production ingest as 示範 fixture.
     """
     if not row_count(conn):
-        return DATA_MODE_EMPTY_LIVE if token_present(env) else DATA_MODE_EMPTY
+        # Empty is empty. Cloud Run usually has no FINMIND_TOKEN; that does
+        # not mean the website is "awaiting token" to live-fetch.
+        return DATA_MODE_EMPTY
     source = _meta_get(conn, "source")
     if source == SOURCE_LIVE:
         return DATA_MODE_LIVE
@@ -312,13 +350,14 @@ def _envelope(
     mode = data_mode(conn, env)
     slice_day = _meta_get(conn, "slice_trade_date") or latest_stock_daily_date(conn)
     if coverage == "hot_n":
-        note = "加總範圍是已入庫的熱門前 N 檔，不是全市場。"
+        note = "加總範圍是已入庫的熱門前 N 檔，不是全市場。網站只讀資料庫，不即時拉 FinMind。"
     elif coverage == "single_stock":
-        note = "該檔讀已入庫熱門前 N 列，不是全市場、也不是 on-demand 拉檔。"
-    elif token_present(env):
-        note = "路徑 A 空狀態：已接 token，熱門前 N 尚無列。標題是熱門股，不是全市場。"
+        note = "該檔讀已入庫熱門前 N 列，不是全市場、也不是 on-demand 拉檔。網站只讀資料庫。"
     else:
-        note = "路徑 A 空狀態：請接 FINMIND_TOKEN。標題是熱門股，不是全市場。"
+        note = (
+            "路徑 A 空狀態：熱門前 N 尚無入庫列。網站只讀資料庫，不即時拉 FinMind。"
+            "標題是熱門股，不是全市場。"
+        )
     body = {
         **status,
         "title": market_title(coverage),
@@ -589,7 +628,7 @@ def load_fixture(
         "brokers": len(brokers),
         "rows": len(upsert),
         "data_mode": DATA_MODE_FIXTURE,
-        "live_ingest": False,
+        "ingest_configured": False,
         "production": False,
     }
 
@@ -627,7 +666,11 @@ def fetch_secid_agg(
     session: requests.Session | None = None,
     sleep: callable = time.sleep,
 ) -> list[dict]:
-    """GET SecIdAgg for one stock_id. Token is Bearer-only, never logged."""
+    """GET SecIdAgg for one stock_id. Token is Bearer-only, never logged.
+
+    CLI / Actions only. Dashboard request context raises REQUEST_TIME_REFUSAL.
+    """
+    require_finmind_http()
     if not token:
         raise FinMindError("FINMIND_TOKEN missing; refusing to call FinMind")
     params = {
@@ -762,14 +805,16 @@ def ingest_hot_n(
     fetcher=None,
     now: datetime | None = None,
 ) -> dict:
-    """Path A live ingest: hot-N from stock_daily.turnover, then SecIdAgg.
+    """Path A scheduled ingest: hot-N from stock_daily.turnover, then SecIdAgg.
 
-    Does not load the TEST/DEV fixture. Refuses without FINMIND_TOKEN.
+    CLI / Actions only. Does not load the TEST/DEV fixture.
+    Refuses without FINMIND_TOKEN and refuses on dashboard/API request.
     """
+    require_finmind_http()
     token = token_value(env)
     if not token:
         raise FinMindError(
-            "FINMIND_TOKEN missing; path A live ingest will not call FinMind"
+            "FINMIND_TOKEN missing; path A scheduled ingest will not call FinMind"
         )
     n = configured_hot_n(env) if n is None else max(1, min(int(n), HOT_N_MAX))
     days = max(1, min(int(days), 730))
@@ -865,7 +910,7 @@ def ingest_hot_n(
         "title": TITLE_HOT_N,
         "coverage": "hot_n",
         "path": PATH,
-        "live_ingest": True,
+        "ingest_configured": True,
         "production": True,
         "data_mode": DATA_MODE_LIVE,
         "trade_date": end,
@@ -916,8 +961,8 @@ def main(argv: list[str] | None = None) -> int:
     _ensure_dotenv()
     parser = argparse.ArgumentParser(
         description=(
-            "Broker-branch helpers: status, TEST/DEV fixture, or path A live ingest "
-            "（熱門股分點動向，不是全市場）"
+            "Broker-branch helpers: status, TEST/DEV fixture, or path A scheduled "
+            "ingest（熱門股分點動向，不是全市場）。FinMind writes are CLI/Actions only."
         ),
     )
     parser.add_argument(
@@ -970,7 +1015,8 @@ def main(argv: list[str] | None = None) -> int:
         if not token_present():
             log.error(
                 "ingest refused: FINMIND_TOKEN missing. "
-                "Path A will not call FinMind. Set the GitHub secret or local .env."
+                "Path A scheduled ingest will not call FinMind. "
+                "Set the GitHub Actions secret or local .env (not required on Cloud Run)."
             )
             return 2
         conn = _connect_local()
@@ -982,11 +1028,11 @@ def main(argv: list[str] | None = None) -> int:
                 days=args.days,
             )
         except FinMindError as exc:
-            log.error("live ingest failed: %s", exc)
+            log.error("scheduled ingest failed: %s", exc)
             conn.close()
             return 1
         except Exception:
-            log.exception("live ingest failed")
+            log.exception("scheduled ingest failed")
             conn.close()
             return 1
         conn.close()

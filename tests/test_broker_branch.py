@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""分點契約：空 schema、fixture、path A live ingest（mocked FinMind）。"""
+"""分點契約：空 schema、fixture、path A scheduled ingest（mocked FinMind）。"""
 import json
+import os
 import shutil
 import sqlite3
 import tempfile
@@ -63,17 +64,24 @@ class TokenAndTitleTests(unittest.TestCase):
     def test_token_absent_is_blocker(self):
         status = broker_branch.ingest_status({})
         self.assertFalse(status["token_present"])
-        self.assertFalse(status["live_ingest"])
+        self.assertFalse(status["ingest_configured"])
+        self.assertNotIn("live_ingest", status)
+        self.assertEqual(status["writes"], "actions_or_cli")
+        self.assertEqual(status["reads"], "db")
         self.assertEqual(status["path"], "A")
         self.assertEqual(status["slice_decision"], "hot_n")
         self.assertIn("FINMIND_TOKEN", status["blocker"])
         self.assertIn("Path A", status["blocker"])
+        self.assertIn("Dashboard/API never call FinMind", status["blocker"])
         self.assertEqual(status["not"], "t86_foreign")
 
-    def test_token_present_enables_live_ingest(self):
+    def test_token_present_enables_ingest_configured_not_website_live(self):
         status = broker_branch.ingest_status({"FINMIND_TOKEN": "secret"})
         self.assertTrue(status["token_present"])
-        self.assertTrue(status["live_ingest"])
+        self.assertTrue(status["ingest_configured"])
+        self.assertNotIn("live_ingest", status)
+        self.assertEqual(status["writes"], "actions_or_cli")
+        self.assertEqual(status["reads"], "db")
         self.assertEqual(status["path"], "A")
         self.assertEqual(status["slice_decision"], "hot_n")
         self.assertIsNone(status["blocker"])
@@ -139,7 +147,7 @@ class FixtureAndRankingTests(unittest.TestCase):
     def test_fixture_upserts_and_rankings(self):
         result = broker_branch.load_fixture(self.conn, FIXTURE, dev=True)
         self.assertEqual(result["rows"], 9)
-        self.assertFalse(result["live_ingest"])
+        self.assertFalse(result["ingest_configured"])
         self.assertFalse(result["production"])
         self.assertEqual(result["data_mode"], "dev_fixture")
 
@@ -148,7 +156,7 @@ class FixtureAndRankingTests(unittest.TestCase):
         self.assertNotIn("全市場", top["title"])
         self.assertEqual(top["coverage"], "hot_n")
         self.assertEqual(top["data_mode"], "dev_fixture")
-        self.assertFalse(top["live_ingest"])
+        self.assertFalse(top["ingest_configured"])
         self.assertFalse(top["token_present"])
         self.assertEqual(top["universe_count"], 3)
         self.assertEqual(top["buy"][0][0], "1020")
@@ -258,23 +266,104 @@ class DashboardStubTests(unittest.TestCase):
     def call(self, path, **qs):
         return dashboard.api(path, {k: [str(v)] for k, v in qs.items()})
 
+    def test_empty_dashboard_apis_issue_no_finmind_http_without_token(self):
+        """Gate: web process without FINMIND_TOKEN must not hit FinMind."""
+        env = {k: v for k, v in os.environ.items() if k != "FINMIND_TOKEN"}
+        boom = AssertionError("must not call FinMind from dashboard request")
+        with patch.dict(os.environ, env, clear=True), \
+             patch.object(broker_branch, "fetch_secid_agg", side_effect=boom) as fetch, \
+             patch.object(broker_branch, "ingest_hot_n", side_effect=boom) as ingest, \
+             patch("requests.Session.get", side_effect=boom) as sess_get, \
+             patch("requests.get", side_effect=boom) as req_get:
+            for path, qs in (
+                ("/api/broker_branch/top", {}),
+                ("/api/broker_branch/broker", {"broker_id": ["1020"]}),
+                ("/api/broker_branch/stock", {"id": ["2330"]}),
+                ("/api/broker_branch/freshness", {}),
+                ("/api/scanner/broker_main_force", {"tickers": ["2330"]}),
+            ):
+                body = self.call(path, **{k: v[0] for k, v in qs.items()})
+                self.assertIsInstance(body, dict)
+                if path == "/api/broker_branch/top":
+                    self.assertEqual(body["data_mode"], "empty")
+                    self.assertEqual(body["buy"], [])
+                    self.assertTrue(body["freshness"]["empty"])
+                    self.assertFalse(body["ingest_configured"])
+        fetch.assert_not_called()
+        ingest.assert_not_called()
+        sess_get.assert_not_called()
+        req_get.assert_not_called()
+
+    def test_dashboard_with_token_still_does_not_call_finmind(self):
+        boom = AssertionError("must not call FinMind from dashboard request")
+        with patch.dict(os.environ, {"FINMIND_TOKEN": "should-not-be-used"}), \
+             patch.object(broker_branch, "fetch_secid_agg", side_effect=boom) as fetch, \
+             patch.object(broker_branch, "ingest_hot_n", side_effect=boom) as ingest, \
+             patch("requests.Session.get", side_effect=boom) as sess_get, \
+             patch("requests.get", side_effect=boom) as req_get:
+            top = self.call("/api/broker_branch/top")
+            stock = self.call("/api/broker_branch/stock", id="2330")
+            force = self.call("/api/scanner/broker_main_force", tickers="2330,2454")
+        self.assertEqual(top["data_mode"], "empty")
+        self.assertTrue(top["ingest_configured"])
+        self.assertEqual(top["buy"], [])
+        self.assertEqual(stock["data"], [])
+        self.assertEqual(force["kind"], "broker_main_force")
+        fetch.assert_not_called()
+        ingest.assert_not_called()
+        sess_get.assert_not_called()
+        req_get.assert_not_called()
+
+    def test_request_context_refuses_finmind_http_client(self):
+        token = broker_branch.forbid_request_time_finmind()
+        try:
+            with self.assertRaises(broker_branch.FinMindError) as ctx:
+                broker_branch.fetch_secid_agg(
+                    "2330", "2026-09-03", "2026-09-03", "secret",
+                )
+            self.assertIn("not allowed on dashboard/API request", str(ctx.exception))
+            with self.assertRaises(broker_branch.FinMindError) as ctx2:
+                broker_branch.ingest_hot_n(
+                    sqlite3.connect(":memory:"),
+                    env={"FINMIND_TOKEN": "secret"},
+                    fetcher=MagicMock(side_effect=AssertionError("no")),
+                )
+            self.assertIn("not allowed on dashboard/API request", str(ctx2.exception))
+        finally:
+            broker_branch.reset_request_time_finmind(token)
+
+    def test_dashboard_module_does_not_call_finmind_clients(self):
+        src = Path(__file__).resolve().parents[1].joinpath(
+            "web", "dashboard.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("forbid_request_time_finmind", src)
+        self.assertNotIn("fetch_secid_agg", src)
+        self.assertNotIn("ingest_hot_n", src)
+        self.assertNotIn("fetch_institutional", src)
+        self.assertNotIn("api.finmindtrade.com", src)
+
     def test_empty_api_is_honest_not_full_market(self):
         r = self.call("/api/broker_branch/top")
         self.assertEqual(r["kind"], "broker_branch")
         self.assertEqual(r["not"], "t86_foreign")
-        self.assertEqual(r["data_mode"], "empty_awaiting_token")
+        self.assertEqual(r["data_mode"], "empty")
         self.assertEqual(r["path"], "A")
         self.assertEqual(r["slice_decision"], "hot_n")
-        self.assertFalse(r["live_ingest"])
+        self.assertFalse(r["ingest_configured"])
+        self.assertNotIn("live_ingest", r)
         self.assertFalse(r["token_present"])
+        self.assertEqual(r["writes"], "actions_or_cli")
+        self.assertEqual(r["reads"], "db")
         self.assertEqual(r["buy"], [])
         self.assertEqual(r["sell"], [])
+        self.assertTrue(r["freshness"]["empty"])
+        self.assertIn("只讀", r["coverage_note"])
         self.assertNotIn("全市場", r["title"])
         json.dumps(r)
 
     def test_top_days_query_default_is_single_day(self):
         r = self.call("/api/broker_branch/top", days=5)
-        self.assertEqual(r["data_mode"], "empty_awaiting_token")
+        self.assertEqual(r["data_mode"], "empty")
         self.assertEqual(r["buy"], [])
         self.assertEqual(r["days"], 5)
         self.assertIsNone(r["start"])
@@ -315,10 +404,11 @@ class DashboardStubTests(unittest.TestCase):
         fresh = self.call("/api/broker_branch/freshness")
         self.assertEqual(fresh["last_date"], "2026-09-03")
         self.assertEqual(fresh["expected_after_hour"], 21)
-        self.assertFalse(fresh["live_ingest"])
+        self.assertFalse(fresh["ingest_configured"])
+        self.assertNotIn("live_ingest", fresh)
 
 
-class LiveIngestTests(unittest.TestCase):
+class ScheduledIngestTests(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         self.db = self.tmp / "test.db"
@@ -400,7 +490,7 @@ class LiveIngestTests(unittest.TestCase):
             env={"FINMIND_TOKEN": secret},
             fetcher=fetcher,
         )
-        self.assertTrue(result["live_ingest"])
+        self.assertTrue(result["ingest_configured"])
         self.assertTrue(result["production"])
         self.assertEqual(result["data_mode"], "live")
         self.assertEqual(result["title"], "熱門股分點動向")
@@ -418,7 +508,7 @@ class LiveIngestTests(unittest.TestCase):
             self.conn, "2026-09-03", k=3, env={"FINMIND_TOKEN": secret},
         )
         self.assertEqual(top["data_mode"], "live")
-        self.assertTrue(top["live_ingest"])
+        self.assertTrue(top["ingest_configured"])
         self.assertEqual(top["title"], "熱門股分點動向")
         self.assertEqual(top["coverage"], "hot_n")
         self.assertNotIn("fixture_warning", top)
@@ -443,7 +533,7 @@ class LiveIngestTests(unittest.TestCase):
         top = broker_branch.top_branches(self.conn, "2026-09-03", env={})
         self.assertEqual(top["data_mode"], "live")
         self.assertFalse(top["token_present"])
-        self.assertFalse(top["live_ingest"])
+        self.assertFalse(top["ingest_configured"])
         self.assertNotIn("fixture_warning", top)
 
     def test_fetch_puts_token_in_bearer_header_not_query(self):
@@ -500,14 +590,16 @@ class LiveIngestTests(unittest.TestCase):
             )
         self.assertNotIn(secret, str(ctx.exception))
 
-    def test_empty_with_token_is_not_awaiting_token_mode(self):
+    def test_empty_is_empty_even_when_this_process_has_a_token(self):
         top = broker_branch.top_branches(
             self.conn, env={"FINMIND_TOKEN": "secret"},
         )
         self.assertEqual(top["data_mode"], "empty")
-        self.assertTrue(top["live_ingest"])
+        self.assertTrue(top["ingest_configured"])
         self.assertEqual(top["title"], "熱門股分點動向")
-        self.assertIn("已接 token", top["coverage_note"])
+        self.assertIn("只讀", top["coverage_note"])
+        self.assertIn("不即時拉 FinMind", top["coverage_note"])
+        self.assertNotIn("已接 token", top["coverage_note"])
         self.assertNotIn("全市場", top["title"])
 
 
@@ -531,6 +623,8 @@ class WorkflowAndDocsTests(unittest.TestCase):
             text = root.joinpath(rel).read_text(encoding="utf-8")
             self.assertIn("熱門股", text)
             self.assertRegex(text, r"不是.{0,12}全市場")
+            self.assertIn("Actions 寫", text)
+            self.assertRegex(text, r"服務讀|只讀")
 
     def test_env_example_has_empty_token_placeholder(self):
         text = Path(__file__).resolve().parents[1].joinpath(".env.example").read_text()

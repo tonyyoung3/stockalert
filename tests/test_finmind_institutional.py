@@ -160,6 +160,16 @@ class FetchClientTests(unittest.TestCase):
             fmi.fetch_institutional_day(date(2026, 1, 5), "")
         self.assertIn("FINMIND_TOKEN", str(ctx.exception))
 
+    def test_request_context_refuses_even_with_token(self):
+        from market import broker_branch
+        token = broker_branch.forbid_request_time_finmind()
+        try:
+            with self.assertRaises(FinMindError) as ctx:
+                fmi.fetch_institutional_day(date(2026, 1, 5), "secret")
+            self.assertIn("not allowed on dashboard/API request", str(ctx.exception))
+        finally:
+            broker_branch.reset_request_time_finmind(token)
+
     def test_auth_error_does_not_include_token(self):
         class Resp:
             status_code = 401

@@ -49,7 +49,7 @@ Slack bot 預設只認 ticker / help。設 `HARNESS_ENABLED=1` 且有 API key，
 python -m unittest discover -s tests -v
 ```
 
-PTT 股板週報跟 Reddit 投資想法週報都是本機整理、印到 stdout（可加 `--json`）。`python -m notify.daily_digest` 抓近 1 天重點（PTT 題材／標的／盤後閒聊，Reddit DD）打到同一個 Slack channel。GitHub Actions 每天 **22:00 台灣時間** 跑（排程只在 `main`；沒 merge 不會送）。Reddit 預設看 r/SecurityAnalysis、r/ValueInvesting、r/investing、r/stocks、r/wallstreetbets；WSB 只收 DD / 研究類 flair。雲端 IP 常被 Reddit 擋（403），會改走 [Arctic Shift](https://arctic-shift.photon-reddit.com) 封存。分點買賣超契約在 `docs/broker_branch.md`（#54 / #61）。v1 是**熱門股**分點動向（成交額前 N 驅動市場 Top，同表可讀個股），**不是**全市場、也**不是** T86 外資。有 `FINMIND_TOKEN` 時週一至週五約 **21:00 台灣時間**跑 `python -m market.broker_branch ingest`（熱門前 N，預設 80）。無 token 時 API 維持空狀態／請接 token，不會假裝行情。本機 fixture：`python -m market.broker_branch load-fixture --dev`（TEST/DEV，不是 production）。
+PTT 股板週報跟 Reddit 投資想法週報都是本機整理、印到 stdout（可加 `--json`）。`python -m notify.daily_digest` 抓近 1 天重點（PTT 題材／標的／盤後閒聊，Reddit DD）打到同一個 Slack channel。GitHub Actions 每天 **22:00 台灣時間** 跑（排程只在 `main`；沒 merge 不會送）。Reddit 預設看 r/SecurityAnalysis、r/ValueInvesting、r/investing、r/stocks、r/wallstreetbets；WSB 只收 DD / 研究類 flair。雲端 IP 常被 Reddit 擋（403），會改走 [Arctic Shift](https://arctic-shift.photon-reddit.com) 封存。分點買賣超契約在 `docs/broker_branch.md`（#54 / #61 / #108）。v1 是**熱門股**分點動向（成交額前 N 驅動市場 Top，同表可讀個股），**不是**全市場、也**不是** T86 外資。**Actions 寫、服務讀：** `FINMIND_TOKEN` 只給 GitHub Actions／本機 CLI；週一至週五約 **21:00 台灣時間**跑 `python -m market.broker_branch ingest`（熱門前 N，預設 80）。Cloud Run／dashboard **請求時不打 FinMind**，只讀 sqlite／Turso；無列就空狀態＋freshness，不會假裝行情。`ingest_configured` 表示該行程有 token 可排程寫入，不是網站 live fetch。本機 fixture：`python -m market.broker_branch load-fixture --dev`（TEST/DEV，不是 production）。
 
 ## 台股資料收集器
 
@@ -89,7 +89,7 @@ PTT 股板週報跟 Reddit 投資想法週報都是本機整理、印到 stdout�
 
 籌碼 z-score（#78）是 **query-time**：`GET /api/scanner/chip_zscore?tickers=2330,2454&window=20&asof=YYYY-MM-DD`，預設窗格 **20 個交易日**，樣本標準差（ddof=1）。多檔、樣本不足旗標、NULL 規則見 `docs/chip_zscore.md`。不物化。掃描散布圖 UI（#79）與結果表格（#80）共用同一回應：自選多檔、軸可選價量／z-score，表頭可排序、表格可篩選，點擊進個股。本機追蹤清單（#81）存在瀏覽器 `localStorage` 鍵 `stockalert.sc.watchlist.v1`，可增刪、重整後仍在；一鍵套用寫入目前掃描標的（≥2 檔才打同一支 API）。掃描狀態（#82）寫進網址 `?sc=2330,2454`（可加 `scx` / `scy` / `scw` / `scmp` / `scd`），與既有 `?stock=` 同一套 query、可並用 `#scanner`；複製網址即可分享或在新工作階段還原，≥2 檔才打同一支 API。過長時先省略預設／可選參數，再截標的（沒有短網址服務）。沒有雲端同步、也沒有第二條掃描資料徑。掃描窗格與市場「外資排行」共用 `web/static/tw_range.js` 的「近 N 日／自訂區間」（#83）。日曆是 **#73** 的 `web.tw_calendar.taiwan_today` / `is_tw_trading_day`（Asia/Taipei，禁止裸 `date.today()`）；假日表與 #47 同一套 2025–2026。自訂／截至日落在週末或證交所休市會對齊到前一交易日。個股分點日期走同一個 snap。不另開日期 API。多檔股價疊圖（#84）是掃描工作台的第二張圖：同一批標的，正規化（首日=100）或絕對價，圖例可關、× 可拿掉系列（不改掃描標的與 chip_zscore 散布圖）。系列走既有 `GET /api/stock_ohlc`，沒有新後端。每日告警（#86）把**一組**標的＋欄位上下限存進 `data/scanner_alert_profile.json` 或 `screener.db`／Turso（掃描頁「存成每日告警」，或 `python -m notify.scanner_alert save`）。排程挂在既有 `run_screener.yml`，复用 `query_chip_zscore`，命中寫 `alerts` 列並走既有 Slack；失敗看 `scanner_alert_runs` / Actions / `notify_job`。不是 DSL，也不下單。契約見 `docs/scanner_alert.md`。
 
-熱門股分點主力（#98）也是 **query-time**：`GET /api/scanner/broker_main_force?tickers=2330,2454&asof=YYYY-MM-DD&k=5`，只讀已入庫 `broker_branch_daily`（熱門前 N），**零 FinMind 增量**。回傳買／賣超集中度與龍頭分點淨額，`coverage: hot_n`，標題「熱門股分點動向」，**不是**全市場。該日未入庫的代號回空列。見 `docs/broker_main_force.md`。掃描工作台（#101）用獨立面板展示這支 API，與 chip_zscore 散布圖分開，同一批標的與 asof。
+熱門股分點主力（#98）也是 **query-time**：`GET /api/scanner/broker_main_force?tickers=2330,2454&asof=YYYY-MM-DD&k=5`，只讀已入庫 `broker_branch_daily`（熱門前 N），**零 FinMind 呼叫**（Actions 寫、服務讀）。回傳買／賣超集中度與龍頭分點淨額，`coverage: hot_n`，標題「熱門股分點動向」，**不是**全市場。該日未入庫的代號回空列。見 `docs/broker_main_force.md`。掃描工作台（#101）用獨立面板展示這支 API，與 chip_zscore 散布圖分開，同一批標的與 asof。
 
 **Cache-local foreign span ≠ Turso foreign span.** GitHub Actions 的 `twse_data.db` cache 裡 `foreign_daily` 常常只有約 85 個交易日，但 Turso 上同一張表可以有約 510 日。設了 `TURSO_*` 時，`institutional_gaps` 以 Turso（並集本機）的 `foreign_daily` 日期當缺口來源，略過 Turso 上 trust/dealer 都已齊的日期；抓完只推這三張 T86 表的補齊區間，不會用本機 cache 的短外資歷史當「已補完」。未設 secrets 時行為不變，只看本機。
 
@@ -201,7 +201,7 @@ gcloud run deploy stockalert \
   --set-env-vars TURSO_DATABASE_URL="$TURSO_DATABASE_URL",TURSO_AUTH_TOKEN="$TURSO_AUTH_TOKEN",DASHBOARD_USER="$DASHBOARD_USER",DASHBOARD_PASSWORD="$DASHBOARD_PASSWORD"
 ```
 
-會給一個 `*.run.app` 網址。設了那兩個 Turso 變數就讀雲端，不帶本機 `twse_data.db`。回測會把需要的表快照進暫存 sqlite，pandas 不用改。既有服務在 merge 後也要把 `DASHBOARD_USER` / `DASHBOARD_PASSWORD` 設成 secret 或 env；Cloud Run 沒設帳密又沒設 `DASHBOARD_ALLOW_ANONYMOUS=1` 時，業務 API 會 fail-closed。
+會給一個 `*.run.app` 網址。設了那兩個 Turso 變數就讀雲端，不帶本機 `twse_data.db`。回測會把需要的表快照進暫存 sqlite，pandas 不用改。既有服務在 merge 後也要把 `DASHBOARD_USER` / `DASHBOARD_PASSWORD` 設成 secret 或 env；Cloud Run 沒設帳密又沒設 `DASHBOARD_ALLOW_ANONYMOUS=1` 時，業務 API 會 fail-closed。**不必**在 Cloud Run 設 `FINMIND_TOKEN`：網站只讀 DB，FinMind 寫入只走 Actions／CLI。
 
 限流看的是 `X-Forwarded-For` **最後一段**（Cloud Run 單一信任 proxy 會把連上來的 client 加在最右邊）。前面的段是客戶端可偽造的，不當 rate-limit key。
 
@@ -218,6 +218,7 @@ gcloud run deploy stockalert \
 | `GET /api/freshness` | 各表 `{table, last_date, days_ago, stale, empty}`，以及整體 `stale` / `empty` |
 | `GET /api/summary` | 原有 KPI，另含同一個 `freshness` 物件 |
 | `GET /api/scanner/chip_zscore` | 多檔籌碼 z-score（`tickers`、`window` 預設 20、`asof`、`min_periods`）。見 `docs/chip_zscore.md`。掃描分頁散布圖讀這支 |
+| `GET /api/broker_branch/top` `/broker` `/stock` `/freshness` | 熱門股分點讀徑。只打 sqlite／Turso，**不**打 FinMind。空表 + freshness，不是網站 live fetch。見 `docs/broker_branch.md` |
 | `GET /api/scanner/broker_main_force` | 多檔熱門股分點主力（`tickers`、`asof`、`k` 預設 5）。只讀已入庫熱門 N，不是全市場。掃描工作台獨立面板讀這支。見 `docs/broker_main_force.md` |
 | `GET` / `POST /api/scanner/alert_profile` | 一組掃描每日告警條件（標的＋欄位 min/max）。見 `docs/scanner_alert.md` |
 | `GET /health` | JSON：`status`/`ok` 表示**行程活著**（HTTP **一律 200**）。資料過期是 payload 的 `freshness.stale`／`empty`，**不會因此回 503**，方便之後 Cloud Run 探活依欄位延伸。 |
@@ -232,9 +233,9 @@ gcloud run deploy stockalert \
 
 Header **顯示範圍**（全域 `days`）只影響加權 K 線／走勢、外資合計、融資融券、台指期未平倉、個股圖。外資買賣超排行用自己的當日／近 N 日／自訂區間，不受全域天數控制；近 N 日與自訂日期對齊 #73 台股交易日，與掃描窗格共用 `TwRange`（`/static/tw_range.js`）。
 
-市場 tab 另有獨立卡 **「熱門股分點動向」**（不是「全市場」、也不是 T86 外資排行）：買超／賣超分點 Top 讀 `GET /api/broker_branch/top`，新鮮度讀 `GET /api/broker_branch/freshness`（21:00 截止，不併入 `/api/freshness`）。點當日買超／賣超分點列，下鑽該分點在熱門前 N 檔內的貢獻標的（`GET /api/broker_branch/broker?broker_id=&date=`，買／賣／淨）；近 N 日累計顯示「此切片未支援」。有 token 且已 ingest 時顯示熱門前 N 真實列；無 token／空表顯示「尚未接上 FinMind token」，不是空白圖。手機兩塊列表直向堆疊、各自捲動。本機可用 `python -m market.broker_branch load-fixture --dev` 看示範列，**不要**把 fixture 當 production。
+市場 tab 另有獨立卡 **「熱門股分點動向」**（不是「全市場」、也不是 T86 外資排行）：買超／賣超分點 Top 讀 `GET /api/broker_branch/top`，新鮮度讀 `GET /api/broker_branch/freshness`（21:00 截止，不併入 `/api/freshness`）。點當日買超／賣超分點列，下鑽該分點在熱門前 N 檔內的貢獻標的（`GET /api/broker_branch/broker?broker_id=&date=`，買／賣／淨）；近 N 日累計顯示「此切片未支援」。已入庫則顯示熱門前 N 真實列；空表顯示「尚無入庫資料…網站只讀資料庫、不會即時拉 FinMind」，不是空白圖，也不是「請在網站接 token」。手機兩塊列表直向堆疊、各自捲動。本機可用 `python -m market.broker_branch load-fixture --dev` 看示範列，**不要**把 fixture 當 production。
 
-個股 tab 在外資圖旁有獨立卡 **「券商分點買賣超」**：選股後（含 `?stock=` / `selectStock`）讀 `GET /api/broker_branch/stock?id=`（可帶 `date`）。未選股先引導選股；無 token 用與市場卡相同的「尚未接上 FinMind token」文案；該檔不在熱門前 N 則明示空狀態，不是空白圖。同樣標 FinMind 分點約 21:00、不是 T86，**禁止**寫「全市場」。
+個股 tab 在外資圖旁有獨立卡 **「券商分點買賣超」**：選股後（含 `?stock=` / `selectStock`）讀 `GET /api/broker_branch/stock?id=`（可帶 `date`）。未選股先引導選股；空表用與市場卡相同的入庫／freshness 文案；該檔不在熱門前 N 則明示空狀態，不是空白圖。同樣標 FinMind 分點約 21:00（Actions 寫入）、不是 T86，**禁止**寫「全市場」。
 
 ### 告警與績效區塊
 

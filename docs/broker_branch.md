@@ -1,12 +1,16 @@
-# 分點買賣超 — 資料契約（#54 / #61 / epic #53）
+# 分點買賣超 — 資料契約（#54 / #61 / epic #53 / #108）
 
-**狀態：契約已對齊；路徑 A live ingest 已實作（2026-09-05）。標題鎖定「熱門股分點動向」，禁止寫「全市場」。**
+**狀態：契約已對齊。路徑 A 排程 ingest 已實作。標題鎖定「熱門股分點動向」，禁止寫「全市場」。**
+
+**Actions 寫、服務讀。** FinMind 只由 GitHub Actions（`.github/workflows/update_broker_branch.yml`）或本機／排程 CLI `python -m market.broker_branch ingest` 寫入 sqlite／Turso。Cloud Run／dashboard／API **請求時絕不打 FinMind**。空表回空列表 + freshness，不會 silently 補拉。
+
+`ingest_configured: true` 只表示**這個行程**有 `FINMIND_TOKEN`、可以跑排程 ingest — **不是**網站 live fetch。Cloud Run 讀庫通常沒有 token，這是預期行為。
 
 儀表板現有「外資買賣超」來自證交所 **T86（三大法人）**，**不是**券商分點。
 分點買賣超 = 各券商分店買進股數 − 賣出股數。
 
-- 有 `FINMIND_TOKEN`：週一至週五約 21:00 台灣時間拉 FinMind `TaiwanStockTradingDailyReportSecIdAgg`，寫入 `broker_branch_daily` / `brokers`。`live_ingest: true`。
-- 無 token：不打 FinMind。API 回空列表 + `token_present: false` + blocker。UI：「尚未接上 FinMind token」。
+- Actions／CLI 有 `FINMIND_TOKEN`：週一至週五約 21:00 台灣時間拉 FinMind `TaiwanStockTradingDailyReportSecIdAgg`，寫入 `broker_branch_daily` / `brokers`。`ingest_configured: true`（僅該寫入行程）。
+- 網站／API：只讀 DB。無列 → `data_mode: "empty"` + freshness +「尚無入庫資料…網站只讀資料庫、不會即時拉 FinMind」。
 - Fixture 僅 TEST/DEV，**不是** production。
 
 ---
@@ -23,15 +27,15 @@
 | 標題 | **「熱門股分點動向」**。README／UI **禁止**寫「全市場」 |
 | Ingest | 週一至週五 ~21:00 後，用 `stock_daily` 最新日成交額取前 N，只拉這 N 檔 SecIdAgg |
 
-**無 token → 不打 FinMind。** 空狀態或「請接 token」。Fixture 不可當 production。
+**無 token → 排程 ingest 不打 FinMind。** 網站本來就不打。空狀態＋freshness。Fixture 不可當 production。
 
 ---
 
-## 路徑 B（備案，不要當預設實作）
+## 路徑 B（備案，不要當預設、也不可從 HTTP 呼叫）
 
 **僅當主人之後改選 B：** 單檔 on-demand（查詢時才拉該 `stock_id`），市場 tab **不排行**（入口／跳個股）。
 
-本契約與程式預設都是路徑 A。不要把 on-demand 做成預設 ingest。
+本契約與程式預設都是路徑 A。Path B **沒有實作**，也**不可**從 dashboard／API 請求呼叫。`dashboard.api()` 會關掉 FinMind HTTP（`forbid_request_time_finmind`）。
 
 ---
 
@@ -41,7 +45,7 @@
 | --- | --- |
 | 切片 | **已鎖定路徑 A**（熱門前 N → 市場 Top；同表個股讀取） |
 | `FINMIND_TOKEN` | GitHub Actions **secret**（workflow 讀 `secrets.FINMIND_TOKEN`）。本機複製 `.env.example` → `.env` 填入。`.env.example` 只有空佔位。**禁止**把 token 寫進 repo／PR／log。 |
-| Live ingest | 有 token → `live_ingest: true`，`python -m market.broker_branch ingest`。無 token → skip／明確錯誤，API 誠實空狀態。 |
+| 排程 ingest | Actions／CLI 有 token → `ingest_configured: true`，可跑 `python -m market.broker_branch ingest`。無 token → skip／明確錯誤。網站不需要 token、也不 live fetch。 |
 
 Token 只放 `Authorization: Bearer …`，**不要**放進 query。
 
@@ -98,9 +102,9 @@ SponsorPro 真全市場是後續 milestone，**不是路徑 A**。未做之前�
 
 | 條件 | 行為 |
 | --- | --- |
-| 無 `FINMIND_TOKEN` | 不打 FinMind。API 回空列表 + `token_present: false` + `live_ingest: false` + blocker。UI：「尚未接上 FinMind token」。標題仍是「熱門股分點動向」。 |
-| 有 token（路徑 A，預設） | `live_ingest: true`。熱門前 N 日更 + 市場 Top + 同表個股／下鑽。標題「熱門股分點動向」。 |
-| 主人之後改選路徑 B | 才改成個股 on-demand；市場 tab 不排行。**現在不要實作。** |
+| 無 `FINMIND_TOKEN`（此行程） | 排程 ingest 不打 FinMind。API 只讀 DB：空列表 + `token_present: false` + `ingest_configured: false` + blocker。UI：尚無入庫／freshness，**不是**「請在網站接 token」。標題仍是「熱門股分點動向」。 |
+| Actions／CLI 有 token（路徑 A） | 該寫入行程 `ingest_configured: true`。熱門前 N 日更寫庫；網站讀同一套表。標題「熱門股分點動向」。 |
+| 主人之後改選路徑 B | 才改成個股 on-demand；市場 tab 不排行。**現在不要實作，也不可從 HTTP 呼叫。** |
 | FinMind 21:00 尚未出當日 | `freshness.stale`／空；預期日用 **21:00** 切，不是 T86 的 16:00。Job 失敗走 Slack。 |
 | API／配額失敗 | `update_broker_branch.yml` 用既有 `python -m notify.notify_job` + Slack secrets。不因分點缺資料讓 `/health` 變 503。 |
 | 無 token 又要做分點 | **不做** BSR 驗證碼全爬、**不做** OpenAPI 假分點。 |
@@ -194,9 +198,10 @@ Base：與現有儀表板相同的 sqlite／Turso 讀取。
 | `path` | 固定 `"A"` |
 | `slice_decision` | 固定 `"hot_n"` |
 | `slice_trade_date` | 選熱門 N 所用的 `stock_daily` 日（可能比 ingest 日舊） |
-| `token_present` | 環境有沒有非空 `FINMIND_TOKEN` |
-| `live_ingest` | 有非空 token 則 `true`（路徑已打開）；無 token 則 `false` |
-| `data_mode` | `empty_awaiting_token` / `empty` / `live` / `dev_fixture` |
+| `token_present` | **此行程**有沒有非空 `FINMIND_TOKEN`（Cloud Run 通常 false） |
+| `ingest_configured` | 同上：token 可供**排程 ingest**，不是網站 live fetch。已取代舊欄位 `live_ingest` |
+| `writes` / `reads` | 固定 `"actions_or_cli"` / `"db"` |
+| `data_mode` | `empty` / `live` / `dev_fixture`（空表一律 `empty`，不因網站沒 token 改叫 awaiting） |
 | `blocker` | 無 token 時的說明 |
 | `freshness` | `last_date`, `expected_trade_date`（21:00）, `stale`, `empty` |
 
@@ -266,7 +271,7 @@ ORDER BY b.net_volume DESC;
 
 - 檔案：`tests/fixtures/broker_branch_sample.json`
 - 載入：`python -m market.broker_branch load-fixture --dev`（沒有 `--dev` 會拒絕）
-- 標示：`data_mode: "dev_fixture"`，`live_ingest: false`，`broker_branch_meta.source=dev_fixture`
+- 標示：`data_mode: "dev_fixture"`，`ingest_configured: false`，`broker_branch_meta.source=dev_fixture`
 - **不要** commit 進 `twse_data.db`、**不要**當正式行情 push Turso、**不要**在 UI 寫成「已接上 FinMind」
 
 ---
@@ -278,5 +283,6 @@ ORDER BY b.net_volume DESC;
 - 存價位／tick 明細
 - 無 token 卻打 FinMind
 - 熱門前 N 卻標題／README 寫「全市場」
-- 把路徑 B（on-demand only）做成預設
+- 把路徑 B（on-demand only）做成預設，或從 dashboard／API 請求呼叫 FinMind
 - 把 fixture 列 merge 成 production
+- 在 Cloud Run 上要求 `FINMIND_TOKEN` 才能讀分點

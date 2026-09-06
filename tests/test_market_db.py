@@ -34,19 +34,29 @@ class ListenTests(unittest.TestCase):
 
 
 class ImageTests(unittest.TestCase):
+    # Packages imported at `python -m web.dashboard` startup (Cloud Run image).
+    _IMAGE_PACKAGES = ("data", "web", "alertsdb", "market", "notify")
+
     def test_dockerfile_copies_dashboard_imports(self):
         root = Path(__file__).resolve().parents[1]
         text = root.joinpath("Dockerfile").read_text()
-        self.assertIn("COPY data/", text)
-        self.assertIn("COPY web/", text)
-        self.assertIn("COPY alertsdb/", text)
         ignored = {
             line.strip()
             for line in root.joinpath(".dockerignore").read_text().splitlines()
             if line.strip() and not line.lstrip().startswith("#")
         }
-        self.assertNotIn("alertsdb", ignored)
-        self.assertNotIn("alertsdb/", ignored)
+        for pkg in self._IMAGE_PACKAGES:
+            self.assertIn(f"COPY {pkg}/", text)
+            self.assertNotIn(pkg, ignored)
+            self.assertNotIn(f"{pkg}/", ignored)
+
+    def test_dashboard_startup_imports(self):
+        from market import broker_branch
+        from notify import scanner_profile
+        import web.dashboard
+        self.assertTrue(hasattr(broker_branch, "SCHEMA_SQL"))
+        self.assertTrue(callable(scanner_profile.default_profile))
+        self.assertTrue(hasattr(web.dashboard, "api"))
 
 
 class PathTests(unittest.TestCase):

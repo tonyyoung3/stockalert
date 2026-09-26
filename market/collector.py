@@ -141,7 +141,7 @@ def init_db(conn: sqlite3.Connection):
         stock_name TEXT,
         last_seen  TEXT   -- 最後出現在資料中的交易日
     );
-    -- 分點買賣超日彙總（#54 / #61）。無 FINMIND_TOKEN 不寫 live 列。
+    -- 分點買賣超日彙總（#54 / #61）。保留既有資料供唯讀查詢。
     -- 不存價位明細。見 docs/broker_branch.md。
     CREATE TABLE IF NOT EXISTS broker_branch_daily (
         trade_date  TEXT,
@@ -523,8 +523,8 @@ def fetch_t86(day: date) -> T86Tables:
     """One HTTP call: TWSE T86 → foreign + trust + dealer rows.
 
     Raises T86FetchError when TWSE returns empty/HTML (not JSON). GitHub
-    Actions IPs commonly hit this for historical T86; callers should fall
-    back to FinMind for gap fill.
+    Actions IPs may hit this for historical T86; callers must report the
+    failure and leave the date available for a later retry.
     """
     url = "https://www.twse.com.tw/rwd/zh/fund/T86"
     params = {

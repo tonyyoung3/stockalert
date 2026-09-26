@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Hot-N broker main-force metrics (#98). Query-time; no FinMind."""
+"""Hot-N broker main-force metrics (#98). Query-time; read-only DB."""
 import json
 import tempfile
 import unittest
@@ -188,13 +188,10 @@ class QueryTests(unittest.TestCase):
         self.assertIn("不是全市場", out["coverage_note"])
 
 
-class NoFinMindTests(unittest.TestCase):
-    def test_module_has_no_finmind_client(self):
+class ReadOnlyTests(unittest.TestCase):
+    def test_module_has_no_http_client(self):
         self.assertNotIn("import requests", SRC)
-        self.assertNotIn("FINMIND_TOKEN", SRC)
-        self.assertNotIn("FINMIND_SECID", SRC)
         self.assertNotIn("TaiwanStockTradingDailyReport", SRC)
-        self.assertNotIn("api.finmindtrade.com", SRC)
         self.assertNotIn("live_ingest", SRC)
         self.assertIn("broker_branch_daily", SRC)
 

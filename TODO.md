@@ -10,22 +10,14 @@
 | --- | --- | --- |
 | 證交所 BSR [bsr.twse.com.tw](https://bsr.twse.com.tw/bshtm/) | 上市個股各分點買/賣 | 驗證碼、多半只有當日、要逐檔 |
 | 櫃買 [券商買賣日報](https://www.tpex.org.tw/zh-tw/mainboard/trading/info/brokerBS.html) | 上櫃同上 | 一樣有驗證碼、當日、逐檔 |
-| FinMind `TaiwanStockTradingDailyReport` | 個股或券商、價位明細 | Sponsor 付費；單日約 300 萬筆 |
-| FinMind `TaiwanStockTradingDailyReportSecIdAgg` | 個股區間、各分點買/賣量 | Sponsor；買賣超 = buy − sell |
-| FinMind SponsorPro 整日 parquet | 全市場一次下載（約 22 MB） | 更貴；盤後約 21:00 更新 |
 | TWSE / TPEX OpenAPI | 熱門股進出排行、券商營業金額 | **沒有**全部分點明細 |
 
-輔助：`TaiwanSecuritiesTraderInfo`、證交所券商名冊 Excel（分點代號對名稱）。
 
-資料區間約 2021-06-30 起（FinMind）。官方 BSR 下午 3–4 點才出當日。
 
-### 契約（#54）＋ 排程 ingest（#61／#108，路徑 A）
 
-書面定案與 API／SQL 在 **`docs/broker_branch.md`**。空表在 `collector.init_db`。
+分點自動更新已停用；網站只讀既有資料。API／SQL 在 **`docs/broker_branch.md`**。空表在 `collector.init_db`。
 
-- **路徑 A（預設）：** 熱門前 N（`stock_daily` 最新日成交額，`BROKER_BRANCH_HOT_N` 預設 80）驅動市場 Top；同一套表給個股讀取。標題「**熱門股分點動向**」，**不是**全市場。
-- **Actions 寫、服務讀：** `FINMIND_TOKEN` 只給 GitHub Actions／`python -m market.broker_branch ingest`。週一至週五約 21:00（`update_broker_branch.yml`）。Dashboard／API **請求時不打 FinMind**。無列 → empty／freshness，不是網站 live fetch。`ingest_configured` = 此行程有 token 可排程寫入。
-- **路徑 B（備案）：** 單檔 on-demand、市場不排行。主人之後才可能改選；**不要當預設，也不可從 HTTP 呼叫**。
+- **既有資料：** 熱門前 N（`stock_daily` 最新日成交額，`BROKER_BRANCH_HOT_N` 預設 80）驅動市場 Top；同一套表給個股讀取。標題「**熱門股分點動向**」，**不是**全市場。
 
 Fixture 僅 TEST/DEV（`python -m market.broker_branch load-fixture --dev`），不可當 production merge，也不可當 Turso 正式行情。
 

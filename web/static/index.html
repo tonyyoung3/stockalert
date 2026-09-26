@@ -378,10 +378,10 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
       <span class="hint">此區間只控制熱門股分點，與上方外資排行、全域天數無關</span>
     </span>
   </div>
-  <p class="bb-sub" id="bb-sub">依成交額前 N 檔彙總，非全市場。來源 FinMind 分點（約 21:00），不是證交所 T86 外資排行。</p>
-  <div class="bb-fresh" id="bb-fresh" role="status">分點新鮮度獨立於 T86（21:00 截止）。載入中…</div>
-  <div class="bb-warn" id="bb-fixture-warn" hidden>示範資料（本機 fixture），不是已接上的 FinMind 行情。</div>
-  <div class="bb-empty" id="bb-empty">熱門股分點尚無入庫資料（依成交額前 N 檔彙總，非全市場）。由 GitHub Actions 約 21:00 寫入，網站只讀資料庫、不會即時拉 FinMind。這不是 T86 外資排行。</div>
+  <p class="bb-sub" id="bb-sub">依成交額前 N 檔彙總，非全市場。分點自動更新已停用；僅供查詢既有資料，不是證交所 T86 外資排行。</p>
+  <div class="bb-fresh" id="bb-fresh" role="status">分點自動更新已停用。載入既有資料…</div>
+  <div class="bb-warn" id="bb-fixture-warn" hidden>示範資料（本機 fixture），不是正式行情。</div>
+  <div class="bb-empty" id="bb-empty">熱門股分點尚無入庫資料（依成交額前 N 檔彙總，非全市場）。分點自動更新已停用；網站只讀資料庫。這不是 T86 外資排行。</div>
   <div class="bb-lists" id="bb-lists" hidden>
     <div class="bb-list-wrap">
       <h3 id="bb-buy-h">買超分點 Top</h3>
@@ -398,7 +398,7 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
       <h3 id="bb-drill-title">分點貢獻標的</h3>
       <button type="button" class="bb-drill-close" id="bb-drill-close" onclick="closeBbDrill()">關閉</button>
     </div>
-    <p class="bb-sub" id="bb-drill-sub">只看已入庫熱門前 N 檔貢獻標的。來源 FinMind 分點（約 21:00），不是證交所 T86 外資排行。</p>
+    <p class="bb-sub" id="bb-drill-sub">只看已入庫熱門前 N 檔貢獻標的。分點自動更新已停用；僅供查詢既有資料，不是證交所 T86 外資排行。</p>
     <div class="bb-empty" id="bb-drill-empty" hidden></div>
     <div class="bb-list table-scroll" id="bb-drill-list"></div>
   </div>
@@ -429,10 +429,10 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
       <span class="hint">此日期只控制該檔分點，與上方個股圖、全域天數無關。空白＝表內最新日。非交易日會對齊到前一交易日。</span>
     </span>
   </div>
-  <p class="bb-sub" id="sbb-sub">該檔讀已入庫熱門前 N 列（熱門股分點，非全市場）。來源 FinMind 分點（約 21:00），不是證交所 T86 外資排行。</p>
-  <div class="bb-fresh" id="sbb-fresh" role="status">分點新鮮度獨立於 T86（21:00 截止）。載入中…</div>
-  <div class="bb-warn" id="sbb-fixture-warn" hidden>示範資料（本機 fixture），不是已接上的 FinMind 行情。</div>
-  <div class="bb-empty" id="sbb-empty">請先選股（搜尋代號／名稱，或用網址 ?stock=），才會載入該檔分點買賣超。來源 FinMind 分點（約 21:00），不是 T86 外資排行。熱門前 N 才有列，非全市場。</div>
+  <p class="bb-sub" id="sbb-sub">該檔讀已入庫熱門前 N 列（熱門股分點，非全市場）。分點自動更新已停用；僅供查詢既有資料，不是證交所 T86 外資排行。</p>
+  <div class="bb-fresh" id="sbb-fresh" role="status">分點自動更新已停用。載入既有資料…</div>
+  <div class="bb-warn" id="sbb-fixture-warn" hidden>示範資料（本機 fixture），不是正式行情。</div>
+  <div class="bb-empty" id="sbb-empty">請先選股（搜尋代號／名稱，或用網址 ?stock=），才會載入該檔分點買賣超。分點自動更新已停用；僅供查詢既有資料，不是 T86 外資排行。熱門前 N 才有列，非全市場。</div>
   <div class="bb-lists" id="sbb-lists" hidden>
     <div class="bb-list-wrap">
       <h3 id="sbb-buy-h">買超分點 Top</h3>
@@ -591,7 +591,7 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
         <input type="number" id="sc-mf-k" min="1" max="50" value="5" inputmode="numeric" aria-label="主力集中度 Top K" onchange="loadScannerMainForce()">
       </span>
     </div>
-    <p class="hint">同一批掃描標的與 asof，另打既有 <code>/api/scanner/broker_main_force</code>。這不是籌碼 z-score 散布圖，也<b>不是</b>全市場；加總範圍是已入庫的熱門前 N（<code>coverage: hot_n</code>）。</p>
+    <p class="hint">分點自動更新已停用；僅供查詢既有資料。同一批掃描標的與 asof，另打既有 <code>/api/scanner/broker_main_force</code>。這不是籌碼 z-score 散布圖，也<b>不是</b>全市場；加總範圍是已入庫的熱門前 N（<code>coverage: hot_n</code>）。</p>
     <p class="hint" id="sc-mf-note"></p>
     <div id="sc-mf-loading" class="empty" hidden>主力指標載入中…</div>
     <div id="sc-mf-error" class="bt-error" hidden></div>
@@ -2878,11 +2878,11 @@ async function loadTop(){
 }
 
 const BB_TITLE = '熱門股分點動向';
-const BB_EMPTY_DB = '熱門股分點尚無入庫資料（依成交額前 N 檔彙總，非全市場）。由 GitHub Actions 約 21:00 寫入，網站只讀資料庫、不會即時拉 FinMind。這不是 T86 外資排行。';
+const BB_EMPTY_DB = '熱門股分點尚無入庫資料（依成交額前 N 檔彙總，非全市場）。分點自動更新已停用；網站只讀資料庫。這不是 T86 外資排行。';
 const BB_EMPTY_NODATA = '熱門股分點尚無資料（依成交額前 N 檔彙總，非全市場）。不是 T86 外資、也不是空白圖表。';
 const BB_DRILL_UNSUPPORTED = '此切片未支援。下鑽只看當日已入庫熱門前 N 檔，近 N 日累計請改選「當日」。';
 const BB_DRILL_EMPTY = '此分點在熱門前 N 檔內沒有貢獻標的。不是空白圖表，也不是 T86 外資。';
-const BB_DRILL_ERROR = '無法載入此分點標的列表。來源 FinMind 分點，不是 T86 外資排行。';
+const BB_DRILL_ERROR = '無法載入此分點標的列表。分點自動更新已停用；僅供查詢既有資料，不是 T86 外資排行。';
 const BB_DRILL_NEED_BROKER = '請先點買超／賣超分點列。';
 
 let bbLastTop = null;
@@ -2915,10 +2915,8 @@ function renderBbFresh(fresh, top){
   if(!el) return;
   const f = fresh || (top && top.freshness) || {};
   const last = f.last_date || '尚無';
-  const expected = f.expected_trade_date || '–';
-  const hour = f.expected_after_hour || 21;
   const n = (top && (top.hot_n || top.hot_n_default)) || (top && top.universe_count) || 80;
-  let line = '截至 '+last+' · 預期交易日 '+expected+'（台灣時間 '+hour+':00 後）· 依成交額前 '+n+' 檔，非全市場。來源／時間在此卡內，不併入上方 T86 freshness。';
+  let line = '分點自動更新已停用 · 資料截至 '+last+' · 依成交額前 '+n+' 檔，非全市場。來源／時間在此卡內，不併入上方 T86 freshness。';
   if(f.empty) line += ' 分點表空白。';
   else if(f.stale) line += ' 資料早於預期交易日。';
   el.textContent = line;
@@ -3061,7 +3059,7 @@ async function openBbDrill(brokerId, brokerName){
   if(subEl){
     subEl.textContent = '只看已入庫熱門前 '+n+' 檔貢獻標的'
       +(day ? ' · '+day : '')
-      +'。來源 FinMind 分點（約 21:00），不是證交所 T86 外資排行。';
+      +'。分點自動更新已停用；僅供查詢既有資料，不是證交所 T86 外資排行。';
   }
   const seq = ++bbDrillSeq;
   setBbDrillEmpty('載入中…');
@@ -3076,7 +3074,7 @@ async function openBbDrill(brokerId, brokerName){
       const dday = (drill && drill.trade_date) || day;
       subEl.textContent = '只看已入庫熱門前 '+dn+' 檔貢獻標的'
         +(dday ? ' · '+dday : '')
-        +'。來源 FinMind 分點（約 21:00），不是證交所 T86 外資排行。';
+        +'。分點自動更新已停用；僅供查詢既有資料，不是證交所 T86 外資排行。';
     }
     const rows = (drill && drill.data) || [];
     if(!rows.length){
@@ -3111,7 +3109,7 @@ async function loadBrokerBranch(){
     if(subEl){
       subEl.textContent = '依成交額前 '+n+' 檔彙總，非全市場'
         +(span ? ' · '+span : '')+daysHint
-        +'。來源 FinMind 分點（約 21:00），不是證交所 T86 外資排行。';
+        +'。分點自動更新已停用；僅供查詢既有資料，不是證交所 T86 外資排行。';
     }
     if(buyH) buyH.textContent = (span ? span+' ' : '')+'買超分點 Top'+(top && top.k ? ' '+top.k : '')+'（張）'+daysHint;
     if(sellH) sellH.textContent = (span ? span+' ' : '')+'賣超分點 Top'+(top && top.k ? ' '+top.k : '')+'（張）'+daysHint;
@@ -3145,12 +3143,12 @@ async function loadBrokerBranch(){
     if(hintEl) hintEl.hidden = true;
     closeBbDrill();
     const freshEl = document.getElementById('bb-fresh');
-    if(freshEl) freshEl.textContent = '分點新鮮度無法載入（21:00 截止，不併入 T86 /api/freshness）。';
+    if(freshEl) freshEl.textContent = '分點自動更新已停用；無法載入既有資料日期。';
   }
 }
 
 const SBB_TITLE = '券商分點買賣超';
-const SBB_EMPTY_PICK = '請先選股（搜尋代號／名稱，或用網址 ?stock=），才會載入該檔分點買賣超。來源 FinMind 分點（約 21:00），不是 T86 外資排行。熱門前 N 才有列，非全市場。';
+const SBB_EMPTY_PICK = '請先選股（搜尋代號／名稱，或用網址 ?stock=），才會載入該檔分點買賣超。分點自動更新已停用；僅供查詢既有資料，不是 T86 外資排行。熱門前 N 才有列，非全市場。';
 const SBB_EMPTY_NODATA = '此檔當日沒有分點列（熱門前 N 檔才會入庫，非全市場）。不是空白圖表，也不是 T86 外資。';
 
 function sbbDateParam(){
@@ -3170,10 +3168,8 @@ function renderSbbFresh(fresh, stock){
   if(!el) return;
   const f = fresh || (stock && stock.freshness) || {};
   const last = f.last_date || '尚無';
-  const expected = f.expected_trade_date || '–';
-  const hour = f.expected_after_hour || 21;
   const n = (stock && (stock.hot_n || stock.hot_n_default)) || 80;
-  let line = '截至 '+last+' · 預期交易日 '+expected+'（台灣時間 '+hour+':00 後）· 該檔讀已入庫熱門前 '+n+' 列，非全市場。來源／時間在此卡內，不併入上方 T86 freshness。';
+  let line = '分點自動更新已停用 · 資料截至 '+last+' · 該檔讀已入庫熱門前 '+n+' 列，非全市場。來源／時間在此卡內，不併入上方 T86 freshness。';
   if(stock && stock.stock_id){
     const nm = stock.stock_name && stock.stock_name!==stock.stock_id ? ' '+stock.stock_name : '';
     const day = stock.trade_date || '';
@@ -3207,14 +3203,14 @@ async function loadStockBrokerBranch(){
     if(listsEl) listsEl.hidden = true;
     if(warnEl) warnEl.hidden = true;
     if(subEl){
-      subEl.textContent = '該檔讀已入庫熱門前 N 列（熱門股分點，非全市場）。來源 FinMind 分點（約 21:00），不是證交所 T86 外資排行。';
+      subEl.textContent = '該檔讀已入庫熱門前 N 列（熱門股分點，非全市場）。分點自動更新已停用；僅供查詢既有資料，不是證交所 T86 外資排行。';
     }
     try {
       const fresh = await j('/api/broker_branch/freshness');
       renderSbbFresh(fresh, null);
     } catch(e){
       const freshEl = document.getElementById('sbb-fresh');
-      if(freshEl) freshEl.textContent = '分點新鮮度無法載入（21:00 截止，不併入 T86 /api/freshness）。';
+      if(freshEl) freshEl.textContent = '分點自動更新已停用；無法載入既有資料日期。';
     }
     return;
   }
@@ -3230,7 +3226,7 @@ async function loadStockBrokerBranch(){
     if(subEl){
       subEl.textContent = '該檔讀已入庫熱門前 '+n+' 列（熱門股分點，非全市場）'
         +(day ? ' · '+day : '')
-        +'。來源 FinMind 分點（約 21:00），不是證交所 T86 外資排行。';
+        +'。分點自動更新已停用；僅供查詢既有資料，不是證交所 T86 外資排行。';
     }
     if(buyH) buyH.textContent = (day ? day+' ' : '')+'買超分點 Top'+(stock && stock.k ? ' '+stock.k : '')+'（張）';
     if(sellH) sellH.textContent = (day ? day+' ' : '')+'賣超分點 Top'+(stock && stock.k ? ' '+stock.k : '')+'（張）';
@@ -3258,7 +3254,7 @@ async function loadStockBrokerBranch(){
     if(listsEl) listsEl.hidden = true;
     if(warnEl) warnEl.hidden = true;
     const freshEl = document.getElementById('sbb-fresh');
-    if(freshEl) freshEl.textContent = '分點新鮮度無法載入（21:00 截止，不併入 T86 /api/freshness）。';
+    if(freshEl) freshEl.textContent = '分點自動更新已停用；無法載入既有資料日期。';
   }
 }
 

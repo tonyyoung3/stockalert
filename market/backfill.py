@@ -23,9 +23,8 @@ foreign_daily. When TURSO_* is set, institutional gaps use Turso
 
 支援中斷續跑:已存在的日期會自動跳過。
 每次請求間隔 4 秒(證交所有流量限制,請勿調低)。
-institutional 缺口優先走 FinMind(T86 在 Actions IP 常回空/HTML)。
+institutional 缺口只使用證交所 T86；空資料或請求失敗會明確回報。
 """
-import os
 import sys
 import time
 import logging
@@ -292,13 +291,13 @@ def backfill(days: int, do_index=True, do_foreign=True, do_margin=True,
                     log.warning("%s 指數失敗: %s", ds, e)
                 time.sleep(SLEEP)
             # One T86 call fills foreign + trust + dealer. Skip only when all three exist.
-            # Daily: T86 first. FinMind only if T86 JSON/HTML-fails (Actions IPs).
+            # Daily and historical institutional data both use TWSE T86.
             if do_foreign and (ds not in have_for or ds not in have_trust or ds not in have_dealer):
                 fetched = InstitutionalFetch(
                     T86Tables([], [], []), "none", "error", "unfetched",
                 )
                 try:
-                    fetched = fetch_institutional_day(day, prefer="t86", conn=conn)
+                    fetched = fetch_institutional_day(day)
                     if fetched.status == "ok" and _has_institutional_rows(fetched.tables):
                         with conn:
                             persist_t86(conn, fetched.tables)
@@ -318,7 +317,7 @@ def backfill(days: int, do_index=True, do_foreign=True, do_margin=True,
                         )
                 except Exception as e:
                     log.error("%s 法人失敗: %s", ds, e)
-                time.sleep(SLEEP if fetched.source != "finmind" else _finmind_sleep())
+                time.sleep(SLEEP)
             if do_margin and ds not in have_mar:
                 try:
                     totals, stocks = fetch_margin(day)
@@ -344,7 +343,7 @@ class InstitutionalFetch(NamedTuple):
     """One-day institutional fetch. Empty/failed T86 is never status=ok."""
 
     tables: T86Tables
-    source: str  # t86 | finmind | none
+    source: str  # t86 | none
     status: str  # ok | empty | error
     reason: str
 
@@ -365,136 +364,24 @@ class InstitutionalGapError(RuntimeError):
         )
 
 
-def _finmind_sleep() -> float:
-    from market.finmind_institutional import FINMIND_SLEEP
-    return FINMIND_SLEEP
-
-
-def _finmind_token(env: dict[str, str] | None = None) -> str:
-    """Token from an injected env or process env. Does not load .env.
-
-    Unit tests must not flip to FinMind just because a local .env exists.
-    Actions / update_market_data inject FINMIND_TOKEN. Never log the return.
-    """
-    src = env if env is not None else os.environ
-    return (src.get("FINMIND_TOKEN") or "").strip()
-
-
 def _has_institutional_rows(tables: T86Tables) -> bool:
     return bool(tables.foreign or tables.trust or tables.dealer)
 
 
-def _call_finmind(day: date, token: str, fm):
-    """Invoke FinMind only when token is present. Never log the token."""
-    if not token:
-        raise RuntimeError("FINMIND_TOKEN missing; refusing to call FinMind")
-    return fm(day)
-
-
-def fetch_institutional_day(
-    day: date,
-    *,
-    prefer: str = "t86",
-    conn=None,
-    env: dict[str, str] | None = None,
-    t86_fetch=None,
-    finmind_fetch=None,
-) -> InstitutionalFetch:
-    """Fetch one day's trust/dealer (and T86 foreign when T86 works).
-
-    Source switch (never treat empty/failed T86 as ok):
-
-    - prefer=t86 (daily): T86 first. FinMind only if token is present AND
-      T86 is empty or raises (JSON/HTML). No token → empty/error, not ok.
-    - prefer=finmind (historical gaps): FinMind first if token is present.
-      No token → T86 only. FinMind is never called without FINMIND_TOKEN.
-
-    Never logs FINMIND_TOKEN.
-    """
-    from market import finmind_institutional as fmi
+def fetch_institutional_day(day: date, *, t86_fetch=None) -> InstitutionalFetch:
+    """Fetch institutional rows from TWSE T86; empty/error is never success."""
     from market.collector import EMPTY_T86
 
-    token = _finmind_token(env)
-    t86 = t86_fetch or fetch_t86
-    fm = None
-    if token:
-        if finmind_fetch is not None:
-            fm = finmind_fetch
-        else:
-            names = fmi.stock_names_from_conn(conn) if conn is not None else None
-            listed = fmi.listed_ids_from_conn(conn) if conn is not None else set()
-            fm = lambda d: fmi.fetch_mapped_day(
-                d, token, names=names, listed_ids=listed or None,
-            )
-
-    def _t86() -> tuple[T86Tables | None, str]:
-        try:
-            tables = t86(day)
-        except Exception as e:
-            return None, f"t86_error:{type(e).__name__}"
-        if _has_institutional_rows(tables):
-            return tables, "t86_ok"
-        return tables, "t86_empty"
-
-    if prefer == "finmind" and token and fm is not None:
-        try:
-            tables = _call_finmind(day, token, fm)
-            if _has_institutional_rows(tables):
-                log.info("%s source=finmind status=ok reason=finmind_primary", day.isoformat())
-                return InstitutionalFetch(tables, "finmind", "ok", "finmind_primary")
-            log.warning(
-                "%s source_switch finmind->t86 reason=finmind_empty", day.isoformat(),
-            )
-        except Exception as e:
-            log.warning(
-                "%s source_switch finmind->t86 reason=finmind_error (%s)",
-                day.isoformat(), e,
-            )
-        tables, why = _t86()
-        if tables is not None and _has_institutional_rows(tables):
-            log.info("%s source=t86 status=ok reason=%s", day.isoformat(), why)
-            return InstitutionalFetch(tables, "t86", "ok", why)
-        if tables is None:
-            log.error("%s source=none status=error reason=%s", day.isoformat(), why)
-            return InstitutionalFetch(EMPTY_T86, "none", "error", why)
-        log.error("%s source=t86 status=empty reason=%s", day.isoformat(), why)
-        return InstitutionalFetch(tables, "t86", "empty", why)
-
-    tables, why = _t86()
-    if tables is not None and _has_institutional_rows(tables):
+    try:
+        tables = (t86_fetch or fetch_t86)(day)
+    except Exception as exc:
+        reason = f"t86_error:{type(exc).__name__}"
+        log.error("%s source=t86 status=error reason=%s", day.isoformat(), reason)
+        return InstitutionalFetch(EMPTY_T86, "t86", "error", reason)
+    if _has_institutional_rows(tables):
         log.info("%s source=t86 status=ok reason=t86_ok", day.isoformat())
         return InstitutionalFetch(tables, "t86", "ok", "t86_ok")
-    if token and fm is not None:
-        reason = why
-        log.warning(
-            "%s source_switch t86->finmind reason=%s", day.isoformat(), reason,
-        )
-        try:
-            tables = _call_finmind(day, token, fm)
-        except Exception as e:
-            log.error(
-                "%s source=finmind status=error reason=finmind_error (%s)",
-                day.isoformat(), e,
-            )
-            return InstitutionalFetch(EMPTY_T86, "finmind", "error", f"finmind_error:{type(e).__name__}")
-        if _has_institutional_rows(tables):
-            log.info(
-                "%s source=finmind status=ok reason=finmind_after_%s",
-                day.isoformat(), reason,
-            )
-            return InstitutionalFetch(tables, "finmind", "ok", f"finmind_after_{reason}")
-        log.error("%s source=finmind status=empty reason=finmind_empty", day.isoformat())
-        return InstitutionalFetch(tables, "finmind", "empty", "finmind_empty")
-    if tables is None:
-        log.error(
-            "%s source=none status=error reason=%s (no FINMIND_TOKEN)",
-            day.isoformat(), why,
-        )
-        return InstitutionalFetch(EMPTY_T86, "none", "error", why)
-    log.error(
-        "%s source=t86 status=empty reason=t86_empty (no FINMIND_TOKEN)",
-        day.isoformat(),
-    )
+    log.error("%s source=t86 status=empty reason=t86_empty", day.isoformat())
     return InstitutionalFetch(tables, "t86", "empty", "t86_empty")
 
 
@@ -656,15 +543,11 @@ def backfill_institutional_gaps(
     today: date | None = None,
     dry_run: bool = False,
     remote_dates: dict[str, set[str]] | None = None,
-    env: dict[str, str] | None = None,
     t86_fetch=None,
-    finmind_fetch=None,
 ) -> int:
     """Fill trust_daily/dealer_daily for foreign dates that still lack them.
 
-    Historical gaps: FinMind all-stocks-by-start_date is primary when
-    FINMIND_TOKEN is set (Actions cannot reliably scrape TWSE T86).
-    Daily T86 stays the first choice when it returns JSON.
+    Historical gaps and daily updates both use TWSE T86 only.
 
     When TURSO_* is configured (or `remote_dates` is injected), missing
     dates come from Turso foreign_daily ∪ local foreign_daily. Dates that
@@ -700,25 +583,11 @@ def backfill_institutional_gaps(
         loaded = None
     missing = missing_institutional_dates(conn, since=since, remote_dates=loaded)
     source = "turso+local foreign_daily" if loaded is not None else "local foreign_daily"
-    token = _finmind_token(env)
-    prefer = "finmind" if token else "t86"
     log.info(
-        "institutional gaps: %d dates missing vs %s%s; prefer=%s token=%s "
-        "source_plan=%s",
-        len(missing),
-        source,
+        "institutional gaps: %d dates missing vs %s%s; source=t86",
+        len(missing), source,
         f" (since {since})" if since else " (full foreign span)",
-        prefer,
-        "present" if token else "absent",
-        "FinMind primary (T86 fallback)" if prefer == "finmind"
-        else "T86 only (FinMind skipped: no FINMIND_TOKEN)",
     )
-    if prefer == "t86":
-        log.info(
-            "institutional gaps: no FINMIND_TOKEN; T86 only. "
-            "Actions IPs often get empty/HTML from TWSE — set FINMIND_TOKEN "
-            "for historical fill. Empty/failed T86 dates are failures."
-        )
     for line in institutional_coverage(conn, remote_dates=loaded):
         log.info("coverage %s", line)
     if dry_run:
@@ -726,7 +595,6 @@ def backfill_institutional_gaps(
             log.info("dry-run would fetch %s .. %s", missing[0], missing[-1])
         return 0
     n = 0
-    n_t86 = n_finmind = 0
     failed_dates: list[str] = []
     for ds in missing:
         day = date.fromisoformat(ds)
@@ -736,20 +604,12 @@ def backfill_institutional_gaps(
         try:
             fetched = fetch_institutional_day(
                 day,
-                prefer=prefer,
-                conn=conn,
-                env=env,
                 t86_fetch=t86_fetch,
-                finmind_fetch=finmind_fetch,
             )
             if fetched.status == "ok" and _has_institutional_rows(fetched.tables):
                 with conn:
                     persist_t86(conn, fetched.tables)
                 n += 1
-                if fetched.source == "finmind":
-                    n_finmind += 1
-                elif fetched.source == "t86":
-                    n_t86 += 1
                 log.info(
                     "%s source=%s status=ok 外資 %d / 投信 %d / 自營商 %d 檔",
                     ds, fetched.source, len(fetched.tables.foreign),
@@ -764,11 +624,11 @@ def backfill_institutional_gaps(
         except Exception as e:
             failed_dates.append(ds)
             log.error("%s institutional fetch 失敗: %s", ds, e)
-        time.sleep(SLEEP if fetched.source != "finmind" else _finmind_sleep())
+        time.sleep(SLEEP)
     log.info(
         "institutional gap fill: wrote=%d failed=%d missing=%d "
-        "source_t86=%d source_finmind=%d",
-        n, len(failed_dates), len(missing), n_t86, n_finmind,
+        "source=t86",
+        n, len(failed_dates), len(missing),
     )
     for line in institutional_coverage(conn, remote_dates=loaded):
         log.info("coverage %s", line)

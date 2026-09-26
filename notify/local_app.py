@@ -18,6 +18,7 @@ from web.tw_calendar import taiwan_now
 
 log = logging.getLogger(__name__)
 DEFAULT_STATE = repo_file(".cache", "intraday.db")
+POLL_SECONDS = 60
 STATUS_TEXT = {
     "starting": "啟動中",
     "paused": "已暫停",
@@ -43,11 +44,10 @@ def event_row(event):
 
 
 class IntradayApp:
-    def __init__(self, root, *, state=DEFAULT_STATE, interval=60,
+    def __init__(self, root, *, state=DEFAULT_STATE,
                  members_cache=etf_members.DEFAULT_CACHE):
         self.root = root
         self.state = Path(state)
-        self.interval = interval
         self.members_cache = Path(members_cache)
         self.messages = queue.SimpleQueue()
         self.stop_event = threading.Event()
@@ -112,7 +112,7 @@ class IntradayApp:
                         self.messages.put(("summary", summary))
                         for event in events:
                             self.messages.put(("event", event))
-                        delay = (self.interval if summary["status"] not in
+                        delay = (POLL_SECONDS if summary["status"] not in
                                  ("quote_error", "quote_unavailable", "membership_unavailable") else 300)
                         self.wake.wait(max(1, delay - (time.monotonic() - began)))
                         self.wake.clear()
@@ -189,13 +189,12 @@ class IntradayApp:
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--interval", type=int, default=60, choices=range(30, 61), metavar="30..60")
     parser.add_argument("--state", type=Path, default=DEFAULT_STATE)
     parser.add_argument("--members-cache", type=Path, default=etf_members.DEFAULT_CACHE)
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     root = tk.Tk()
-    IntradayApp(root, state=args.state, interval=args.interval, members_cache=args.members_cache)
+    IntradayApp(root, state=args.state, members_cache=args.members_cache)
     root.mainloop()
     return 0
 

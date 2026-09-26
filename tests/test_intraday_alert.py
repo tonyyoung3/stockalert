@@ -62,10 +62,21 @@ class DetectionTests(unittest.TestCase):
 
     def test_trading_hours_holidays_unknown_year(self):
         self.assertFalse(monitoring_session(clock(hour=8)))
+        self.assertTrue(monitoring_session(clock(hour=9)))
+        self.assertTrue(monitoring_session(clock(hour=12,minute=1,second=59)))
+        self.assertFalse(monitoring_session(clock(hour=12,minute=2,second=0)))
         self.assertFalse(monitoring_session(clock(hour=14)))
         self.assertFalse(monitoring_session(datetime(2026,9,26,10,tzinfo=TW)))
         self.assertFalse(monitoring_session(datetime(2026,10,9,10,tzinfo=TW)))
         self.assertFalse(monitoring_session(datetime(2030,1,2,10,tzinfo=TW)))
+
+    def test_noon_cutoff_excludes_noon_bar_but_accepts_last_morning_bar(self):
+        now = clock(hour=12, minute=0)
+        noon = now.replace(second=0)
+        morning = bars(noon)
+        self.assertTrue(evaluate(morning, now)["triggered"])
+        with_noon_bar = morning + [Bar(noon, 100, 110, 1000)]
+        self.assertEqual(evaluate(with_noon_bar, now)["bar_end"], noon.isoformat())
 
     def test_download_multiindex_and_missing_stock(self):
         frame=pd.DataFrame({('1100.TW','Low'):[100],('1100.TW','Close'):[102],

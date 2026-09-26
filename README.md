@@ -142,7 +142,7 @@ python -m market.us_collector hourly
 ### 0050 盤中急拉提醒（yfinance）
 
 `python -m notify.local_app` 啟動 macOS 本機視窗 App，不使用 Cloud Run、Cloud Scheduler 或 Slack。
-每 60 秒讀取 0050 股票持股的一分鐘 K；最新已完成分鐘收盤價相對五分鐘最低價上漲
+在台灣交易日 09:00–12:00 每 60 秒讀取 0050 股票持股的一分鐘 K；最新已完成分鐘收盤價相對五分鐘最低價上漲
 ≥ 2% 時在 App 內新增一行警示。同一波只一次、同股冷卻 15 分鐘；過期／缺漏資料略過。
 官方名單每日同步，無有效名單就暫停，不退回靜態名單。
 

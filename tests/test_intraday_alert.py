@@ -8,8 +8,8 @@ from unittest.mock import Mock, patch
 import pandas as pd
 
 from market.intraday_prices import Bar, evaluate, fetch_minutes, monitoring_session
-from notify.intraday_alert import Monitor, mark_notification, open_store, record_signal, worker_lock
-from notify.local_app import deliver_events, event_text, send_macos_notification
+from notify.intraday_alert import Monitor, open_store, recent_events, record_signal, worker_lock
+from notify.local_app import event_row
 from web.tw_calendar import TW
 
 
@@ -125,30 +125,19 @@ class StateTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 with worker_lock(self.path): pass
 
-    def test_local_notification_success_is_recorded(self):
-        event=self.record(); notifier=Mock()
-        self.assertEqual(deliver_events(self.conn,[event],notifier=notifier,now_fn=clock),[])
-        row=self.conn.execute('SELECT * FROM intraday_events').fetchone()
-        self.assertIsNotNone(row['notified_at']);self.assertIsNone(row['notification_error'])
-        notifier.assert_called_once_with(event)
+    def test_recent_events_are_newest_first(self):
+        first=self.record();self.record(minute=6,price=100);second=self.record(minute=21)
+        got=recent_events(self.conn)
+        self.assertEqual([row['event_id'] for row in got],[second['event_id'],first['event_id']])
 
-    def test_local_notification_failure_is_recorded_without_retry(self):
-        event=self.record();error=RuntimeError('notifications denied')
-        failures=deliver_events(self.conn,[event],notifier=Mock(side_effect=error),now_fn=clock)
-        self.assertEqual(failures[0][0]['event_id'],event['event_id'])
-        row=self.conn.execute('SELECT * FROM intraday_events').fetchone()
-        self.assertIsNone(row['notified_at']);self.assertEqual(row['notification_error'],'RuntimeError')
+    def test_recent_events_limit_is_clamped(self):
+        event=self.record()
+        self.assertEqual(recent_events(self.conn,0)[0]['event_id'],event['event_id'])
 
-    def test_native_notification_uses_argv_not_script_interpolation(self):
-        event=self.record();runner=Mock()
-        send_macos_notification(event,runner=runner)
-        argv=runner.call_args.args[0]
-        self.assertEqual(argv[0],'/usr/bin/osascript')
-        self.assertNotIn(event['name'],argv[2])
-        self.assertIn('10:00–10:05',event_text(event));self.assertIn('+2.00%',event_text(event))
-
-    def test_mark_notification_unknown_event_is_harmless(self):
-        mark_notification(self.conn,'missing',notified_at=clock())
+    def test_event_table_row_is_single_line(self):
+        row=event_row(self.record())
+        self.assertEqual(row,('2026-09-24 10:05','測試（1100）','+2.00%','100 → 102'))
+        self.assertFalse(any('\n' in value for value in row))
 
 
 class WorkerTests(unittest.TestCase):

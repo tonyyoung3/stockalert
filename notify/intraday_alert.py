@@ -2,7 +2,7 @@
 
 The monitor is deliberately local-only: it stores cooldown and event history in
 SQLite and never sends data to Slack or a cloud scheduler. ``local_app`` owns
-the UI and native notification delivery.
+the UI and displays alerts in its event table.
 """
 from __future__ import annotations
 
@@ -34,8 +34,7 @@ CREATE TABLE IF NOT EXISTS intraday_state (
 );
 CREATE TABLE IF NOT EXISTS intraday_events (
   event_id TEXT PRIMARY KEY, code TEXT NOT NULL, day TEXT NOT NULL,
-  bar_end TEXT NOT NULL, payload TEXT NOT NULL,
-  notified_at TEXT, notification_error TEXT
+  bar_end TEXT NOT NULL, payload TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS intraday_events_day ON intraday_events(day, bar_end);
 """
@@ -113,14 +112,19 @@ def record_signal(conn, code, name, signal, snapshot):
     return event
 
 
-def mark_notification(conn, event_id, *, notified_at=None, error=None):
-    """Persist the result of the single local notification attempt."""
-    with conn:
-        conn.execute(
-            "UPDATE intraday_events SET notified_at=?, notification_error=? WHERE event_id=?",
-            (taiwan_now(notified_at).isoformat() if notified_at and not error else None,
-             type(error).__name__ if error else None, event_id),
-        )
+def recent_events(conn, limit=100):
+    """Return recent persisted alerts, newest first, for the local event table."""
+    limit = max(1, min(int(limit), 500))
+    rows = conn.execute(
+        "SELECT payload FROM intraday_events ORDER BY bar_end DESC LIMIT ?", (limit,)
+    ).fetchall()
+    events = []
+    for row in rows:
+        try:
+            events.append(json.loads(row["payload"]))
+        except (TypeError, ValueError):
+            log.warning("Skipping invalid intraday event payload")
+    return events
 
 
 class Monitor:

@@ -311,3 +311,11 @@ Header **顯示範圍**（全域 `days`）只影響加權 K 線／走勢、外�
 PORT=8080 DASHBOARD_NO_BROWSER=1 python -m web.dashboard
 ```
 
+
+### 個股股價
+
+個股頁的「股價與成交量」使用 `stock_daily` 的未還原日 K，成交量以張顯示。
+最近收盤價、相對前一筆有效收盤價的漲跌及資料日期會一併顯示；不是盤中即時報價。
+股價獨立於外資資料載入，即使沒有外資列也能看股價。
+`GET /api/stock_prices?id=2330&days=90` 回傳完整 OHLCV、summary 與 `volume_unit: shares`；
+原有 `/api/stock_ohlc` 格式維持不變，供掃描頁收盤價疊圖使用。

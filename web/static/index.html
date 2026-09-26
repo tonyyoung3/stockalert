@@ -407,7 +407,7 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
 
 <div id="section-stock" class="page-section" role="tabpanel" aria-labelledby="tab-stock" hidden>
 <section class="card" style="margin-bottom:16px" id="stock-lookup">
-  <div class="chart-head"><h3>個股外資買賣超查詢</h3>
+  <div class="chart-head"><h3>個股行情與籌碼</h3>
     <span><span class="hint">拖曳／雙指縮放　</span><button class="reset-btn" onclick="resetZoom('c-stock')">重置</button></span></div>
   <div class="search">
     <div class="sid-search" id="sid-search">
@@ -417,6 +417,15 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
     </div>
     <button type="button" onclick="submitStockSearch()">查詢</button>
   </div>
+  <div id="stock-price-card" style="margin:16px 0">
+    <div class="chart-head"><h3>股價與成交量</h3>
+      <button type="button" class="reset-btn" onclick="resetZoom('c-stock-price');resetZoom('c-stock-volume')">重置</button></div>
+    <p id="stock-price-summary" role="status">請先選股查看股價。</p>
+    <p class="hint">收盤資料，非盤中即時報價；日 K 為未還原價格，成交量單位為張。期間沿用上方全域天數。</p>
+    <canvas id="c-stock-price" style="display:none" aria-label="個股日 K 線"></canvas>
+    <canvas id="c-stock-volume" style="display:none;margin-top:12px" aria-label="個股成交量"></canvas>
+  </div>
+  <h3>外資買賣超</h3>
   <canvas id="c-stock" style="display:none"></canvas>
   <canvas id="c-stock-margin" style="display:none;margin-top:16px"></canvas>
   <div id="stock-table" class="table-scroll"></div>
@@ -3258,7 +3267,44 @@ async function loadStockBrokerBranch(){
   }
 }
 
+let stockPriceRequest = 0;
+async function loadStockPrice(){
+  const request = ++stockPriceRequest;
+  const sid = stockId || parseStockId(document.getElementById('sid').value);
+  const summary = document.getElementById('stock-price-summary');
+  for(const id of ['c-stock-price','c-stock-volume']){
+    if(charts[id]){ charts[id].destroy(); delete charts[id]; }
+    document.getElementById(id).style.display = 'none';
+  }
+  summary.textContent = sid ? '股價載入中…' : '請先選股查看股價。';
+  if(!sid) return;
+  try {
+    const r = await j('/api/stock_prices?id='+encodeURIComponent(sid)+'&days='+days());
+    if(request !== stockPriceRequest) return;
+    if(r.error) throw new Error(r.error);
+    if(!(r.data||[]).length){ summary.textContent = sid+' 此期間尚無股價資料。'; return; }
+    const last = r.summary;
+    const delta = last.change==null ? '前收資料不足' :
+      (last.change>=0?'+':'')+last.change.toFixed(2)+'（'+(last.change_pct>=0?'+':'')+last.change_pct.toFixed(2)+'%）';
+    summary.textContent = r.id+' '+r.name+' · 收盤 '+last.close.toFixed(2)+' · '+delta+' · 資料日期 '+last.date;
+    document.getElementById('c-stock-price').style.display = 'block';
+    document.getElementById('c-stock-volume').style.display = 'block';
+    mk('c-stock-price', {type:'candlestick', data:{datasets:[{label:'日 K',
+      data:r.data.map(d=>({x:new Date(d.date+'T00:00:00+08:00').getTime(),o:d.open,h:d.high,l:d.low,c:d.close})),
+      color:{up:'#c0392b',down:'#27ae60',unchanged:'#6c757d'},
+      borderColor:{up:'#c0392b',down:'#27ae60',unchanged:'#6c757d'}}]},
+      options:{animation:false,plugins:{legend:{display:false},zoom:ZOOM},
+        scales:{x:{type:'timeseries',time:{unit:'day'},ticks:{maxTicksLimit:12}}}}});
+    mk('c-stock-volume', {type:'bar',data:{labels:r.data.map(d=>d.date),datasets:[{
+      label:'成交量（張）',data:r.data.map(d=>d.volume==null?null:d.volume/1000),
+      backgroundColor:r.data.map(d=>d.close>=d.open?'#c0392bcc':'#27ae60cc')}]},
+      options:{animation:false,plugins:{zoom:ZOOM},scales:{x:{ticks:{maxTicksLimit:12}},y:{beginAtZero:true}}}});
+  } catch(e) {
+    if(request === stockPriceRequest) summary.textContent = '股價載入失敗，請稍後重試。';
+  }
+}
 async function loadStock(){
+  loadStockPrice();
   const sid = stockId || parseStockId(document.getElementById('sid').value);
   if(!sid) return;
   const r = await j('/api/stock?id='+encodeURIComponent(sid)+'&days='+days());

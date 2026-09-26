@@ -141,14 +141,13 @@ python -m market.us_collector hourly
 
 ### 0050 盤中急拉提醒（yfinance）
 
-`python -m notify.intraday_alert` 啟動獨立常駐 worker，預設 dry-run、不送 Slack。
+`python -m notify.local_app` 啟動 macOS 本機視窗 App，不使用 Cloud Run、Cloud Scheduler 或 Slack。
 每 60 秒讀取 0050 股票持股的一分鐘 K；最新已完成分鐘收盤價相對五分鐘最低價上漲
-≥ 2% 時記錄事件。同一波只一次、同股冷卻 15 分鐘；過期／缺漏資料略過。
+≥ 2% 時顯示 macOS 通知。同一波只一次、同股冷卻 15 分鐘；過期／缺漏資料略過。
 官方名單每日同步，無有效名單就暫停，不退回靜態名單。
 
-用完整交易日 dry-run 確認延遲與覆蓋率後，加 `--send` 啟用既有 `SLACK_BOT_TOKEN` /
-`SLACK_CHANNEL`。狀態存持久 SQLite；Docker 常駐範例見 `compose.intraday.yml`。
-Yahoo 分鐘線可能延遲，這是近即時提醒，非逐筆行情。部署、規則與驗收見
+狀態與事件記錄保存在本機 `.cache/intraday.db`；關閉 App 就停止監控。
+Yahoo 分鐘線可能延遲，這是近即時提醒，非逐筆行情。安裝、規則與驗收見
 [盤中通知文件](docs/intraday_alerts.md)、[0050 名單](docs/0050_members.md)。
 
 ## 公開網站（Cloud Run）
@@ -322,4 +321,3 @@ Header **顯示範圍**（全域 `days`）只影響加權 K 線／走勢、外�
 ```bash
 PORT=8080 DASHBOARD_NO_BROWSER=1 python -m web.dashboard
 ```
-

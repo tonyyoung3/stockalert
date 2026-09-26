@@ -3290,7 +3290,7 @@ async function loadStockPrice(){
     document.getElementById('c-stock-price').style.display = 'block';
     document.getElementById('c-stock-volume').style.display = 'block';
     mk('c-stock-price', {type:'candlestick', data:{datasets:[{label:'日 K',
-      data:r.data.map(d=>({x:new Date(d.date+'T00:00:00+08:00').getTime(),o:d.open,h:d.high,l:d.low,c:d.close})),
+      data:r.data.map(d=>({x:new Date(d.date+'T00:00:00').getTime(),o:d.open,h:d.high,l:d.low,c:d.close})),
       color:{up:'#c0392b',down:'#27ae60',unchanged:'#6c757d'},
       borderColor:{up:'#c0392b',down:'#27ae60',unchanged:'#6c757d'}}]},
       options:{animation:false,plugins:{legend:{display:false},zoom:ZOOM},

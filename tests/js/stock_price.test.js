@@ -17,6 +17,7 @@ const result = id=>({id,name:'測試',data:[{date:'2026-09-24',open:100,high:103
  pending[0].resolve(result('2330'));await old;
  assert.match(elements['stock-price-summary'].textContent,/2317/);
  assert.equal(elements['c-stock-volume'].chart.data.datasets[0].data[0],1.5);
+ assert.equal(new Date(elements['c-stock-price'].chart.data.datasets[0].data[0].x).getDate(),24);
  let work=context.loadStockPrice();pending[2].resolve({data:[]});await work;
  assert.equal(elements['c-stock-price'].style.display,'none');
  assert.match(elements['stock-price-summary'].textContent,/尚無股價/);

@@ -1,7 +1,7 @@
 """Hot-N 分點主力 metrics from broker_branch_daily (#98 / epic #76).
 
-Query-time only. Reads the path-A 熱門前 N table already ingested by
-``market.broker_branch``. No FinMind calls, no N expansion, no BSR.
+Query-time only. Reads previously stored path-A 熱門前 N rows.
+Automatic ingestion is disabled; no HTTP calls or N expansion.
 Contract: docs/broker_main_force.md.
 """
 from __future__ import annotations

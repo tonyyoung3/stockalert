@@ -56,7 +56,7 @@ def expected_tw_trade_date(
     """Latest Taiwan trading day we expect rows for.
 
     `after_hour` is local Taiwan time. T86 / stock_daily use 16:00
-    (INCLUDE_TODAY_AFTER_HOUR). FinMind 分點 SecIdAgg is documented ~21:00
+    (INCLUDE_TODAY_AFTER_HOUR). Legacy broker-branch freshness uses 21:00
     and is served from GET /api/broker_branch/freshness — not /api/freshness.
     """
     tw = taiwan_now(now)

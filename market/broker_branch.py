@@ -1,17 +1,8 @@
 #!/usr/bin/env python3
-"""Broker-branch (分點買賣超) — path A scheduled ingest + read APIs.
+"""Read-only broker-branch queries over previously stored hot-N data.
 
-Path A (#61 / #54 / #53 / #108): 熱門前 N powers market Top; same tables
-for single-stock reads. Titles say 熱門股, never 全市場.
-
-**Actions write, service reads.** FinMind HTTP runs only from
-`python -m market.broker_branch ingest` (GitHub Actions /
-``.github/workflows/update_broker_branch.yml``) or a scheduled CLI.
-Dashboard / API request handlers never call FinMind. Empty tables stay
-honest empty + freshness. ``ingest_configured`` means this process has
-FINMIND_TOKEN for *scheduled* ingest — not website live fetch.
-
-Fixture load is TEST/DEV only. See docs/broker_branch.md.
+Automatic ingestion is disabled. Empty tables return honest empty states.
+Fixture loading is TEST/DEV only; see docs/broker_branch.md.
 """
 from __future__ import annotations
 
@@ -21,12 +12,8 @@ import logging
 import os
 import sqlite3
 import sys
-import time
-from contextvars import ContextVar
-from datetime import date, datetime
+from datetime import datetime
 from pathlib import Path
-
-import requests
 
 from data.paths import repo_file
 from data.sqlite_util import configure_local
@@ -34,17 +21,10 @@ from web import freshness as freshness_mod
 
 log = logging.getLogger(__name__)
 
-DATASET = "TaiwanStockTradingDailyReportSecIdAgg"
-FINMIND_SECID_AGG_URL = (
-    "https://api.finmindtrade.com/api/v4/taiwan_stock_trading_daily_report_secid_agg"
-)
 DEFAULT_HOT_N = 80
 DEFAULT_K = 15
 HOT_N_MAX = 500
-EXPECTED_AFTER_HOUR = 21  # Asia/Taipei; FinMind SecIdAgg docs, not T86 16:00
-HTTP_TIMEOUT = 45
-HTTP_RETRIES = 4
-HTTP_RETRY_STATUSES = {429, 500, 502, 503, 504}
+EXPECTED_AFTER_HOUR = 21  # Historical freshness cutoff, not an active schedule.
 
 TITLE_HOT_N = "熱門股分點動向"
 TITLE_FULL_MARKET = "全市場分點買賣超"
@@ -58,22 +38,7 @@ SLICE_DECISION = "hot_n"
 SOURCE_LIVE = "live"
 SOURCE_FIXTURE = "dev_fixture"
 
-BLOCKER = (
-    "FINMIND_TOKEN absent from this process. "
-    "Scheduled ingest (GitHub Actions / `python -m market.broker_branch ingest`) "
-    "needs the secret. Dashboard/API never call FinMind. "
-    "Path A is locked (熱門前 N market Top; same tables for stock reads)."
-)
-REQUEST_TIME_REFUSAL = (
-    "FinMind HTTP is not allowed on dashboard/API request. "
-    "Actions write; service reads. Use `python -m market.broker_branch ingest`."
-)
-
-# Default True so CLI ingest / unit tests work. dashboard.api() sets False
-# for the request ContextVar so Path B / request-time fetch cannot run.
-_finmind_http_allowed: ContextVar[bool] = ContextVar(
-    "finmind_http_allowed", default=True
-)
+BLOCKER = "分點自動更新已停用；僅供查詢既有資料。"
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS broker_branch_daily (
@@ -106,12 +71,8 @@ DEFAULT_FIXTURE = repo_file("tests", "fixtures", "broker_branch_sample.json")
 _DOTENV_LOADED = False
 
 
-class FinMindError(RuntimeError):
-    """FinMind client error. Message must never include the token."""
-
-
 def _ensure_dotenv() -> None:
-    """Load local .env once so FINMIND_TOKEN works outside GitHub Actions."""
+    """Load local display settings from .env once."""
     global _DOTENV_LOADED
     if _DOTENV_LOADED:
         return
@@ -129,34 +90,6 @@ def _env(env: dict[str, str] | None) -> dict[str, str]:
         _ensure_dotenv()
         return os.environ
     return env
-
-
-def token_value(env: dict[str, str] | None = None) -> str:
-    """Return the token string, or '' . Callers must not log the return value."""
-    return (_env(env).get("FINMIND_TOKEN") or "").strip()
-
-
-def token_present(env: dict[str, str] | None = None) -> bool:
-    return bool(token_value(env))
-
-
-def finmind_http_allowed() -> bool:
-    """False inside dashboard.api(); True for CLI ingest / tests."""
-    return bool(_finmind_http_allowed.get())
-
-
-def forbid_request_time_finmind():
-    """Disable FinMind HTTP for this request context. Returns a reset token."""
-    return _finmind_http_allowed.set(False)
-
-
-def reset_request_time_finmind(token) -> None:
-    _finmind_http_allowed.reset(token)
-
-
-def require_finmind_http() -> None:
-    if not finmind_http_allowed():
-        raise FinMindError(REQUEST_TIME_REFUSAL)
 
 
 def configured_hot_n(env: dict[str, str] | None = None) -> int:
@@ -179,21 +112,18 @@ def market_title(coverage: str) -> str:
 
 
 def ingest_status(env: dict[str, str] | None = None) -> dict:
-    """Token / path metadata. Does not fetch. ingest_configured ≠ website live."""
-    present = token_present(env)
+    """Read-only status; production ingestion is no longer available."""
     return {
         "kind": "broker_branch",
         "not": "t86_foreign",
-        "dataset": DATASET,
-        "token_present": present,
-        "ingest_configured": present,
+        "ingest_configured": False,
         "path": PATH,
         "slice_decision": SLICE_DECISION,
-        "blocker": None if present else BLOCKER,
+        "blocker": BLOCKER,
         "hot_n": configured_hot_n(env),
         "hot_n_default": DEFAULT_HOT_N,
         "expected_after_hour": EXPECTED_AFTER_HOUR,
-        "writes": "actions_or_cli",
+        "writes": "disabled",
         "reads": "db",
     }
 
@@ -299,22 +229,15 @@ def row_count(conn: sqlite3.Connection) -> int:
 
 
 def data_mode(conn: sqlite3.Connection, env: dict[str, str] | None = None) -> str:
-    """How the current rows were produced.
-
-    Fixture vs live is stored in broker_branch_meta.source so Cloud Run
-    (which has Turso rows but usually no FINMIND_TOKEN) does not label
-    production ingest as 示範 fixture.
-    """
+    """Read stored provenance independently of process configuration."""
     if not row_count(conn):
-        # Empty is empty. Cloud Run usually has no FINMIND_TOKEN; that does
-        # not mean the website is "awaiting token" to live-fetch.
         return DATA_MODE_EMPTY
     source = _meta_get(conn, "source")
     if source == SOURCE_LIVE:
         return DATA_MODE_LIVE
     if source == SOURCE_FIXTURE:
         return DATA_MODE_FIXTURE
-    return DATA_MODE_LIVE if token_present(env) else DATA_MODE_FIXTURE
+    return DATA_MODE_FIXTURE
 
 
 def coverage_for_rows(conn: sqlite3.Connection) -> str:
@@ -332,9 +255,8 @@ def freshness_payload(conn: sqlite3.Connection, now: datetime | None = None) -> 
     status = freshness_mod.table_status("broker_branch_daily", last, today, expected)
     status["expected_trade_date"] = expected.isoformat()
     status["expected_after_hour"] = EXPECTED_AFTER_HOUR
-    status["note"] = (
-        "分點 freshness 用 21:00 台灣時間，不併入 /api/freshness 的 T86 16:00 關鍵表。"
-    )
+    status["automatic_updates"] = False
+    status["note"] = BLOCKER
     return status
 
 
@@ -350,12 +272,12 @@ def _envelope(
     mode = data_mode(conn, env)
     slice_day = _meta_get(conn, "slice_trade_date") or latest_stock_daily_date(conn)
     if coverage == "hot_n":
-        note = "加總範圍是已入庫的熱門前 N 檔，不是全市場。網站只讀資料庫，不即時拉 FinMind。"
+        note = "加總範圍是已入庫的熱門前 N 檔，不是全市場。網站只讀資料庫；分點自動更新已停用。"
     elif coverage == "single_stock":
         note = "該檔讀已入庫熱門前 N 列，不是全市場、也不是 on-demand 拉檔。網站只讀資料庫。"
     else:
         note = (
-            "路徑 A 空狀態：熱門前 N 尚無入庫列。網站只讀資料庫，不即時拉 FinMind。"
+            "路徑 A 空狀態：熱門前 N 尚無入庫列。網站只讀資料庫；分點自動更新已停用。"
             "標題是熱門股，不是全市場。"
         )
     body = {
@@ -371,7 +293,7 @@ def _envelope(
     if mode == DATA_MODE_FIXTURE:
         body["fixture_warning"] = (
             "Rows are a TEST/DEV fixture (or local upsert). "
-            "Not a production FinMind feed. Do not merge as live data."
+            "Not a production feed. Do not merge as live data."
         )
     body.update(extra)
     return body
@@ -633,320 +555,6 @@ def load_fixture(
     }
 
 
-def _as_int(value) -> int:
-    try:
-        return int(float(value))
-    except (TypeError, ValueError):
-        return 0
-
-
-def map_secid_agg_row(raw: dict) -> tuple | None:
-    """Map one FinMind SecIdAgg row. Drops buy_price / sell_price."""
-    broker_id = str(raw.get("securities_trader_id") or "").strip()
-    stock_id = str(raw.get("stock_id") or raw.get("data_id") or "").strip()
-    day = str(raw.get("date") or raw.get("trade_date") or "").strip()[:10]
-    if not broker_id or not stock_id or not day:
-        return None
-    buy = _as_int(raw.get("buy_volume"))
-    sell = _as_int(raw.get("sell_volume"))
-    return (day, stock_id, broker_id, buy, sell, buy - sell)
-
-
-def finmind_headers(token: str) -> dict[str, str]:
-    """Authorization only. Never put the token in the query string."""
-    return {"Authorization": f"Bearer {token}"}
-
-
-def fetch_secid_agg(
-    stock_id: str,
-    start_date: str,
-    end_date: str,
-    token: str,
-    *,
-    session: requests.Session | None = None,
-    sleep: callable = time.sleep,
-) -> list[dict]:
-    """GET SecIdAgg for one stock_id. Token is Bearer-only, never logged.
-
-    CLI / Actions only. Dashboard request context raises REQUEST_TIME_REFUSAL.
-    """
-    require_finmind_http()
-    if not token:
-        raise FinMindError("FINMIND_TOKEN missing; refusing to call FinMind")
-    params = {
-        "data_id": stock_id,
-        "start_date": start_date,
-        "end_date": end_date,
-    }
-    sess = session or requests.Session()
-    last_err: Exception | None = None
-    for attempt in range(HTTP_RETRIES):
-        try:
-            resp = sess.get(
-                FINMIND_SECID_AGG_URL,
-                params=params,
-                headers=finmind_headers(token),
-                timeout=HTTP_TIMEOUT,
-            )
-        except requests.RequestException as exc:
-            last_err = exc
-            log.warning(
-                "FinMind SecIdAgg network error stock_id=%s attempt=%s: %s",
-                stock_id,
-                attempt + 1,
-                type(exc).__name__,
-            )
-            sleep(2 ** attempt)
-            continue
-        if resp.status_code in (401, 403):
-            raise FinMindError("FinMind auth failed (check FINMIND_TOKEN)")
-        if resp.status_code in HTTP_RETRY_STATUSES:
-            log.warning(
-                "FinMind SecIdAgg HTTP %s stock_id=%s attempt=%s",
-                resp.status_code,
-                stock_id,
-                attempt + 1,
-            )
-            sleep(2 ** attempt)
-            continue
-        if resp.status_code >= 400:
-            raise FinMindError(
-                f"FinMind SecIdAgg HTTP {resp.status_code} stock_id={stock_id}"
-            )
-        try:
-            payload = resp.json()
-        except ValueError as exc:
-            raise FinMindError(
-                f"FinMind SecIdAgg invalid JSON stock_id={stock_id}"
-            ) from exc
-        if not isinstance(payload, dict):
-            raise FinMindError(
-                f"FinMind SecIdAgg unexpected payload stock_id={stock_id}"
-            )
-        status = payload.get("status")
-        msg = str(payload.get("msg") or "").lower()
-        if status not in (None, 200) and msg not in ("", "success"):
-            raise FinMindError(
-                f"FinMind SecIdAgg status={status} stock_id={stock_id}"
-            )
-        data = payload.get("data") or []
-        if not isinstance(data, list):
-            raise FinMindError(
-                f"FinMind SecIdAgg data is not a list stock_id={stock_id}"
-            )
-        return data
-    raise FinMindError(
-        f"FinMind SecIdAgg failed after retries stock_id={stock_id} "
-        f"({type(last_err).__name__ if last_err else 'http'})"
-    )
-
-
-def upsert_live_rows(
-    conn: sqlite3.Connection,
-    mapped: list[tuple],
-    brokers: list[tuple[str, str]],
-) -> int:
-    """Write day aggregates. Does not accept fixture provenance."""
-    if not mapped:
-        return 0
-    ensure_schema(conn)
-    if brokers:
-        conn.executemany(
-            "INSERT OR REPLACE INTO brokers (broker_id, broker_name) VALUES (?, ?)",
-            brokers,
-        )
-    conn.executemany(
-        "INSERT OR REPLACE INTO broker_branch_daily "
-        "(trade_date, stock_id, broker_id, buy_volume, sell_volume, net_volume) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        mapped,
-    )
-    conn.commit()
-    return len(mapped)
-
-
-def _ingest_dates(conn: sqlite3.Connection, end: str, days: int) -> list[str]:
-    """Trading days to ingest, newest first. days=1 is just `end`."""
-    if days <= 1:
-        return [end]
-    try:
-        rows = conn.execute(
-            "SELECT DISTINCT trade_date FROM stock_daily "
-            "WHERE trade_date <= ? ORDER BY trade_date DESC LIMIT ?",
-            (end, days),
-        ).fetchall()
-    except sqlite3.OperationalError:
-        return [end]
-    dates = [str(r[0]) for r in rows if r and r[0]]
-    return dates or [end]
-
-
-def resolve_ingest_date(
-    conn: sqlite3.Connection,
-    trade_date: str | None = None,
-    now: datetime | None = None,
-) -> str:
-    if trade_date:
-        return trade_date
-    expected = freshness_mod.expected_tw_trade_date(now, after_hour=EXPECTED_AFTER_HOUR)
-    latest_sd = latest_stock_daily_date(conn)
-    if latest_sd and latest_sd > expected.isoformat():
-        return latest_sd
-    return expected.isoformat()
-
-
-def ingest_hot_n(
-    conn: sqlite3.Connection,
-    *,
-    trade_date: str | None = None,
-    n: int | None = None,
-    days: int = 1,
-    env: dict[str, str] | None = None,
-    fetcher=None,
-    now: datetime | None = None,
-) -> dict:
-    """Path A scheduled ingest: hot-N from stock_daily.turnover, then SecIdAgg.
-
-    CLI / Actions only. Does not load the TEST/DEV fixture.
-    Refuses without FINMIND_TOKEN and refuses on dashboard/API request.
-    """
-    require_finmind_http()
-    token = token_value(env)
-    if not token:
-        raise FinMindError(
-            "FINMIND_TOKEN missing; path A scheduled ingest will not call FinMind"
-        )
-    n = configured_hot_n(env) if n is None else max(1, min(int(n), HOT_N_MAX))
-    days = max(1, min(int(days), 730))
-    end = resolve_ingest_date(conn, trade_date, now)
-    fetch = fetcher or (
-        lambda sid, start, stop: fetch_secid_agg(sid, start, stop, token)
-    )
-    ensure_schema(conn)
-
-    days_done: list[dict] = []
-    failed_stocks: list[str] = []
-    total_rows = 0
-    last_slice = None
-    ingest_days = _ingest_dates(conn, end, days)
-
-    for day in ingest_days:
-        slice_day = stock_daily_date_on_or_before(conn, day) or latest_stock_daily_date(
-            conn
-        )
-        picked = select_hot_n(conn, n=n, trade_date=slice_day) if slice_day else []
-        if not picked:
-            raise FinMindError(
-                "no stock_daily turnover slice; cannot pick 熱門前 N "
-                f"(ingest_date={day})"
-            )
-        last_slice = slice_day
-        mapped: list[tuple] = []
-        brokers: list[tuple[str, str]] = []
-        day_fail: list[str] = []
-        for stock_id, _name, _turnover in picked:
-            try:
-                raw_rows = fetch(stock_id, day, day)
-            except FinMindError:
-                log.exception("FinMind SecIdAgg failed stock_id=%s date=%s", stock_id, day)
-                day_fail.append(stock_id)
-                continue
-            except Exception:
-                log.exception("FinMind SecIdAgg failed stock_id=%s date=%s", stock_id, day)
-                day_fail.append(stock_id)
-                continue
-            for raw in raw_rows:
-                mapped_row = map_secid_agg_row(raw)
-                if mapped_row is None:
-                    continue
-                mapped.append(mapped_row)
-                name = str(raw.get("securities_trader") or mapped_row[2]).strip()
-                brokers.append((mapped_row[2], name or mapped_row[2]))
-        wrote = upsert_live_rows(conn, mapped, brokers)
-        total_rows += wrote
-        failed_stocks.extend(day_fail)
-        days_done.append(
-            {
-                "trade_date": day,
-                "slice_trade_date": slice_day,
-                "hot_n": len(picked),
-                "rows": wrote,
-                "failed_stocks": day_fail,
-                "title": TITLE_HOT_N,
-            }
-        )
-        log.info(
-            "熱門股分點 ingest date=%s slice=%s n=%s rows=%s failed=%s",
-            day,
-            slice_day,
-            len(picked),
-            wrote,
-            len(day_fail),
-        )
-
-    if total_rows == 0:
-        raise FinMindError(
-            "FinMind returned no SecIdAgg rows for 熱門前 N "
-            f"(date={end}); data may not be published yet"
-        )
-    fail_ratio = len(failed_stocks) / max(
-        sum(item["hot_n"] for item in days_done), 1
-    )
-    if fail_ratio > 0.5:
-        raise FinMindError(
-            f"FinMind failed for {len(failed_stocks)} of hot-N stocks; not marking live"
-        )
-
-    _meta_set(
-        conn,
-        {
-            "source": SOURCE_LIVE,
-            "slice_trade_date": last_slice or end,
-            "ingest_trade_date": end,
-            "hot_n": str(n),
-        },
-    )
-    return {
-        "title": TITLE_HOT_N,
-        "coverage": "hot_n",
-        "path": PATH,
-        "ingest_configured": True,
-        "production": True,
-        "data_mode": DATA_MODE_LIVE,
-        "trade_date": end,
-        "slice_trade_date": last_slice,
-        "hot_n": n,
-        "rows": total_rows,
-        "failed_stocks": failed_stocks,
-        "days": days_done,
-        "dataset": DATASET,
-    }
-
-
-def push_turso_if_configured(
-    *,
-    days: int = 14,
-    today: date | None = None,
-    skip: bool = False,
-) -> dict:
-    """Reuse cloud_db.push_market_files (trade_date window + full brokers/meta)."""
-    from data import cloud_db
-
-    if skip:
-        log.info("Turso push skipped (--skip-turso)")
-        return {"skipped": True}
-    if not cloud_db.configured():
-        log.info(
-            "Turso not configured; broker_branch_daily stayed in local sqlite. "
-            "Follow-up: set TURSO_DATABASE_URL + TURSO_AUTH_TOKEN to push "
-            "broker_branch_daily / brokers / broker_branch_meta on the existing N-day window."
-        )
-        return {"skipped": True, "reason": "not_configured"}
-    pushed = cloud_db.push_market_files(days=days, today=today)
-    log.info("Turso push complete for 熱門股分點 tables (existing cloud_db window)")
-    return pushed
-
-
 def _connect_local() -> sqlite3.Connection:
     from market.collector import DB_PATH, init_db
 
@@ -960,15 +568,12 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
     _ensure_dotenv()
     parser = argparse.ArgumentParser(
-        description=(
-            "Broker-branch helpers: status, TEST/DEV fixture, or path A scheduled "
-            "ingest（熱門股分點動向，不是全市場）。FinMind writes are CLI/Actions only."
-        ),
+        description="Broker-branch read-only status and TEST/DEV fixture helpers.",
     )
     parser.add_argument(
         "command",
         nargs="?",
-        choices=("status", "load-fixture", "ingest"),
+        choices=("status", "load-fixture"),
         default="status",
     )
     parser.add_argument(
@@ -977,25 +582,10 @@ def main(argv: list[str] | None = None) -> int:
         help="required for load-fixture; marks the write as TEST/DEV",
     )
     parser.add_argument("--fixture", type=Path, default=DEFAULT_FIXTURE)
-    parser.add_argument("--date", default="", help="ingest trade date YYYY-MM-DD")
-    parser.add_argument("--n", type=int, default=None, help="hot-N (default BROKER_BRANCH_HOT_N or 80)")
-    parser.add_argument("--days", type=int, default=1, help="calendar days to ingest ending at --date")
-    parser.add_argument(
-        "--skip-turso",
-        action="store_true",
-        help="do not push local sqlite to Turso even if secrets are set",
-    )
-    parser.add_argument(
-        "--turso-days",
-        type=int,
-        default=14,
-        help="N-day window for cloud_db.push_market_files (default 14)",
-    )
     args = parser.parse_args(argv)
 
     if args.command == "status":
         status = ingest_status()
-        # Never dump the token; ingest_status only has booleans.
         print(json.dumps(status, ensure_ascii=False, indent=2))
         return 0
 
@@ -1009,42 +599,6 @@ def main(argv: list[str] | None = None) -> int:
         finally:
             conn.close()
         print(json.dumps(result, ensure_ascii=False, indent=2))
-        return 0
-
-    if args.command == "ingest":
-        if not token_present():
-            log.error(
-                "ingest refused: FINMIND_TOKEN missing. "
-                "Path A scheduled ingest will not call FinMind. "
-                "Set the GitHub Actions secret or local .env (not required on Cloud Run)."
-            )
-            return 2
-        conn = _connect_local()
-        try:
-            result = ingest_hot_n(
-                conn,
-                trade_date=args.date or None,
-                n=args.n,
-                days=args.days,
-            )
-        except FinMindError as exc:
-            log.error("scheduled ingest failed: %s", exc)
-            conn.close()
-            return 1
-        except Exception:
-            log.exception("scheduled ingest failed")
-            conn.close()
-            return 1
-        conn.close()
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-        try:
-            push_turso_if_configured(
-                days=args.turso_days,
-                skip=args.skip_turso,
-            )
-        except Exception:
-            log.exception("Turso push failed")
-            return 1
         return 0
 
     return 1

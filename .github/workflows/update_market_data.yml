@@ -59,9 +59,6 @@ jobs:
           INSTITUTIONAL_GAPS: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.institutional_gaps || 'false' }}
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
-          # Historical T86 from Actions IPs often returns empty/HTML, not JSON.
-          # institutional_gaps uses FinMind (TaiwanStockInstitutionalInvestorsBuySell).
-          FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
         run: |
           set -o pipefail
           if [ "$INSTITUTIONAL_GAPS" = "true" ]; then
@@ -97,6 +94,3 @@ jobs:
           SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
           GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: python -m notify.notify_job --title "市場資料更新失敗" --log market-update.log
-
-  # broker-branch / 熱門股分點動向 lives in update_broker_branch.yml (#61).
-  # Weekday ~21:00 Asia/Taipei — do NOT fold FinMind calls into this 18:00 job.

@@ -1,0 +1,14 @@
+# One worker, durable local state. Default: dry-run with no Slack sends.
+services:
+  intraday:
+    build: .
+    command: ["python", "-m", "notify.intraday_alert"]
+    restart: unless-stopped
+    volumes:
+      - intraday-state:/app/.cache
+    environment:
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
+      SLACK_CHANNEL: ${SLACK_CHANNEL:-}
+      DASHBOARD_PUBLIC_URL: ${DASHBOARD_PUBLIC_URL:-}
+volumes:
+  intraday-state:

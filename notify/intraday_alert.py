@@ -1,4 +1,4 @@
-"""0050 five-minute +2% signal engine for the local desktop app.
+"""Configurable five-minute rise signal engine for the local desktop app.
 
 The monitor is deliberately local-only: it stores cooldown and event history in
 SQLite and never sends data to Slack or a cloud scheduler. ``local_app`` owns
@@ -11,9 +11,11 @@ from collections import Counter
 from contextlib import contextmanager
 from datetime import datetime, time as day_time, timedelta
 import fcntl
+import hashlib
 import json
 import logging
 from pathlib import Path
+import re
 import sqlite3
 import time
 import uuid
@@ -26,6 +28,10 @@ from web.tw_calendar import HOLIDAY_YEARS, is_tw_trading_day, taiwan_now
 log = logging.getLogger(__name__)
 COOLDOWN_SECONDS = 15 * 60
 WARMUP_SECONDS = 5 * 60
+POLL_SECONDS = 60
+MAX_SYMBOLS_PER_CYCLE = 50
+DEFAULT_SETTINGS = {"threshold_pct": 2.0, "universe": "0050", "custom_codes": []}
+UNIVERSES = {"0050", "all", "custom"}
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS intraday_state (
   code TEXT NOT NULL, day TEXT NOT NULL, last_bar TEXT NOT NULL,
@@ -48,6 +54,79 @@ def open_store(path):
     conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript(SCHEMA)
     return conn
+
+
+def parse_codes(value):
+    """Normalize comma/space/newline separated Taiwan stock codes."""
+    if isinstance(value, str):
+        values = re.split(r"[\s,，;；]+", value.strip()) if value.strip() else []
+    elif isinstance(value, (list, tuple)):
+        values = value
+    else:
+        raise ValueError("custom_codes must be text or a list")
+    codes = []
+    for raw in values:
+        code = str(raw).strip().upper()
+        if code.endswith(".TW"):
+            code = code[:-3]
+        if not re.fullmatch(r"[1-9][0-9]{3}", code):
+            raise ValueError(f"Invalid Taiwan stock code: {raw}")
+        if code not in codes:
+            codes.append(code)
+    return codes
+
+
+def validate_settings(value):
+    value = value if isinstance(value, dict) else {}
+    universe = str(value.get("universe", "0050"))
+    if universe not in UNIVERSES:
+        raise ValueError("universe must be 0050, all, or custom")
+    try:
+        threshold = float(value.get("threshold_pct", 2))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("threshold_pct must be a number") from exc
+    if not 0.1 <= threshold <= 20:
+        raise ValueError("threshold_pct must be between 0.1 and 20")
+    codes = parse_codes(value.get("custom_codes", []))
+    if universe == "custom" and not codes:
+        raise ValueError("Custom list cannot be empty")
+    return {"threshold_pct": threshold, "universe": universe, "custom_codes": codes}
+
+
+def load_settings(path):
+    try:
+        return validate_settings(json.loads(Path(path).read_text()))
+    except FileNotFoundError:
+        return dict(DEFAULT_SETTINGS)
+    except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        log.warning("Invalid intraday settings (%s); using defaults", type(exc).__name__)
+        return dict(DEFAULT_SETTINGS)
+
+
+def save_settings(path, settings):
+    settings = validate_settings(settings)
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_suffix(path.suffix + ".tmp")
+    temp.write_text(json.dumps(settings, ensure_ascii=False, indent=2) + "\n")
+    temp.replace(path)
+    return settings
+
+
+def load_all_stock_codes(path=repo_file("taiwan_stocks.txt")):
+    codes = parse_codes(Path(path).read_text().splitlines())
+    if not codes:
+        raise ValueError("Taiwan stock list is empty")
+    return codes
+
+
+def local_snapshot(kind, codes, now):
+    version = hashlib.sha256((kind + ":" + ",".join(codes)).encode()).hexdigest()[:16]
+    return {
+        "etf": kind, "asof": now.date().isoformat(), "version": version,
+        "source": "taiwan_stocks.txt" if kind == "all" else "custom",
+        "stocks": [{"code": code, "name": code, "weight": 1} for code in codes],
+    }
 
 
 @contextmanager
@@ -85,7 +164,7 @@ def record_signal(conn, code, name, signal, snapshot):
             armed = True
         elif armed and (not cooldown or end >= datetime.fromisoformat(cooldown)):
             event_id = str(uuid.uuid5(
-                uuid.NAMESPACE_URL, "0050-rise-v1:" + code + ":" + end.isoformat()
+                uuid.NAMESPACE_URL, "local-rise-v2:" + code + ":" + end.isoformat()
             ))
             event = {
                 **signal,
@@ -94,6 +173,7 @@ def record_signal(conn, code, name, signal, snapshot):
                 "name": name,
                 "membership_asof": snapshot["asof"],
                 "membership_version": snapshot["version"],
+                "universe": snapshot["etf"],
             }
             conn.execute(
                 "INSERT OR IGNORE INTO intraday_events "
@@ -128,18 +208,44 @@ def recent_events(conn, limit=100):
 
 
 class Monitor:
-    def __init__(self, conn, *, members_path=etf_members.DEFAULT_CACHE, loader=None, fetcher=None):
+    def __init__(self, conn, *, members_path=etf_members.DEFAULT_CACHE,
+                 all_stocks_path=repo_file("taiwan_stocks.txt"), settings=None,
+                 loader=None, fetcher=None):
         self.conn = conn
         self.members_path = members_path
+        self.all_stocks_path = all_stocks_path
         self.loader = loader or etf_members.load_members
         self.fetcher = fetcher or fetch_minutes
+        self.settings = validate_settings(settings or DEFAULT_SETTINGS)
         self.snapshot = None
         self.members_checked = None
+        self.batch_cursor = 0
         self.day = None
         self.ready_at = {}
         self.last_good = {}
 
+    def configure(self, settings):
+        settings = validate_settings(settings)
+        universe_changed = (settings["universe"], settings["custom_codes"]) != (
+            self.settings["universe"], self.settings["custom_codes"])
+        self.settings = settings
+        self.ready_at.clear()
+        self.last_good.clear()
+        if universe_changed:
+            self.snapshot = None
+            self.members_checked = None
+            self.batch_cursor = 0
+
     def refresh_members(self, now):
+        if self.settings["universe"] == "all":
+            if not self.snapshot:
+                self.snapshot = local_snapshot(
+                    "all", load_all_stock_codes(self.all_stocks_path), now)
+            return
+        if self.settings["universe"] == "custom":
+            if not self.snapshot:
+                self.snapshot = local_snapshot("custom", self.settings["custom_codes"], now)
+            return
         if (not self.snapshot or not self.members_checked
                 or self.members_checked.date() != now.date()
                 or (now - self.members_checked).total_seconds() >= 900):
@@ -147,10 +253,22 @@ class Monitor:
             self.members_checked = now
         etf_members.validate(self.snapshot, now.date())
 
+    def next_batch(self, members):
+        codes = sorted(members)
+        if len(codes) <= MAX_SYMBOLS_PER_CYCLE:
+            return {code: members[code] for code in codes}
+        start = self.batch_cursor % len(codes)
+        selected = codes[start:start + MAX_SYMBOLS_PER_CYCLE]
+        self.batch_cursor = (0 if start + MAX_SYMBOLS_PER_CYCLE >= len(codes)
+                             else start + MAX_SYMBOLS_PER_CYCLE)
+        return {code: members[code] for code in selected}
+
     def cycle(self, now=None):
         live_clock = now is None
         now = taiwan_now(now)
-        summary = {"at": now.isoformat(), "mode": "local"}
+        summary = {"at": now.isoformat(), "mode": "local",
+                   "universe": self.settings["universe"],
+                   "threshold_pct": self.settings["threshold_pct"]}
         if (now.year in HOLIDAY_YEARS and is_tw_trading_day(now.date())
                 and day_time(8, 45) <= now.time() < day_time(9)):
             try:
@@ -170,6 +288,9 @@ class Monitor:
             self.day = now.date()
             self.ready_at.clear()
             self.last_good.clear()
+            self.batch_cursor = 0
+            if self.settings["universe"] != "0050":
+                self.snapshot = None
             with self.conn:
                 self.conn.execute(
                     "DELETE FROM intraday_state WHERE day<?",
@@ -184,11 +305,13 @@ class Monitor:
         except Exception as exc:
             self.ready_at.clear()
             self.last_good.clear()
-            log.error("0050 membership unavailable: %s", type(exc).__name__)
+            log.error("Monitoring universe unavailable: %s", type(exc).__name__)
             return {**summary, "status": "membership_unavailable", "event_items": []}
         members = {row["code"]: row["name"] for row in self.snapshot["stocks"]}
+        batch = self.next_batch(members)
+        rotating = len(members) > MAX_SYMBOLS_PER_CYCLE
         try:
-            quotes = self.fetcher(members)
+            quotes = self.fetcher(batch)
         except Exception as exc:
             self.ready_at.clear()
             self.last_good.clear()
@@ -203,8 +326,8 @@ class Monitor:
         counts = Counter()
         delays = []
         events = []
-        for code, name in members.items():
-            signal = evaluate(quotes.get(code, []), now)
+        for code, name in batch.items():
+            signal = evaluate(quotes.get(code, []), now, self.settings["threshold_pct"])
             counts[signal["status"]] += 1
             if "delay_seconds" in signal:
                 delays.append(signal["delay_seconds"])
@@ -212,7 +335,9 @@ class Monitor:
                 self.ready_at.pop(code, None)
                 self.last_good.pop(code, None)
                 continue
-            if code not in self.ready_at or (now - self.last_good.get(code, now)).total_seconds() > MAX_DELAY:
+            if (code not in self.ready_at
+                    or (not rotating and
+                        (now - self.last_good.get(code, now)).total_seconds() > MAX_DELAY)):
                 self.ready_at[code] = now + timedelta(seconds=WARMUP_SECONDS)
             self.last_good[code] = now
             if now < self.ready_at[code]:
@@ -224,9 +349,10 @@ class Monitor:
                 log.info("%s", json.dumps(event, ensure_ascii=False))
         return {
             **summary,
-            "status": ("ok" if counts["ok"] == len(members)
+            "status": ("ok" if counts["ok"] == len(batch)
                        else "degraded" if counts["ok"] else "quote_unavailable"),
             "members": len(members),
+            "checked": len(batch),
             "membership_asof": self.snapshot["asof"],
             "counts": dict(counts),
             "max_delay_seconds": max(delays, default=None),
@@ -238,7 +364,6 @@ class Monitor:
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--once", action="store_true", help="Run one diagnostic cycle")
-    parser.add_argument("--interval", type=int, default=60, choices=range(30, 61), metavar="30..60")
     parser.add_argument("--state", type=Path, default=repo_file(".cache", "intraday.db"))
     parser.add_argument("--members-cache", type=Path, default=etf_members.DEFAULT_CACHE)
     args = parser.parse_args(argv)
@@ -256,7 +381,7 @@ def main(argv=None):
                 print(json.dumps(summary, ensure_ascii=False), flush=True)
                 if args.once:
                     return 0 if summary["status"] in ("ok", "off_hours", "preopen") else 1
-                delay = (args.interval if summary["status"] not in
+                delay = (POLL_SECONDS if summary["status"] not in
                          ("quote_error", "quote_unavailable", "membership_unavailable") else 300)
                 time.sleep(max(1, delay - (time.monotonic() - began)))
         except KeyboardInterrupt:

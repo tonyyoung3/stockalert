@@ -8,7 +8,10 @@ from unittest.mock import Mock, patch
 import pandas as pd
 
 from market.intraday_prices import Bar, evaluate, fetch_minutes, monitoring_session
-from notify.intraday_alert import Monitor, open_store, recent_events, record_signal, worker_lock
+from notify.intraday_alert import (
+    Monitor, load_settings, open_store, parse_codes, recent_events, record_signal,
+    save_settings, validate_settings, worker_lock,
+)
 from notify.local_app import event_row
 from web.tw_calendar import TW
 
@@ -33,6 +36,12 @@ class DetectionTests(unittest.TestCase):
         self.assertTrue(evaluate(bars(),clock())["triggered"])
         self.assertFalse(evaluate(bars(price=101.999),clock())["triggered"])
         self.assertEqual(evaluate(bars(),clock())["rise_pct"],2)
+
+    def test_configurable_threshold(self):
+        self.assertTrue(evaluate(bars(price=101.5), clock(), 1.5)["triggered"])
+        self.assertFalse(evaluate(bars(price=101.5), clock(), 1.6)["triggered"])
+        with self.assertRaises(ValueError):
+            evaluate(bars(), clock(), 0)
 
     def test_complete_bar_only_even_with_unfinished_spike(self):
         data=bars(price=100)+[Bar(clock(second=0),100,120,1000)]
@@ -62,10 +71,21 @@ class DetectionTests(unittest.TestCase):
 
     def test_trading_hours_holidays_unknown_year(self):
         self.assertFalse(monitoring_session(clock(hour=8)))
+        self.assertTrue(monitoring_session(clock(hour=9)))
+        self.assertTrue(monitoring_session(clock(hour=12,minute=1,second=59)))
+        self.assertFalse(monitoring_session(clock(hour=12,minute=2,second=0)))
         self.assertFalse(monitoring_session(clock(hour=14)))
         self.assertFalse(monitoring_session(datetime(2026,9,26,10,tzinfo=TW)))
         self.assertFalse(monitoring_session(datetime(2026,10,9,10,tzinfo=TW)))
         self.assertFalse(monitoring_session(datetime(2030,1,2,10,tzinfo=TW)))
+
+    def test_noon_cutoff_excludes_noon_bar_but_accepts_last_morning_bar(self):
+        now = clock(hour=12, minute=0)
+        noon = now.replace(second=0)
+        morning = bars(noon)
+        self.assertTrue(evaluate(morning, now)["triggered"])
+        with_noon_bar = morning + [Bar(noon, 100, 110, 1000)]
+        self.assertEqual(evaluate(with_noon_bar, now)["bar_end"], noon.isoformat())
 
     def test_download_multiindex_and_missing_stock(self):
         frame=pd.DataFrame({('1100.TW','Low'):[100],('1100.TW','Close'):[102],
@@ -139,6 +159,19 @@ class StateTests(unittest.TestCase):
         self.assertEqual(row,('2026-09-24 10:05','測試（1100）','+2.00%','100 → 102'))
         self.assertFalse(any('\n' in value for value in row))
 
+    def test_settings_parse_validate_and_persist(self):
+        self.assertEqual(parse_codes("2330, 2317.TW\n2330"), ["2330", "2317"])
+        settings = validate_settings({
+            "threshold_pct": "1.5", "universe": "custom", "custom_codes": "2330 2317"
+        })
+        path = Path(self.tmp.name) / "settings.json"
+        save_settings(path, settings)
+        self.assertEqual(load_settings(path), settings)
+        with self.assertRaises(ValueError):
+            validate_settings({"threshold_pct": 2, "universe": "custom", "custom_codes": []})
+        with self.assertRaises(ValueError):
+            parse_codes("2330,ABC")
+
 
 class WorkerTests(unittest.TestCase):
     def setUp(self):
@@ -197,3 +230,19 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(got['counts']['stale'],1)
         self.assertEqual(got['counts']['missing'],49)
         self.assertEqual(got['events'],0)
+
+    def test_all_stocks_are_rotated_in_batches_of_fifty(self):
+        path = Path(self.tmp.name) / "all.txt"
+        path.write_text("\n".join(f"{code}.TW" for code in range(1100, 1220)))
+        fetch = Mock(return_value={})
+        worker = Monitor(
+            self.conn, all_stocks_path=path, fetcher=fetch,
+            settings={"threshold_pct": 2, "universe": "all", "custom_codes": []},
+        )
+        first = worker.cycle(clock(minute=5))
+        first_batch = set(fetch.call_args.args[0])
+        second = worker.cycle(clock(minute=6))
+        second_batch = set(fetch.call_args.args[0])
+        self.assertEqual((first["members"], first["checked"]), (120, 50))
+        self.assertEqual((second["members"], second["checked"]), (120, 50))
+        self.assertFalse(first_batch & second_batch)

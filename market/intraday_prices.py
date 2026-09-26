@@ -15,7 +15,10 @@ from web.tw_calendar import HOLIDAY_YEARS, TW, is_tw_trading_day, taiwan_now
 
 MAX_DELAY = 120
 WINDOW_MINUTES = 5
-THRESHOLD_PCT = Decimal("2")
+DEFAULT_THRESHOLD_PCT = Decimal("2")
+SESSION_START = time(9)
+DATA_END = time(12)
+MONITOR_END = time(12, 2)
 
 
 @dataclass(frozen=True)
@@ -28,9 +31,9 @@ class Bar:
 
 def monitoring_session(now):
     now = taiwan_now(now)
-    # Two minutes after close allow the final completed candle to arrive.
+    # Two minutes after the requested noon cutoff allow the 11:59 candle to arrive.
     return (now.year in HOLIDAY_YEARS and is_tw_trading_day(now.date())
-            and time(9) <= now.time() < time(13, 32))
+            and SESSION_START <= now.time() < MONITOR_END)
 
 
 def fetch_minutes(codes, *, downloader=None):
@@ -63,8 +66,11 @@ def fetch_minutes(codes, *, downloader=None):
     return result
 
 
-def evaluate(bars, now):
+def evaluate(bars, now, threshold_pct=DEFAULT_THRESHOLD_PCT):
     now = taiwan_now(now)
+    threshold = Decimal(str(threshold_pct))
+    if not Decimal("0.1") <= threshold <= Decimal("20"):
+        raise ValueError("threshold_pct must be between 0.1 and 20")
     if not monitoring_session(now):
         return {"status": "off_hours"}
     eligible = {}
@@ -72,7 +78,7 @@ def evaluate(bars, now):
         if bar.start.tzinfo is None:
             continue
         start = bar.start.astimezone(TW)
-        if (start.date() != now.date() or not time(9) <= start.time() < time(13, 30)
+        if (start.date() != now.date() or not SESSION_START <= start.time() < DATA_END
                 or start.second or start.microsecond or start + timedelta(minutes=1) > now):
             continue
         eligible[start] = Bar(start, bar.low, bar.close, bar.volume)
@@ -93,8 +99,9 @@ def evaluate(bars, now):
     low_bar = min(window, key=lambda bar: bar.low)
     low, close = Decimal(str(low_bar.low)), Decimal(str(window[-1].close))
     rise = (close / low - 1) * 100
-    return {"status": "ok", "triggered": close >= low * (1 + THRESHOLD_PCT / 100),
+    return {"status": "ok", "triggered": close >= low * (1 + threshold / 100),
             "rise_pct": float(rise), "low": float(low), "close": float(close),
+            "threshold_pct": float(threshold),
             "baseline_minute": low_bar.start.isoformat(),
             "window_start": window[0].start.isoformat(), "bar_end": end.isoformat(),
             "delay_seconds": delay}

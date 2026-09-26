@@ -48,6 +48,7 @@ from market import broker_branch as broker_branch_mod
 from notify import scanner_profile as scanner_profile_mod
 from web import broker_main_force as broker_main_force_mod
 from web import chip_zscore as chip_zscore_mod
+from web import stock_prices
 from web import freshness as freshness_mod
 
 _YMD = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -748,6 +749,8 @@ def _api(path, qs):
             (like, like, needle, prefix, prefix),
         )
         return {"data": rows}
+    if path == "/api/stock_prices":
+        return stock_prices.query_prices(_request_conn.get(), qs.get("id", [""])[0].strip(), days)
     if path == "/api/stock_ohlc":
         sid = qs.get("id", [""])[0].strip()
         rows = q(

@@ -16,6 +16,9 @@ from web.tw_calendar import HOLIDAY_YEARS, TW, is_tw_trading_day, taiwan_now
 MAX_DELAY = 120
 WINDOW_MINUTES = 5
 THRESHOLD_PCT = Decimal("2")
+SESSION_START = time(9)
+DATA_END = time(12)
+MONITOR_END = time(12, 2)
 
 
 @dataclass(frozen=True)
@@ -28,9 +31,9 @@ class Bar:
 
 def monitoring_session(now):
     now = taiwan_now(now)
-    # Two minutes after close allow the final completed candle to arrive.
+    # Two minutes after the requested noon cutoff allow the 11:59 candle to arrive.
     return (now.year in HOLIDAY_YEARS and is_tw_trading_day(now.date())
-            and time(9) <= now.time() < time(13, 32))
+            and SESSION_START <= now.time() < MONITOR_END)
 
 
 def fetch_minutes(codes, *, downloader=None):
@@ -72,7 +75,7 @@ def evaluate(bars, now):
         if bar.start.tzinfo is None:
             continue
         start = bar.start.astimezone(TW)
-        if (start.date() != now.date() or not time(9) <= start.time() < time(13, 30)
+        if (start.date() != now.date() or not SESSION_START <= start.time() < DATA_END
                 or start.second or start.microsecond or start + timedelta(minutes=1) > now):
             continue
         eligible[start] = Bar(start, bar.low, bar.close, bar.volume)

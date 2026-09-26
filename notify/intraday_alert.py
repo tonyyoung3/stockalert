@@ -26,6 +26,7 @@ from web.tw_calendar import HOLIDAY_YEARS, is_tw_trading_day, taiwan_now
 log = logging.getLogger(__name__)
 COOLDOWN_SECONDS = 15 * 60
 WARMUP_SECONDS = 5 * 60
+POLL_SECONDS = 60
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS intraday_state (
   code TEXT NOT NULL, day TEXT NOT NULL, last_bar TEXT NOT NULL,
@@ -238,7 +239,6 @@ class Monitor:
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--once", action="store_true", help="Run one diagnostic cycle")
-    parser.add_argument("--interval", type=int, default=60, choices=range(30, 61), metavar="30..60")
     parser.add_argument("--state", type=Path, default=repo_file(".cache", "intraday.db"))
     parser.add_argument("--members-cache", type=Path, default=etf_members.DEFAULT_CACHE)
     args = parser.parse_args(argv)
@@ -256,7 +256,7 @@ def main(argv=None):
                 print(json.dumps(summary, ensure_ascii=False), flush=True)
                 if args.once:
                     return 0 if summary["status"] in ("ok", "off_hours", "preopen") else 1
-                delay = (args.interval if summary["status"] not in
+                delay = (POLL_SECONDS if summary["status"] not in
                          ("quote_error", "quote_unavailable", "membership_unavailable") else 300)
                 time.sleep(max(1, delay - (time.monotonic() - began)))
         except KeyboardInterrupt:

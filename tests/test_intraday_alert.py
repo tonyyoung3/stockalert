@@ -1,5 +1,4 @@
-"""No live Yahoo or Slack calls; boundary and restart tests use a fixed clock."""
-import json
+"""No live Yahoo or macOS calls; boundary and restart tests use a fixed clock."""
 from pathlib import Path
 import tempfile
 import unittest
@@ -9,7 +8,8 @@ from unittest.mock import Mock, patch
 import pandas as pd
 
 from market.intraday_prices import Bar, evaluate, fetch_minutes, monitoring_session
-from notify.intraday_alert import Monitor, dispatch, open_store, record_signal, slack_text, worker_lock
+from notify.intraday_alert import Monitor, mark_notification, open_store, record_signal, worker_lock
+from notify.local_app import deliver_events, event_text, send_macos_notification
 from web.tw_calendar import TW
 
 
@@ -86,7 +86,7 @@ class StateTests(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
         self.path=Path(self.tmp.name)/'state.db'
-        self.conn=open_store(self.path,send=True);self.addCleanup(self.conn.close)
+        self.conn=open_store(self.path);self.addCleanup(self.conn.close)
         self.snapshot=members()
 
     def signal(self,minute=5,price=102):
@@ -94,11 +94,11 @@ class StateTests(unittest.TestCase):
         return evaluate(bars(now.replace(second=0),price=price),now)
 
     def record(self,minute=5,price=102,code='1100'):
-        return record_signal(self.conn,code,'測試',self.signal(minute,price),self.snapshot,send=True)
+        return record_signal(self.conn,code,'測試',self.signal(minute,price),self.snapshot)
 
     def test_non_member_ignored(self):
         self.assertIsNone(self.record(code='9999'))
-        self.assertEqual(self.conn.execute('SELECT COUNT(*) FROM intraday_outbox').fetchone()[0],0)
+        self.assertEqual(self.conn.execute('SELECT COUNT(*) FROM intraday_events').fetchone()[0],0)
 
     def test_same_wave_and_bar_cannot_repeat(self):
         self.assertIsNotNone(self.record())
@@ -115,71 +115,40 @@ class StateTests(unittest.TestCase):
         self.assertIsNotNone(self.record(minute=23))
 
     def test_restart_retains_dedup_and_cooldown(self):
-        self.record(); other=open_store(self.path,send=True)
+        self.record(); other=open_store(self.path)
         try:
-            self.assertIsNone(record_signal(other,'1100','測試',self.signal(6),self.snapshot,send=True))
+            self.assertIsNone(record_signal(other,'1100','測試',self.signal(6),self.snapshot))
         finally: other.close()
-
-    def test_dry_run_database_cannot_be_used_for_sending(self):
-        with self.assertRaises(ValueError): open_store(self.path,send=False)
 
     def test_lock_prevents_second_worker(self):
         with worker_lock(self.path):
             with self.assertRaises(RuntimeError):
                 with worker_lock(self.path): pass
 
-    def test_send_success_and_dedup(self):
-        event=self.record();client=Mock();client.chat_postMessage.return_value={'ok':True,'ts':'123'}
-        self.assertEqual(dispatch(self.conn,client,'channel',clock(),{'1100'})['sent'],1)
-        self.assertEqual(dispatch(self.conn,client,'channel',clock(),{'1100'})['sent'],0)
-        client.chat_postMessage.assert_called_once()
-        self.assertEqual(client.chat_postMessage.call_args.kwargs['client_msg_id'],event['event_id'])
+    def test_local_notification_success_is_recorded(self):
+        event=self.record(); notifier=Mock()
+        self.assertEqual(deliver_events(self.conn,[event],notifier=notifier,now_fn=clock),[])
+        row=self.conn.execute('SELECT * FROM intraday_events').fetchone()
+        self.assertIsNotNone(row['notified_at']);self.assertIsNone(row['notification_error'])
+        notifier.assert_called_once_with(event)
 
-    def test_failure_not_marked_sent_retry_and_expiry(self):
-        self.record();client=Mock();client.chat_postMessage.side_effect=RuntimeError('offline')
-        dispatch(self.conn,client,'channel',clock(),{'1100'})
-        row=self.conn.execute('SELECT * FROM intraday_outbox').fetchone()
-        self.assertEqual(row['status'],'pending');self.assertEqual(row['attempts'],1)
-        client.chat_postMessage.side_effect=None;client.chat_postMessage.return_value={'ok':True,'ts':'ok'}
-        self.assertEqual(dispatch(self.conn,client,'channel',clock(second=16),{'1100'})['sent'],1)
-        self.record(minute=22,price=100);self.record(minute=23)
-        self.assertEqual(dispatch(self.conn,client,'channel',clock(minute=27),{'1100'})['expired'],1)
+    def test_local_notification_failure_is_recorded_without_retry(self):
+        event=self.record();error=RuntimeError('notifications denied')
+        failures=deliver_events(self.conn,[event],notifier=Mock(side_effect=error),now_fn=clock)
+        self.assertEqual(failures[0][0]['event_id'],event['event_id'])
+        row=self.conn.execute('SELECT * FROM intraday_events').fetchone()
+        self.assertIsNone(row['notified_at']);self.assertEqual(row['notification_error'],'RuntimeError')
 
-    def test_membership_removed_event_not_sent(self):
-        self.record();client=Mock()
-        self.assertEqual(dispatch(self.conn,client,'channel',clock(),set())['expired'],1)
-        client.chat_postMessage.assert_not_called()
+    def test_native_notification_uses_argv_not_script_interpolation(self):
+        event=self.record();runner=Mock()
+        send_macos_notification(event,runner=runner)
+        argv=runner.call_args.args[0]
+        self.assertEqual(argv[0],'/usr/bin/osascript')
+        self.assertNotIn(event['name'],argv[2])
+        self.assertIn('10:00–10:05',event_text(event));self.assertIn('+2.00%',event_text(event))
 
-    def test_retry_after_blocks_following_events(self):
-        self.record();self.record(code='1101')
-        response=Mock();response.headers={'Retry-After':'90'}
-        error=RuntimeError('rate limit');error.response=response
-        client=Mock();client.chat_postMessage.side_effect=error
-        dispatch(self.conn,client,'channel',clock(),{'1100','1101'})
-        dispatch(self.conn,client,'channel',clock(second=40),{'1100','1101'})
-        client.chat_postMessage.assert_called_once()
-
-    def test_slack_negative_ack_stays_pending(self):
-        self.record();client=Mock();client.chat_postMessage.return_value={'ok':False}
-        dispatch(self.conn,client,'channel',clock(),{'1100'})
-        self.assertEqual(self.conn.execute('SELECT status FROM intraday_outbox').fetchone()[0],'pending')
-
-    def test_cross_day_event_expires(self):
-        self.record();client=Mock()
-        result=dispatch(self.conn,client,'channel',clock()+timedelta(days=1),{'1100'})
-        self.assertEqual(result['expired'],1);client.chat_postMessage.assert_not_called()
-
-    def test_expiration_checked_again_between_network_sends(self):
-        self.record();self.record(code='1101')
-        client=Mock();client.chat_postMessage.return_value={'ok':True,'ts':'ok'}
-        ticks=iter([clock(),clock(minute=8)])
-        result=dispatch(self.conn,client,'channel',clock(),{'1100','1101'},clock=lambda:next(ticks))
-        self.assertEqual(result,{'sent':1,'expired':1})
-
-    def test_message_source_time_and_link(self):
-        event=self.record();text=slack_text(event,'https://example.com')
-        self.assertIn('10:00–10:05',text);self.assertIn('+2.00%',text)
-        self.assertIn('可能延遲',text);self.assertIn('?stock=1100#stock',text)
+    def test_mark_notification_unknown_event_is_harmless(self):
+        mark_notification(self.conn,'missing',notified_at=clock())
 
 
 class WorkerTests(unittest.TestCase):
@@ -200,8 +169,8 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(self.cycle(5)['events'],0)
         for m in range(6,10):self.assertEqual(self.cycle(m)['events'],0)
         self.assertEqual(self.cycle(10)['events'],1)
-        row=self.conn.execute('SELECT status FROM intraday_outbox').fetchone()
-        self.assertEqual(row['status'],'dry_run')
+        row=self.conn.execute('SELECT payload FROM intraday_events').fetchone()
+        self.assertIsNotNone(row)
         # A gap forces a new warm-up and doesn't generate catch-up alerts.
         self.assertEqual(self.cycle(20)['events'],0)
         self.assertEqual(self.cycle(21)['counts']['warming'],1)

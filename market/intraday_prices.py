@@ -15,7 +15,7 @@ from web.tw_calendar import HOLIDAY_YEARS, TW, is_tw_trading_day, taiwan_now
 
 MAX_DELAY = 120
 WINDOW_MINUTES = 5
-THRESHOLD_PCT = Decimal("2")
+DEFAULT_THRESHOLD_PCT = Decimal("2")
 SESSION_START = time(9)
 DATA_END = time(12)
 MONITOR_END = time(12, 2)
@@ -66,8 +66,11 @@ def fetch_minutes(codes, *, downloader=None):
     return result
 
 
-def evaluate(bars, now):
+def evaluate(bars, now, threshold_pct=DEFAULT_THRESHOLD_PCT):
     now = taiwan_now(now)
+    threshold = Decimal(str(threshold_pct))
+    if not Decimal("0.1") <= threshold <= Decimal("20"):
+        raise ValueError("threshold_pct must be between 0.1 and 20")
     if not monitoring_session(now):
         return {"status": "off_hours"}
     eligible = {}
@@ -96,8 +99,9 @@ def evaluate(bars, now):
     low_bar = min(window, key=lambda bar: bar.low)
     low, close = Decimal(str(low_bar.low)), Decimal(str(window[-1].close))
     rise = (close / low - 1) * 100
-    return {"status": "ok", "triggered": close >= low * (1 + THRESHOLD_PCT / 100),
+    return {"status": "ok", "triggered": close >= low * (1 + threshold / 100),
             "rise_pct": float(rise), "low": float(low), "close": float(close),
+            "threshold_pct": float(threshold),
             "baseline_minute": low_bar.start.isoformat(),
             "window_start": window[0].start.isoformat(), "bar_end": end.isoformat(),
             "delay_seconds": delay}

@@ -143,10 +143,10 @@ python -m market.us_collector hourly
 
 `python -m notify.local_app` 啟動 macOS 本機視窗 App，不使用 Cloud Run、Cloud Scheduler 或 Slack。
 每 60 秒讀取 0050 股票持股的一分鐘 K；最新已完成分鐘收盤價相對五分鐘最低價上漲
-≥ 2% 時顯示 macOS 通知。同一波只一次、同股冷卻 15 分鐘；過期／缺漏資料略過。
+≥ 2% 時在 App 內新增一行警示。同一波只一次、同股冷卻 15 分鐘；過期／缺漏資料略過。
 官方名單每日同步，無有效名單就暫停，不退回靜態名單。
 
-狀態與事件記錄保存在本機 `.cache/intraday.db`；關閉 App 就停止監控。
+狀態與警示記錄保存在本機 `.cache/intraday.db`，重開 App 會載入近期警示；關閉 App 就停止監控。
 Yahoo 分鐘線可能延遲，這是近即時提醒，非逐筆行情。安裝、規則與驗收見
 [盤中通知文件](docs/intraday_alerts.md)、[0050 名單](docs/0050_members.md)。
 

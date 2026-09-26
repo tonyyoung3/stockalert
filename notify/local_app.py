@@ -1,4 +1,4 @@
-"""macOS desktop app for local 0050 intraday monitoring."""
+"""Desktop app for local 0050 intraday monitoring."""
 from __future__ import annotations
 
 import argparse
@@ -6,7 +6,6 @@ from datetime import datetime
 import logging
 from pathlib import Path
 import queue
-import subprocess
 import threading
 import time
 import tkinter as tk
@@ -14,7 +13,7 @@ from tkinter import messagebox, ttk
 
 from data.paths import repo_file
 from market import etf_members
-from notify.intraday_alert import Monitor, mark_notification, open_store, worker_lock
+from notify.intraday_alert import Monitor, open_store, recent_events, worker_lock
 from web.tw_calendar import taiwan_now
 
 log = logging.getLogger(__name__)
@@ -34,46 +33,13 @@ STATUS_TEXT = {
 }
 
 
-def event_text(event):
-    start = datetime.fromisoformat(event["window_start"]).strftime("%H:%M")
-    end = datetime.fromisoformat(event["bar_end"]).strftime("%H:%M")
-    return (
-        f"{event['name']}（{event['code']}） {start}–{end}\n"
-        f"{event['low']:g} → {event['close']:g}，+{event['rise_pct']:.2f}%"
-    )
-
-
-def send_macos_notification(event, *, runner=subprocess.run):
-    """Send a native notification without interpolating data into AppleScript."""
-    script = (
-        "on run argv\n"
-        "display notification (item 1 of argv) with title (item 2 of argv) "
-        "subtitle (item 3 of argv)\n"
-        "end run"
-    )
-    return runner(
-        ["/usr/bin/osascript", "-e", script, event_text(event),
-         "0050 盤中急拉", f"最新完成分鐘 +{event['rise_pct']:.2f}%"],
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=5,
-    )
-
-
-def deliver_events(conn, events, *, notifier=send_macos_notification, now_fn=taiwan_now):
-    failures = []
-    for event in events:
-        try:
-            notifier(event)
-        except Exception as exc:
-            mark_notification(conn, event["event_id"], error=exc)
-            failures.append((event, exc))
-            log.warning("Local notification failed event=%s type=%s",
-                        event["event_id"], type(exc).__name__)
-        else:
-            mark_notification(conn, event["event_id"], notified_at=now_fn())
-    return failures
+def event_row(event):
+    """Format one alert as a single table row."""
+    end = datetime.fromisoformat(event["bar_end"]).strftime("%Y-%m-%d %H:%M")
+    stock = f"{event['name']}（{event['code']}）"
+    rise = f"+{event['rise_pct']:.2f}%"
+    prices = f"{event['low']:g} → {event['close']:g}"
+    return end, stock, rise, prices
 
 
 class IntradayApp:
@@ -106,10 +72,19 @@ class IntradayApp:
         self.pause_button = ttk.Button(buttons, text="暫停", command=self.toggle_pause)
         self.pause_button.pack(side="left")
         ttk.Button(buttons, text="立即檢查", command=self.check_now).pack(side="left", padx=8)
-        ttk.Button(buttons, text="測試通知", command=self.test_notification).pack(side="left")
+        ttk.Button(buttons, text="加入測試警示", command=self.add_test_event).pack(side="left")
 
-        ttk.Label(frame, text="最近事件", font=("Helvetica", 13, "bold")).pack(anchor="w")
-        self.events = tk.Text(frame, height=14, wrap="word", state="disabled")
+        ttk.Label(frame, text="最近警示", font=("Helvetica", 13, "bold")).pack(anchor="w")
+        columns = ("time", "stock", "rise", "prices")
+        self.events = ttk.Treeview(frame, columns=columns, show="headings", height=14)
+        for key, title, width, anchor in (
+            ("time", "時間（台灣）", 150, "w"),
+            ("stock", "股票", 220, "w"),
+            ("rise", "五分鐘漲幅", 100, "e"),
+            ("prices", "最低價 → 收盤價", 150, "e"),
+        ):
+            self.events.heading(key, text=title)
+            self.events.column(key, width=width, anchor=anchor)
         self.events.pack(fill="both", expand=True, pady=(6, 0))
 
         self.thread = threading.Thread(target=self._worker, name="intraday-monitor", daemon=True)
@@ -124,6 +99,7 @@ class IntradayApp:
                 conn = open_store(self.state)
                 monitor = Monitor(conn, members_path=self.members_cache)
                 try:
+                    self.messages.put(("history", recent_events(conn)))
                     while not self.stop_event.is_set():
                         if self.paused.is_set():
                             self.messages.put(("summary", {"status": "paused", "at": taiwan_now().isoformat()}))
@@ -133,8 +109,6 @@ class IntradayApp:
                         began = time.monotonic()
                         summary = monitor.cycle()
                         events = summary.pop("event_items", [])
-                        failures = deliver_events(conn, events)
-                        summary["notification_errors"] = len(failures)
                         self.messages.put(("summary", summary))
                         for event in events:
                             self.messages.put(("event", event))
@@ -156,6 +130,9 @@ class IntradayApp:
                 break
             if kind == "summary":
                 self._show_summary(value)
+            elif kind == "history":
+                for event in value:
+                    self._show_event(event, prepend=False)
             elif kind == "event":
                 self._show_event(value)
             elif kind == "fatal":
@@ -174,15 +151,10 @@ class IntradayApp:
             parts.append(f"成分股：{summary['members']} 檔")
         if summary.get("max_delay_seconds") is not None:
             parts.append(f"最大行情延遲：{summary['max_delay_seconds']:.0f} 秒")
-        if summary.get("notification_errors"):
-            parts.append("macOS 通知失敗，請檢查通知權限")
         self.detail.set("｜".join(parts))
 
-    def _show_event(self, event):
-        line = f"{datetime.fromisoformat(event['bar_end']).strftime('%Y-%m-%d %H:%M')}  {event_text(event)}\n\n"
-        self.events.configure(state="normal")
-        self.events.insert("1.0", line)
-        self.events.configure(state="disabled")
+    def _show_event(self, event, *, prepend=True):
+        self.events.insert("", 0 if prepend else "end", values=event_row(event))
 
     def toggle_pause(self):
         if self.paused.is_set():
@@ -201,15 +173,13 @@ class IntradayApp:
         self.status.set("檢查中")
         self.wake.set()
 
-    def test_notification(self):
+    def add_test_event(self):
+        now = taiwan_now().isoformat()
         event = {
-            "name": "測試股票", "code": "0000", "window_start": taiwan_now().isoformat(),
-            "bar_end": taiwan_now().isoformat(), "low": 100, "close": 102, "rise_pct": 2,
+            "name": "測試股票", "code": "0000", "window_start": now,
+            "bar_end": now, "low": 100, "close": 102, "rise_pct": 2,
         }
-        try:
-            send_macos_notification(event)
-        except Exception as exc:
-            messagebox.showerror("通知失敗", f"{type(exc).__name__}: {exc}")
+        self._show_event(event)
 
     def close(self):
         self.stop_event.set()

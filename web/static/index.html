@@ -76,6 +76,11 @@ tr:hover td{background:#f8f9fa}
 .empty{color:#6c757d;font-size:13px;padding:8px 0}
 .ticker-link{color:#4C72B0;text-decoration:none;font-weight:600;cursor:pointer;background:none;border:none;padding:0;font:inherit}
 .ticker-link:hover{text-decoration:underline}
+.sp-table tbody tr{cursor:pointer}
+.sp-table tbody tr:focus-visible{outline:2px solid #4C72B0;outline-offset:-2px}
+.sp-return{font-weight:700}
+.sp-empty{padding:20px 14px;text-align:center;color:#495057;background:#f4f7fb;border:1px dashed #adb5bd;border-radius:6px;font-size:14px;font-weight:600;line-height:1.55}
+#sp-empty[hidden],#sp-table-wrap[hidden]{display:none!important}
 .alert-bt-btn{display:inline-block;border:1px solid #4C72B0;background:#fff;color:#4C72B0;border-radius:4px;padding:6px 10px;cursor:pointer;font-size:12px;font-weight:600;text-decoration:none;min-height:36px;line-height:22px;white-space:nowrap;box-sizing:border-box}
 .alert-bt-btn:hover{background:#eef3fa}
 .alert-bt-btn:focus-visible{outline:2px solid #4C72B0;outline-offset:2px}
@@ -362,6 +367,31 @@ details.bt-box:not([open])>summary.bt-label::after{content:"▸"}
   <div class="two" style="margin-bottom:0">
     <div><h3 id="t-buy">外資買超前 15</h3><canvas id="c-buy"></canvas></div>
     <div><h3 id="t-sell">外資賣超前 15</h3><canvas id="c-sell"></canvas></div>
+  </div>
+</section>
+
+<section class="card" id="stock-performance-card" style="margin-bottom:16px">
+  <div class="chart-head">
+    <h3>區間股價表現 Top 100</h3>
+    <span class="top-range">
+      <select id="sp-preset" onchange="onStockPerformancePreset()" aria-label="股價表現日期區間">
+        <option value="5">近 5 日</option>
+        <option value="20" selected>近 20 日</option>
+        <option value="60">近 60 日</option>
+        <option value="custom">自訂區間</option>
+      </select>
+      <input type="date" id="sp-start" onchange="onStockPerformanceDates()" aria-label="股價表現起始日期">
+      <span class="hint">～</span>
+      <input type="date" id="sp-end" onchange="onStockPerformanceDates()" aria-label="股價表現結束日期">
+    </span>
+  </div>
+  <p class="bb-sub" id="sp-sub">以區間第一個與最後一個有效收盤價計算；未還原股價，除權息或分割可能影響排行。點選股票可開啟個股頁。</p>
+  <div class="sp-empty" id="sp-empty" role="status">載入區間排行…</div>
+  <div class="table-scroll" id="sp-table-wrap" hidden>
+    <table class="sp-table">
+      <thead><tr><th class="num">排名</th><th>股票</th><th class="num">區間報酬</th><th class="num">起始收盤</th><th class="num">結束收盤</th><th>實際區間</th></tr></thead>
+      <tbody id="sp-body"></tbody>
+    </table>
   </div>
 </section>
 
@@ -2886,6 +2916,80 @@ async function loadTop(){
   }
 }
 
+function stockPerformanceReadRange(){
+  const preset = document.getElementById('sp-preset').value;
+  if(preset==='custom'){
+    const start = TwRange.snapInput(document.getElementById('sp-start'));
+    const end = TwRange.snapInput(document.getElementById('sp-end'));
+    return TwRange.normalize({mode:'custom', start:start, end:end});
+  }
+  return {mode:'last_n', n:TwRange.clampInt(preset, 20, 2, 730)};
+}
+function stockPerformanceParams(){
+  const params = TwRange.toTopQuery(stockPerformanceReadRange());
+  return params + (params ? '&' : '?') + 'limit=100';
+}
+function onStockPerformancePreset(){
+  if(document.getElementById('sp-preset').value==='custom') return;
+  loadStockPerformance();
+}
+function onStockPerformanceDates(){
+  document.getElementById('sp-preset').value = 'custom';
+  TwRange.snapInput(document.getElementById('sp-start'));
+  TwRange.snapInput(document.getElementById('sp-end'));
+  loadStockPerformance();
+}
+function stockPerformancePrice(value){
+  return Number(value).toLocaleString('zh-TW', {minimumFractionDigits:2, maximumFractionDigits:2});
+}
+function openStockPerformanceRow(row){ selectStock(row.stock_id, row.stock_name); }
+async function loadStockPerformance(){
+  const empty = document.getElementById('sp-empty');
+  const wrap = document.getElementById('sp-table-wrap');
+  empty.textContent = '載入區間排行…';
+  empty.hidden = false;
+  wrap.hidden = true;
+  try{
+    const r = await j('/api/stock_performance'+stockPerformanceParams());
+    if(r.start){
+      const preset = document.getElementById('sp-preset').value;
+      if(preset!=='custom' || !document.getElementById('sp-start').value){
+        document.getElementById('sp-start').value = r.start;
+        document.getElementById('sp-end').value = r.end;
+      }
+    }
+    const rows = r.data || [];
+    const span = r.start ? (r.start===r.end ? r.start : r.start+'～'+r.end) : '';
+    document.getElementById('sp-sub').textContent = (span ? span+'，共 '+r.trading_days+' 個交易日。' : '')
+      +'以區間第一個與最後一個有效收盤價計算；未還原股價，除權息或分割可能影響排行。點選股票可開啟個股頁。';
+    if(!rows.length){
+      empty.textContent = '這個區間沒有至少兩筆有效收盤價的股票資料。';
+      return;
+    }
+    document.getElementById('sp-body').innerHTML = rows.map((row, index)=>{
+      const cls = row.return_pct >= 0 ? 'pos' : 'neg';
+      const sign = row.return_pct > 0 ? '+' : '';
+      return '<tr tabindex="0" data-i="'+index+'"><td class="num">'+(index+1)+'</td>'
+        +'<td><button type="button" class="ticker-link" data-i="'+index+'">'+esc(row.stock_id+' '+row.stock_name)+'</button></td>'
+        +'<td class="num sp-return '+cls+'">'+sign+Number(row.return_pct).toFixed(2)+'%</td>'
+        +'<td class="num">'+stockPerformancePrice(row.first_close)+'</td>'
+        +'<td class="num">'+stockPerformancePrice(row.last_close)+'</td>'
+        +'<td>'+esc(row.first_date+'～'+row.last_date)+'</td></tr>';
+    }).join('');
+    document.querySelectorAll('#sp-body tr').forEach(tr=>{
+      const open = ()=>openStockPerformanceRow(rows[Number(tr.dataset.i)]);
+      tr.addEventListener('click', open);
+      tr.addEventListener('keydown', event=>{
+        if(event.key==='Enter' || event.key===' '){ event.preventDefault(); open(); }
+      });
+    });
+    empty.hidden = true;
+    wrap.hidden = false;
+  }catch(e){
+    empty.textContent = '無法載入區間股價排行，請稍後再試。';
+  }
+}
+
 const BB_TITLE = '熱門股分點動向';
 const BB_EMPTY_DB = '熱門股分點尚無入庫資料（依成交額前 N 檔彙總，非全市場）。分點自動更新已停用；網站只讀資料庫。這不是 T86 外資排行。';
 const BB_EMPTY_NODATA = '熱門股分點尚無資料（依成交額前 N 檔彙總，非全市場）。不是 T86 外資、也不是空白圖表。';
@@ -4552,6 +4656,7 @@ async function runStockBacktest(){
 btRenderStockSummary();
 
 function loadAll(){ loadSummary(); loadKline(); loadTaiex(); loadMargin(); loadNet(); loadTaifexOi(); loadTop();
+  loadStockPerformance();
   loadBrokerBranch();
   loadAlerts(); loadPerformance();
   if(stockId) loadStock();

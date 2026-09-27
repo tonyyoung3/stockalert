@@ -49,6 +49,7 @@ from notify import scanner_profile as scanner_profile_mod
 from web import broker_main_force as broker_main_force_mod
 from web import chip_zscore as chip_zscore_mod
 from web import stock_prices
+from web import stock_performance
 from web import freshness as freshness_mod
 
 _YMD = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -703,6 +704,8 @@ def _api(path, qs):
         label = start if start == end else f"{start} ~ {end}"
         return {"date": label, "start": start, "end": end,
                 "trading_days": n_days, "buy": buy, "sell": sell}
+    if path == "/api/stock_performance":
+        return stock_performance.ranking(_request_conn.get(), qs)
     if path == "/api/margin_total":
         fin = q("SELECT trade_date, balance FROM margin_total "
                 "WHERE item LIKE '融資金額%' AND trade_date >= date('now', ?) "

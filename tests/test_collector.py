@@ -1068,6 +1068,7 @@ class TestDashboardAPI(DBTestCase):
         for p, kw in [("/api/summary", {}), ("/api/taiex", {"days": 90}),
                       ("/api/ohlc", {"days": 90}), ("/api/foreign_total", {"days": 90}),
                       ("/api/margin_total", {"days": 90}), ("/api/top", {}),
+                      ("/api/stock_performance", {"days": 20}),
                       ("/api/stock", {"id": "2330"}), ("/api/stock_margin", {"id": "2330"}),
                       ("/api/stocks", {"q": "2330"}), ("/api/stock_ohlc", {"id": "2330"}),
                       ("/api/freshness", {}),

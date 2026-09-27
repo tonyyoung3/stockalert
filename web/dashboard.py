@@ -58,6 +58,24 @@ _YMD = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 # cursor/connection. api() always opens, binds, then resets+closes in the same thread.
 _request_conn: ContextVar = ContextVar("dashboard_db_conn", default=None)
 _log = logging.getLogger("web.dashboard")
+_MARKET_HOME_CACHE_TTL = 60.0
+_market_home_cache: dict[tuple, tuple[float, dict]] = {}
+_market_home_cache_lock = threading.Lock()
+
+
+def _market_home_cache_key(qs):
+    return tuple(sorted((key, tuple(values)) for key, values in qs.items()))
+
+
+def _cached_market_home(qs):
+    if not market_db.using_turso():
+        return None
+    key = _market_home_cache_key(qs)
+    with _market_home_cache_lock:
+        cached = _market_home_cache.get(key)
+    if cached and time.monotonic() - cached[0] < _MARKET_HOME_CACHE_TTL:
+        return cached[1]
+    return None
 
 
 def q(sql, params=()):
@@ -638,6 +656,10 @@ def health_payload() -> dict:
 
 
 def api(path, qs):
+    if path == "/api/market_home":
+        cached = _cached_market_home(qs)
+        if cached is not None:
+            return cached
     conn = market_db.connect()
     token = _request_conn.set(conn)
     try:
@@ -652,6 +674,55 @@ def _api(path, qs):
         days = int(qs.get("days", ["90"])[0])
     except (TypeError, ValueError):
         days = 90
+    if path == "/api/market_home":
+        cache_key = _market_home_cache_key(qs)
+        # Local sqlite is already fast and test DBs change often. Cloud Run/Turso
+        # benefits from a short per-instance cache because the source updates daily.
+        use_cache = market_db.using_turso()
+        cached = _cached_market_home(qs)
+        if cached is not None:
+            return cached
+        interval = (qs.get("interval", ["day"])[0] or "day").strip()
+        interval = interval if interval in ("day", "hour") else "day"
+
+        def range_qs(prefix, default_days):
+            start = _ymd(qs, f"{prefix}_start")
+            end = _ymd(qs, f"{prefix}_end")
+            if start or end:
+                out = {}
+                if start:
+                    out["start"] = [start]
+                if end:
+                    out["end"] = [end]
+                return out
+            raw = (qs.get(f"{prefix}_days", [str(default_days)])[0] or "").strip()
+            return {"days": [raw]}
+
+        common = {"days": [str(days)]}
+        broker_qs = range_qs("broker", 1)
+        broker_top = _api("/api/broker_branch/top", broker_qs)
+        body = {
+            "summary": _api("/api/summary", common),
+            "ohlc": _api("/api/ohlc", {**common, "interval": [interval]}),
+            "taiex": _api("/api/taiex", common),
+            "margin_total": _api("/api/margin_total", common),
+            "foreign_total": _api("/api/foreign_total", common),
+            "taifex_oi": _api("/api/taifex_oi", common),
+            "top": _api("/api/top", range_qs("top", 1)),
+            "stock_performance": _api(
+                "/api/stock_performance",
+                {**range_qs("performance", 20), "limit": ["100"]},
+            ),
+            "broker_branch": {
+                "top": broker_top,
+                "freshness": broker_top.get("freshness", {}),
+            },
+        }
+        if use_cache:
+            with _market_home_cache_lock:
+                _market_home_cache.clear()
+                _market_home_cache[cache_key] = (time.monotonic(), body)
+        return body
     if path == "/api/summary":
         idx = q("SELECT ts, index_value, change FROM taiex_hourly ORDER BY ts DESC LIMIT 1")
         latest = q("SELECT MAX(trade_date) FROM foreign_daily")[0][0]

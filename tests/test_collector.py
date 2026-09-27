@@ -945,6 +945,9 @@ class TestDashboardAPI(DBTestCase):
             collector.save_margin(date(2026, 7, 31))
         con = collector.get_conn()
         with con:
+            con.execute("CREATE TABLE IF NOT EXISTS taifex_fut_oi ("
+                        "trade_date TEXT, product TEXT, investor TEXT, oi_net_lots INTEGER, "
+                        "PRIMARY KEY (trade_date, product, investor))")
             con.execute("INSERT INTO taiex_hourly VALUES "
                         "('2026-07-31T13:00:00','2026-07-31',43119.75,120.5,4321.0)")
             con.execute("INSERT INTO taiex_daily VALUES "
@@ -977,6 +980,22 @@ class TestDashboardAPI(DBTestCase):
         self.assertEqual(r["start"], "2026-07-31")
         self.assertEqual(r["end"], "2026-07-31")
         self.assertEqual(r["trading_days"], 1)
+
+    def test_market_home_bundles_market_payloads(self):
+        r = self.call(
+            "/api/market_home", days=90, interval="day",
+            top_days=1, performance_days=20, broker_days=1,
+        )
+        self.assertEqual(r["summary"]["latest_date"], "2026-07-31")
+        self.assertIn("data", r["ohlc"])
+        self.assertIn("data", r["taiex"])
+        self.assertIn("fin", r["margin_total"])
+        self.assertIn("data", r["foreign_total"])
+        self.assertIn("dates", r["taifex_oi"])
+        self.assertIn("buy", r["top"])
+        self.assertIn("data", r["stock_performance"])
+        self.assertIn("top", r["broker_branch"])
+        self.assertIn("freshness", r["broker_branch"])
 
     def _insert_foreign(self, rows):
         con = sqlite3.connect(self.db)
@@ -1066,6 +1085,7 @@ class TestDashboardAPI(DBTestCase):
 
     def test_all_endpoints_json_serialisable(self):
         for p, kw in [("/api/summary", {}), ("/api/taiex", {"days": 90}),
+                      ("/api/market_home", {"days": 90}),
                       ("/api/ohlc", {"days": 90}), ("/api/foreign_total", {"days": 90}),
                       ("/api/margin_total", {"days": 90}), ("/api/top", {}),
                       ("/api/stock_performance", {"days": 20}),

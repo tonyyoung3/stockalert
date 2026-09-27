@@ -228,6 +228,7 @@ gcloud run deploy stockalert \
 | --- | --- |
 | `GET /api/freshness` | 各表 `{table, last_date, days_ago, stale, empty}`，以及整體 `stale` / `empty` |
 | `GET /api/summary` | 原有 KPI，另含同一個 `freshness` 物件 |
+| `GET /api/market_home` | 市場首頁 bundle：使用單一資料庫連線回傳 KPI、市場圖表、外資排行、股價 Top 100 與熱門股分點，避免首頁同時建立多條 Turso 連線；Turso 模式有每個 Cloud Run instance 60 秒短快取。 |
 | `GET /api/scanner/chip_zscore` | 多檔籌碼 z-score（`tickers`、`window` 預設 20、`asof`、`min_periods`）。見 `docs/chip_zscore.md`。掃描分頁散布圖讀這支 |
 | `GET /api/stock_performance` | 個股區間收盤價表現排行（`days` 預設 20，或 `start`／`end`；`limit` 上限 100）。只讀 `stock_daily` 未還原日 K，需至少兩筆有效收盤價。 |
 | `GET /api/broker_branch/top` `/broker` `/stock` `/freshness` | 熱門股分點讀徑。只打 sqlite／Turso，自動更新已停用。空表 + freshness，不是網站 live fetch。見 `docs/broker_branch.md` |
@@ -246,6 +247,8 @@ gcloud run deploy stockalert \
 Header **顯示範圍**（全域 `days`）只影響加權 K 線／走勢、外資合計、融資融券、台指期未平倉、個股圖。外資買賣超排行用自己的當日／近 N 日／自訂區間，不受全域天數控制；近 N 日與自訂日期對齊 #73 台股交易日，與掃描窗格共用 `TwRange`（`/static/tw_range.js`）。
 
 市場首頁的 **「區間股價表現 Top 100」** 也有獨立的近 5／20／60 日與自訂日期控制。它以每檔股票在區間內第一個、最後一個有效收盤價計算報酬，至少要有兩筆資料；點列可進個股頁。資料來自 `stock_daily` 未還原日 K，因此除權息或分割可能影響排行。
+
+市場首頁初次載入走單一 `GET /api/market_home`，共用同一條 sqlite／Turso 連線，不再平行建立十多條遠端連線。告警、績效、個股分點與掃描告警設定改成切到各自分頁時才載入。
 
 市場 tab 另有獨立卡 **「熱門股分點動向」**（不是「全市場」、也不是 T86 外資排行）：買超／賣超分點 Top 讀 `GET /api/broker_branch/top`，新鮮度讀 `GET /api/broker_branch/freshness`（21:00 截止，不併入 `/api/freshness`）。點當日買超／賣超分點列，下鑽該分點在熱門前 N 檔內的貢獻標的（`GET /api/broker_branch/broker?broker_id=&date=`，買／賣／淨）；近 N 日累計顯示「此切片未支援」。已入庫則顯示熱門前 N 真實列；空表顯示「尚無入庫資料…網站只讀資料庫、自動更新已停用」，不是空白圖，也不是「請在網站接 token」。手機兩塊列表直向堆疊、各自捲動。本機可用 `python -m market.broker_branch load-fixture --dev` 看示範列，**不要**把 fixture 當 production。
 

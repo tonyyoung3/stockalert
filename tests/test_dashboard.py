@@ -248,6 +248,32 @@ class ParseBacktestQueryTests(unittest.TestCase):
 
 
 class DashboardNavTests(unittest.TestCase):
+    def test_market_home_cache_hit_skips_database_connection(self):
+        qs = {"days": ["90"]}
+        body = {"summary": {"latest_date": "2026-09-24"}}
+        key = dashboard._market_home_cache_key(qs)
+        dashboard._market_home_cache.clear()
+        dashboard._market_home_cache[key] = (dashboard.time.monotonic(), body)
+        try:
+            with patch.object(dashboard.market_db, "using_turso", return_value=True), \
+                    patch.object(dashboard.market_db, "connect", side_effect=AssertionError):
+                self.assertIs(dashboard.api("/api/market_home", qs), body)
+        finally:
+            dashboard._market_home_cache.clear()
+
+    def test_market_home_uses_one_bundle_and_lazy_loads_hidden_tabs(self):
+        html = dashboard.HTML
+        self.assertIn("'/api/market_home'+marketHomeParams()", html)
+        self.assertIn("function loadSectionOnDemand(", html)
+        self.assertIn("if(name==='alerts'){ loadAlerts(); loadPerformance(); }", html)
+        self.assertIn("if(name==='scanner') loadScannerAlertProfile();", html)
+        load_all = html[html.index("async function loadAll("):html.index("function btApplyMobileBlockFolds(")]
+        self.assertNotIn("loadAlerts()", load_all)
+        self.assertNotIn("loadPerformance()", load_all)
+        self.assertNotIn("loadStockBrokerBranch()", load_all)
+        init = html[html.rindex("(function(){"):html.rindex("</script>")]
+        self.assertNotIn("loadScannerAlertProfile();", init)
+
     def test_html_has_section_tabs_defaulting_to_market(self):
         html = dashboard.HTML
         self.assertIn("role=\"tablist\"", html)
@@ -521,7 +547,8 @@ class DashboardNavTests(unittest.TestCase):
         self.assertIn("addEventListener('hashchange'", html)
         self.assertIn("parseStockQuery(location.search)", html)
         self.assertIn("parseScannerQuery()", html)
-        self.assertIn("if(opts.section !== false) showSection('stock')", html)
+        self.assertIn("if(opts.section !== false){", html)
+        self.assertIn("showSection('stock');", html)
         self.assertIn("showSection(resolveSection(), {updateHash:false})", html)
         self.assertIn("id=\"bt-form\"", html)
         self.assertIn("data-bt-fold=\"filters\"", html)

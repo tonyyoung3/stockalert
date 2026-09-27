@@ -971,6 +971,17 @@ function resizeCharts(){
     try{ if(charts[id]) charts[id].resize(); }catch(e){}
   });
 }
+const lazySectionLoaded = {};
+function loadSectionOnDemand(name){
+  if(lazySectionLoaded[name]) return;
+  lazySectionLoaded[name] = true;
+  if(name==='alerts'){ loadAlerts(); loadPerformance(); }
+  if(name==='stock'){
+    if(stockId) loadStock();
+    loadStockBrokerBranch();
+  }
+  if(name==='scanner') loadScannerAlertProfile();
+}
 function showSection(name, opts){
   opts = opts || {};
   if(PAGE_SECTIONS.indexOf(name)<0) name = 'market';
@@ -988,6 +999,7 @@ function showSection(name, opts){
     history.replaceState(null, '', u.pathname + u.search + '#'+name);
   }
   requestAnimationFrame(resizeCharts);
+  loadSectionOnDemand(name);
 }
 document.querySelector('.page-nav').addEventListener('click', ev=>{
   const a = ev.target.closest('[data-section]');
@@ -1098,7 +1110,10 @@ function selectStock(id, name, opts){
   const el = document.getElementById('sid');
   if(el) el.value = name ? (id+' '+name) : id;
   hideStockMenu();
-  if(opts.section !== false) showSection('stock');
+  if(opts.section !== false){
+    lazySectionLoaded.stock = true;
+    showSection('stock');
+  }
   syncStockUrl(id);
   if(opts.scroll !== false){
     const box = document.getElementById('stock-lookup');
@@ -2553,9 +2568,9 @@ async function loadPerformance(){
   }
 }
 
-async function loadSummary(){
+async function loadSummary(prefetched){
   let s;
-  try { s = await j('/api/summary'); }
+  try { s = prefetched === undefined ? await j('/api/summary') : prefetched; }
   catch(e){
     renderFreshness({stale:true, empty:true, tables:[], calendar_note:'載入失敗'});
     return;
@@ -2589,10 +2604,11 @@ async function loadSummary(){
   renderFreshness(s.freshness);
 }
 
-async function loadKline(){
+async function loadKline(prefetched){
   const itv = document.getElementById('kint').value;
   try {
-    const r = await j('/api/ohlc?days='+days()+'&interval='+itv);
+    const r = prefetched === undefined
+      ? await j('/api/ohlc?days='+days()+'&interval='+itv) : prefetched;
     if(!(r.data||[]).length){
       const msg = itv==='hour'
         ? '尚無小時K資料。請跑 python -m market.update_market_data'
@@ -2755,9 +2771,9 @@ async function buildOverlayMap(choice){
   return map;
 }
 
-async function loadTaiex(){
+async function loadTaiex(prefetched){
   try {
-    const r = await j('/api/taiex?days='+days());
+    const r = prefetched === undefined ? await j('/api/taiex?days='+days()) : prefetched;
     if(!(r.data||[]).length){ setChartEmpty('c-taiex', EMPTY_MARKET); return; }
     setChartReady('c-taiex');
     const labels = r.data.map(d=>d[0].slice(0,16).replace('T',' '));
@@ -2789,9 +2805,9 @@ async function loadTaiex(){
   } catch(e){ setChartEmpty('c-taiex', EMPTY_MARKET); }
 }
 
-async function loadNet(){
+async function loadNet(prefetched){
   try {
-    const r = await j('/api/foreign_total?days='+days());
+    const r = prefetched === undefined ? await j('/api/foreign_total?days='+days()) : prefetched;
     if(!(r.data||[]).length){ setChartEmpty('c-net', EMPTY_MARKET); return; }
     setChartReady('c-net');
     mk('c-net', {type:'bar', data:{labels:r.data.map(d=>d[0]),
@@ -2802,9 +2818,9 @@ async function loadNet(){
   } catch(e){ setChartEmpty('c-net', EMPTY_MARKET); }
 }
 
-async function loadMargin(){
+async function loadMargin(prefetched){
   try {
-    const r = await j('/api/margin_total?days='+days());
+    const r = prefetched === undefined ? await j('/api/margin_total?days='+days()) : prefetched;
     if(!(r.fin||[]).length && !(r.short||[]).length){
       setChartEmpty('c-margin', EMPTY_MARKET);
       return;
@@ -2823,9 +2839,9 @@ async function loadMargin(){
   } catch(e){ setChartEmpty('c-margin', EMPTY_MARKET); }
 }
 
-async function loadTaifexOi(){
+async function loadTaifexOi(prefetched){
   try {
-    const r = await j('/api/taifex_oi?days='+days());
+    const r = prefetched === undefined ? await j('/api/taifex_oi?days='+days()) : prefetched;
     if(!(r.dates||[]).length){
       setChartEmpty('c-taifex', EMPTY_MARKET);
       return;
@@ -2873,9 +2889,9 @@ function onTopDates(){
   TwRange.snapInput(document.getElementById('top-end'));
   loadTop();
 }
-async function loadTop(){
+async function loadTop(prefetched){
   try {
-    const r = await j('/api/top'+topRangeParams());
+    const r = prefetched === undefined ? await j('/api/top'+topRangeParams()) : prefetched;
     if(r.start){
       const preset = document.getElementById('top-preset').value;
       if(preset!=='custom' || !document.getElementById('top-start').value){
@@ -2943,14 +2959,15 @@ function stockPerformancePrice(value){
   return Number(value).toLocaleString('zh-TW', {minimumFractionDigits:2, maximumFractionDigits:2});
 }
 function openStockPerformanceRow(row){ selectStock(row.stock_id, row.stock_name); }
-async function loadStockPerformance(){
+async function loadStockPerformance(prefetched){
   const empty = document.getElementById('sp-empty');
   const wrap = document.getElementById('sp-table-wrap');
   empty.textContent = '載入區間排行…';
   empty.hidden = false;
   wrap.hidden = true;
   try{
-    const r = await j('/api/stock_performance'+stockPerformanceParams());
+    const r = prefetched === undefined
+      ? await j('/api/stock_performance'+stockPerformanceParams()) : prefetched;
     if(r.start){
       const preset = document.getElementById('sp-preset').value;
       if(preset!=='custom' || !document.getElementById('sp-start').value){
@@ -3200,7 +3217,7 @@ async function openBbDrill(brokerId, brokerName){
     setBbDrillEmpty(BB_DRILL_ERROR);
   }
 }
-async function loadBrokerBranch(){
+async function loadBrokerBranch(prefetched){
   const emptyEl = document.getElementById('bb-empty');
   const listsEl = document.getElementById('bb-lists');
   const titleEl = document.getElementById('bb-title');
@@ -3209,10 +3226,12 @@ async function loadBrokerBranch(){
   const buyH = document.getElementById('bb-buy-h');
   const sellH = document.getElementById('bb-sell-h');
   try {
-    const [top, fresh] = await Promise.all([
-      j('/api/broker_branch/top'+bbRangeParams()),
-      j('/api/broker_branch/freshness'),
-    ]);
+    const [top, fresh] = prefetched === undefined
+      ? await Promise.all([
+          j('/api/broker_branch/top'+bbRangeParams()),
+          j('/api/broker_branch/freshness'),
+        ])
+      : [prefetched.top, prefetched.freshness];
     bbLastTop = top || null;
     if(titleEl) titleEl.textContent = bbSafeTitle(top && top.title);
     renderBbFresh(fresh, top);
@@ -4655,12 +4674,39 @@ async function runStockBacktest(){
 }
 btRenderStockSummary();
 
-function loadAll(){ loadSummary(); loadKline(); loadTaiex(); loadMargin(); loadNet(); loadTaifexOi(); loadTop();
-  loadStockPerformance();
-  loadBrokerBranch();
-  loadAlerts(); loadPerformance();
-  if(stockId) loadStock();
-  loadStockBrokerBranch(); }
+function appendRangeParams(out, prefix, raw){
+  const params = new URLSearchParams(String(raw||'').replace(/^\?/, ''));
+  ['days','start','end'].forEach(key=>{
+    if(params.has(key)) out.set(prefix+'_'+key, params.get(key));
+  });
+}
+function marketHomeParams(){
+  const out = new URLSearchParams({
+    days:days(),
+    interval:document.getElementById('kint').value,
+    broker_days:String(bbSelectedDays())
+  });
+  appendRangeParams(out, 'top', topRangeParams());
+  appendRangeParams(out, 'performance', stockPerformanceParams());
+  return '?'+out.toString();
+}
+async function loadAll(){
+  try{
+    const r = await j('/api/market_home'+marketHomeParams());
+    loadSummary(r.summary);
+    loadKline(r.ohlc);
+    loadTaiex(r.taiex);
+    loadMargin(r.margin_total);
+    loadNet(r.foreign_total);
+    loadTaifexOi(r.taifex_oi);
+    loadTop(r.top);
+    loadStockPerformance(r.stock_performance);
+    loadBrokerBranch(r.broker_branch);
+  }catch(e){
+    loadSummary(); loadKline(); loadTaiex(); loadMargin(); loadNet(); loadTaifexOi(); loadTop();
+    loadStockPerformance(); loadBrokerBranch();
+  }
+}
 function btApplyMobileBlockFolds(){
   const mobile = window.matchMedia('(max-width:768px)').matches;
   document.querySelectorAll('#bt-filter-blocks details.bt-block').forEach(el=>{
@@ -4689,7 +4735,6 @@ window.addEventListener('resize', resizeCharts);
   const scShouldLoad = scFromUrl ? applyScannerQuery(scFromUrl) : false;
   renderScannerPicks();
   renderScannerWatchlist();
-  loadScannerAlertProfile();
   loadAll();
   showSection(resolveSection(), {updateHash:false});
   applyBacktestPrefillFromLocation();

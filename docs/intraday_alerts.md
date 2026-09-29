@@ -45,6 +45,8 @@ python -m notify.intraday_alert --once
 抓行情前同步。全部與自訂模式使用本機清單。
 
 App 透過 yfinance 下載 `period=1d, interval=1m`、未還原分鐘資料，最多 4 個並行下載。
+Yahoo 偶爾只回傳批次中的部分股票；App 會把缺失代號以較低並行數重試一次，仍失敗才標示部分行情異常，
+並略過那些股票等待下一輪，不把 yfinance 的 `possibly delisted` 批次訊息當成真的下市判斷。
 整批錯誤或全數沒有有效行情時退避 5 分鐘。
 
 只使用已完成的正常盤一分鐘 K。最新完成分鐘的收盤價相對最近五根連續分鐘 K 的最低價上漲

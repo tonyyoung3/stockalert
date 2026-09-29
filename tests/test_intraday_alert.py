@@ -91,15 +91,46 @@ class DetectionTests(unittest.TestCase):
         frame=pd.DataFrame({('1100.TW','Low'):[100],('1100.TW','Close'):[102],
                             ('1100.TW','Volume'):[1000]},index=pd.DatetimeIndex([clock(second=0)]))
         fetch=Mock(return_value=frame)
-        result=fetch_minutes(['1100','1101'],downloader=fetch)
+        result=fetch_minutes(['1100','1101'],downloader=fetch,retry_delay=0)
         self.assertEqual(result['1100'][0].close,102)
         self.assertEqual(result['1101'],[])
-        self.assertFalse(fetch.call_args.kwargs['auto_adjust'])
-        self.assertEqual(fetch.call_args.kwargs['threads'],4)
+        self.assertEqual(fetch.call_count,2)
+        self.assertFalse(fetch.call_args_list[0].kwargs['auto_adjust'])
+        self.assertEqual(fetch.call_args_list[0].kwargs['threads'],4)
+        self.assertEqual(fetch.call_args_list[1].args[0],['1101.TW'])
+        self.assertEqual(fetch.call_args_list[1].kwargs['threads'],2)
+
+    def test_partial_batch_retries_only_missing_symbols(self):
+        idx=pd.DatetimeIndex([clock(second=0)])
+        primary=pd.DataFrame({('1100.TW','Low'):[100],('1100.TW','Close'):[102],
+                              ('1100.TW','Volume'):[1000],
+                              ('1101.TW','Low'):[float('nan')],
+                              ('1101.TW','Close'):[float('nan')],
+                              ('1101.TW','Volume'):[float('nan')]},index=idx)
+        retry=pd.DataFrame({('1101.TW','Low'):[50],('1101.TW','Close'):[51],
+                            ('1101.TW','Volume'):[2000]},index=idx)
+        fetch=Mock(side_effect=[primary,retry])
+        result=fetch_minutes(['1100','1101'],downloader=fetch,retry_delay=0)
+        self.assertEqual(result['1100'][0].close,102)
+        self.assertEqual(result['1101'][0].close,51)
+        self.assertEqual(fetch.call_args_list[1].args[0],['1101.TW'])
+        self.assertEqual(fetch.call_args_list[1].kwargs['threads'],2)
+
+    def test_retry_error_preserves_primary_batch(self):
+        frame=pd.DataFrame({('1100.TW','Low'):[100],('1100.TW','Close'):[102],
+                            ('1100.TW','Volume'):[1000]},
+                           index=pd.DatetimeIndex([clock(second=0)]))
+        fetch=Mock(side_effect=[frame,RuntimeError('temporary')])
+        with self.assertLogs('market.intraday_prices',level='WARNING') as logs:
+            result=fetch_minutes(['1100','1101'],downloader=fetch,retry_delay=0)
+        self.assertEqual(result['1100'][0].close,102)
+        self.assertEqual(result['1101'],[])
+        self.assertIn('retry failed for 1 symbols: RuntimeError',' '.join(logs.output))
 
     def test_timezone_naive_feed_is_rejected(self):
         frame=pd.DataFrame({'Low':[100],'Close':[102],'Volume':[1]},index=pd.to_datetime(['2026-09-24 10:00']))
-        with self.assertRaises(ValueError): fetch_minutes(['1100'],downloader=Mock(return_value=frame))
+        with self.assertRaises(ValueError):
+            fetch_minutes(['1100'],downloader=Mock(return_value=frame),retry_delay=0)
 
 
 class StateTests(unittest.TestCase):

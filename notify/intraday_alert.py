@@ -347,10 +347,11 @@ class Monitor:
             if event:
                 events.append(event)
                 log.info("%s", json.dumps(event, ensure_ascii=False))
-        return {
+        status = ("ok" if counts["ok"] == len(batch)
+                  else "degraded" if counts["ok"] else "quote_unavailable")
+        result = {
             **summary,
-            "status": ("ok" if counts["ok"] == len(batch)
-                       else "degraded" if counts["ok"] else "quote_unavailable"),
+            "status": status,
             "members": len(members),
             "checked": len(batch),
             "membership_asof": self.snapshot["asof"],
@@ -359,6 +360,14 @@ class Monitor:
             "events": len(events),
             "event_items": events,
         }
+        if status == "quote_unavailable":
+            detail = " ".join(f"{key}={value}" for key, value in sorted(counts.items()))
+            log.warning(
+                "Yahoo minute data unavailable: checked=%d %s max_delay=%s",
+                len(batch), detail,
+                (f"{max(delays):.0f}s" if delays else "n/a"),
+            )
+        return result
 
 
 def main(argv=None):

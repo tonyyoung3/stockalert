@@ -7,6 +7,8 @@ This is a minute-bar approximation, not a tick feed or latency guarantee.
 from __future__ import annotations
 
 import math
+import logging
+import time as time_module
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
 from decimal import Decimal
@@ -19,6 +21,7 @@ DEFAULT_THRESHOLD_PCT = Decimal("2")
 SESSION_START = time(9)
 DATA_END = time(12)
 MONITOR_END = time(12, 2)
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -36,18 +39,13 @@ def monitoring_session(now):
             and SESSION_START <= now.time() < MONITOR_END)
 
 
-def fetch_minutes(codes, *, downloader=None):
-    import yfinance as yf
-    symbols = [code + ".TW" for code in sorted(codes)]
-    frame = (downloader or yf.download)(
-        symbols, period="1d", interval="1m", auto_adjust=False,
-        prepost=False, group_by="ticker", threads=4, progress=False, timeout=10,
-    )
+def _parse_minutes(frame, codes):
     result = {code: [] for code in codes}
     if frame is None or frame.empty:
         return result
     if frame.index.tz is None:
         raise ValueError("Yahoo returned timezone-naive intraday data")
+    symbols = [code + ".TW" for code in codes]
     for code in result:
         symbol = code + ".TW"
         if getattr(frame.columns, "nlevels", 1) > 1:
@@ -60,9 +58,67 @@ def fetch_minutes(codes, *, downloader=None):
             continue
         if not {"Low", "Close", "Volume"}.issubset(rows.columns):
             continue
-        result[code] = [Bar(ts.to_pydatetime().astimezone(TW),
-                            float(row.Low), float(row.Close), float(row.Volume))
-                        for ts, row in rows.iterrows()]
+        parsed = []
+        for ts, row in rows.iterrows():
+            values = (float(row.Low), float(row.Close), float(row.Volume))
+            # Multi-symbol frames contain all-NaN columns for tickers that failed.
+            # Do not mistake those placeholder rows for a successful download.
+            if not all(math.isfinite(value) for value in values):
+                continue
+            parsed.append(Bar(ts.to_pydatetime().astimezone(TW), *values))
+        result[code] = parsed
+    return result
+
+
+def fetch_minutes(codes, *, downloader=None, retry_delay=0.5, sleeper=None):
+    """Download one-minute bars and retry only symbols missing from the batch.
+
+    Yahoo occasionally returns valid bars for part of a multi-symbol request while
+    yfinance logs the rest as "possibly delisted". A low-concurrency retry avoids
+    resetting those symbols' monitor warm-up state for a transient partial failure.
+    """
+    if downloader is None:
+        import yfinance as yf
+        downloader = yf.download
+        # yfinance logs partial batch failures as ERROR even though it returns a
+        # usable DataFrame. The monitor reports a concise warning after its retry.
+        logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+    sleeper = sleeper or time_module.sleep
+    ordered = sorted(set(codes))
+    if not ordered:
+        return {}
+    symbols = [code + ".TW" for code in ordered]
+    frame = downloader(
+        symbols, period="1d", interval="1m", auto_adjust=False,
+        prepost=False, group_by="ticker", threads=4, progress=False, timeout=10,
+    )
+    result = _parse_minutes(frame, ordered)
+    missing = [code for code in ordered if not result[code]]
+    if not missing:
+        return result
+    if retry_delay > 0:
+        sleeper(retry_delay)
+    try:
+        retry = downloader(
+            [code + ".TW" for code in missing], period="1d", interval="1m",
+            auto_adjust=False, prepost=False, group_by="ticker", threads=2,
+            progress=False, timeout=5,
+        )
+        recovered = _parse_minutes(retry, missing)
+    except Exception as exc:
+        log.warning("Yahoo minute retry failed for %d symbols: %s",
+                    len(missing), type(exc).__name__)
+        return result
+    for code, bars in recovered.items():
+        if bars:
+            result[code] = bars
+    remaining = [code for code in missing if not result[code]]
+    if remaining:
+        sample = ",".join(remaining[:8]) + ("…" if len(remaining) > 8 else "")
+        log.warning("Yahoo minute data still missing after retry: %d/%d symbols (%s)",
+                    len(remaining), len(ordered), sample)
+    elif missing:
+        log.info("Yahoo minute retry recovered %d symbols", len(missing))
     return result
 
 

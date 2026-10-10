@@ -656,17 +656,22 @@ def health_payload() -> dict:
 
 
 def api(path, qs):
-    if path == "/api/market_home":
-        cached = _cached_market_home(qs)
-        if cached is not None:
-            return cached
-    conn = market_db.connect()
-    token = _request_conn.set(conn)
+    # Actions write, service reads: no FinMind HTTP on this request (#108 / #113).
+    finmind_token = broker_branch_mod.forbid_request_time_finmind()
     try:
-        return _api(path, qs)
+        if path == "/api/market_home":
+            cached = _cached_market_home(qs)
+            if cached is not None:
+                return cached
+        conn = market_db.connect()
+        token = _request_conn.set(conn)
+        try:
+            return _api(path, qs)
+        finally:
+            _request_conn.reset(token)
+            conn.close()
     finally:
-        _request_conn.reset(token)
-        conn.close()
+        broker_branch_mod.reset_request_time_finmind(finmind_token)
 
 
 def _api(path, qs):

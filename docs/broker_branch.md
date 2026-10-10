@@ -1,12 +1,12 @@
-# 熱門股分點動向：既有資料唯讀查詢
+# 熱門股分點動向：路徑 A 排程 ingest + 網站只讀
 
-**分點自動更新已停用。** 不再提供排程或 CLI 正式匯入，也不需要供應商 token。
-網站只讀 sqlite／Turso 中既有的 `broker_branch_daily`、`brokers`、`broker_branch_meta`。
-資料庫既有列保留；空表回空列表，不會在請求時補抓。熱門股分點**不是全市場**。
+**Actions 寫、服務讀。** FinMind 只由 GitHub Actions（`.github/workflows/update_broker_branch.yml`，平日約 **21:00** 台灣時間）或 CLI `python -m market.broker_branch ingest` 寫入 sqlite／Turso。Dashboard／API **請求時不打 FinMind**。空表回空列表 + freshness，不會在請求時補抓。熱門股分點**不是全市場**。
 
-`data_mode` 依儲存的來源標記判斷：`live` 表示歷史正式資料，並不表示仍有更新；
-`dev_fixture` 表示測試資料，`empty` 表示沒有資料。無來源標記的列保守視為測試資料。
-`BROKER_BRANCH_HOT_N` 僅供既有切片資訊顯示（預設 80），不會觸發下載。
+`ingest_configured: true` 只表示**這個行程**有 `FINMIND_TOKEN`，可以跑排程 ingest，**不是**網站 live fetch。Cloud Run 讀庫通常沒有 token。
+
+資料集是 FinMind **`TaiwanStockTradingDailyReport`**（Sponsor）。每次請求 `data_id`（股票）+ `date`（`YYYY-MM-DD`）。`securities_trader_id` 是「依券商查」的替代參數，跟股票一起查時**不要傳**。回傳是價位列（`price` / `buy` / `sell`）；入庫前依分點 `SUM(buy)`、`SUM(sell)`，**不存價格**。`net_volume = buy - sell`（股）。
+
+單檔 HTTP 400（或其它 FinMind 錯誤）：**skip + log**（status／detail，不含 token），繼續其餘熱門 N。401／403 中止整次（token／Sponsor 權限）。整次 0 列，或失敗檔數超過一半，job 失敗（Slack）。不要把 fixture 當 production。
 
 ## API / SQL 契約（給 #55 / #56 / #57）
 
@@ -24,10 +24,11 @@ Base：與現有儀表板相同的 sqlite／Turso 讀取。
 | `path` | 固定 `"A"` |
 | `slice_decision` | 固定 `"hot_n"` |
 | `slice_trade_date` | 選熱門 N 所用的 `stock_daily` 日（可能比 ingest 日舊） |
-| `ingest_configured` | 固定 `false`，正式匯入已停用 |
-| `writes` / `reads` | 固定 `"disabled"` / `"db"` |
+| `dataset` | `TaiwanStockTradingDailyReport` |
+| `ingest_configured` | 這個行程有 `FINMIND_TOKEN` 才是 `true`。網站通常是 `false` |
+| `writes` / `reads` | `"actions_or_cli"` / `"db"` |
 | `data_mode` | `empty` / `live` / `dev_fixture`（空表一律 `empty`） |
-| `blocker` | 自動更新已停用的說明 |
+| `blocker` | 沒有 token 時說明排程 ingest 需要 secret；有 token 則 `null` |
 | `freshness` | `last_date`, `expected_trade_date`（21:00）, `stale`, `empty` |
 
 ### 市場：某日熱門股分點買／賣超 Top K（路徑 A）
@@ -87,10 +88,29 @@ ORDER BY b.net_volume DESC;
 
 `GET /api/broker_branch/freshness`
 
-`automatic_updates: false`。21:00 僅保留作為歷史資料過期判定的相容欄位，不代表有更新排程。
-獨立於 `/api/freshness`（16:00／T86）。
+`automatic_updates: true` 表示平日 Actions 排程存在。21:00 是分點 freshness 截止，獨立於 `/api/freshness`（16:00／T86）。這支 API 仍然只讀資料庫。
 
 ---
+
+## 排程 ingest（#113）
+
+```bash
+python -m market.broker_branch ingest --date YYYY-MM-DD --n 80 --days 1
+```
+
+| 項目 | 契約 |
+| --- | --- |
+| Endpoint | `GET https://api.finmindtrade.com/api/v4/taiwan_stock_trading_daily_report` |
+| 參數 | `data_id` + `date`。不傳 `securities_trader_id`，不把 token 放進 query |
+| Token | `Authorization: Bearer`。Actions secret `FINMIND_TOKEN`（Sponsor）。`.env.example` 只有空佔位 |
+| 切片 | `stock_daily` 該日（或之前最近日）`ORDER BY turnover DESC LIMIT N`（預設 80，`BROKER_BRANCH_HOT_N`） |
+| 彙總 | 同一 `(date, stock_id, securities_trader_id)` 的價位列加總 `buy`／`sell`，寫 `broker_branch_daily`；名稱寫 `brokers` |
+| 壞檔 | HTTP ≥400（除 401／403 與可重試的 429／5xx）skip + log，不讓整次 hot-N 停在第一檔 |
+| 整次失敗 | 0 列，或失敗 stock-day 超過一半。401／403 立刻停 |
+| Turso | 沿用 `cloud_db.push_market_files`。Actions **沒有** `TURSO_DATABASE_URL`／`TURSO_AUTH_TOKEN` 會失敗，避免只寫本機 cache |
+| 驗證 | Actions → Update broker-branch → Run workflow。`n`、`days`、`date` 可空白（`date` 空白＝21:00 截止日，`days` 預設 1） |
+
+文件寫 TradingDailyReport 約 18:00 更新。Job 仍排 21:00，等 18:00 的 `stock_daily` 先寫好成交額。
 
 ## 掃描衍生指標
 
@@ -98,6 +118,6 @@ ORDER BY b.net_volume DESC;
 
 ## 本機測試資料
 
-`python -m market.broker_branch status` 回報唯讀狀態。
+`python -m market.broker_branch status` 回報 token 是否可供排程 ingest（不印 token、不打 API）。
 `python -m market.broker_branch load-fixture --dev` 只供 TEST/DEV，必須明確加 `--dev`；
 示範列不可當成正式行情推到 Turso。fixture 檔在 `tests/fixtures/broker_branch_sample.json`。

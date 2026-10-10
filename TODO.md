@@ -15,7 +15,7 @@
 
 
 
-分點自動更新已停用；網站只讀既有資料。API／SQL 在 **`docs/broker_branch.md`**。空表在 `collector.init_db`。
+分點由 GitHub Actions 平日約 21:00 寫入（`TaiwanStockTradingDailyReport`：`data_id` + `date`，再依分點加總）。網站只讀資料庫，不即時拉 FinMind。API／SQL 在 **`docs/broker_branch.md`**。空表在 `collector.init_db`。
 
 - **既有資料：** 熱門前 N（`stock_daily` 最新日成交額，`BROKER_BRANCH_HOT_N` 預設 80）驅動市場 Top；同一套表給個股讀取。標題「**熱門股分點動向**」，**不是**全市場。
 

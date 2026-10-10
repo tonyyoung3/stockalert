@@ -141,8 +141,8 @@ def init_db(conn: sqlite3.Connection):
         stock_name TEXT,
         last_seen  TEXT   -- 最後出現在資料中的交易日
     );
-    -- 分點買賣超日彙總（#54 / #61）。保留既有資料供唯讀查詢。
-    -- 不存價位明細。見 docs/broker_branch.md。
+    -- 分點買賣超日彙總（#54 / #61 / #113）。熱門前 N，由 Actions ingest 寫入。
+    -- 不存價位明細；TradingDailyReport 價位列先依分點加總。見 docs/broker_branch.md。
     CREATE TABLE IF NOT EXISTS broker_branch_daily (
         trade_date  TEXT,
         stock_id    TEXT,

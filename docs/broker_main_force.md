@@ -1,6 +1,6 @@
 # 熱門股分點主力 — 掃描衍生指標（#98 / epic #76）
 
-**狀態：query-time 契約 + 掃描工作台面板（#101）。** 只讀路徑 A 已入庫的 `broker_branch_daily`（熱門前 N）。**自動更新已停用，僅查詢既有資料**。標題鎖定「**熱門股分點動向**」，禁止寫「全市場」。掃描工作台另塊面板讀本 API，與 chip_zscore 散布圖分開；同一套 `tickers`+`asof`。
+**狀態：query-time 契約 + 掃描工作台面板（#101）。** 只讀路徑 A 已入庫的 `broker_branch_daily`（熱門前 N）。寫入是 GitHub Actions `update_broker_branch`，這支 API 不打 FinMind，也不是全市場。標題鎖定「**熱門股分點動向**」，禁止寫「全市場」。掃描工作台另塊面板讀本 API，與 chip_zscore 散布圖分開；同一套 `tickers`+`asof`。
 
 來源：DE 評估 #85（零額度衍生）。資料契約見 `docs/broker_branch.md`。
 
@@ -111,7 +111,7 @@
 | 計算 / 查詢 | `web/broker_main_force.py` |
 | 路由 | `GET /api/scanner/broker_main_force` → `broker_main_force.api_broker_main_force` |
 | 資料 | 只讀 `broker_branch_daily` / `brokers` / `stocks`。不寫入、不 ingest |
-| 更新狀態 | 自動更新已停用；僅查詢資料庫既有列 |
+| 更新狀態 | 掃描 API 只讀資料庫。列由 Actions `update_broker_branch` 寫入（TradingDailyReport） |
 
 ---
 

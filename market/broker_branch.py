@@ -1,8 +1,20 @@
 #!/usr/bin/env python3
-"""Read-only broker-branch queries over previously stored hot-N data.
+"""Broker-branch (分點買賣超) — path A scheduled ingest + read APIs.
 
-Automatic ingestion is disabled. Empty tables return honest empty states.
-Fixture loading is TEST/DEV only; see docs/broker_branch.md.
+Path A: 熱門前 N powers market Top; the same tables serve single-stock reads.
+Titles say 熱門股, never 全市場.
+
+**Actions write, service reads.** FinMind HTTP runs only from
+`python -m market.broker_branch ingest` (GitHub Actions
+``.github/workflows/update_broker_branch.yml``) or a scheduled CLI.
+Dashboard / API request handlers never call FinMind. Empty tables stay
+honest empty + freshness. ``ingest_configured`` means this process has
+FINMIND_TOKEN for *scheduled* ingest — not a website live fetch.
+
+The dataset is ``TaiwanStockTradingDailyReport`` (``data_id`` + ``date``).
+Price-level rows are summed by broker branch into ``broker_branch_daily``.
+A bad ticker (HTTP 400) is logged and skipped. Fixture load is TEST/DEV
+only. See docs/broker_branch.md.
 """
 from __future__ import annotations
 
@@ -12,8 +24,12 @@ import logging
 import os
 import sqlite3
 import sys
-from datetime import datetime
+import time
+from contextvars import ContextVar
+from datetime import date, datetime
 from pathlib import Path
+
+import requests
 
 from data.paths import repo_file
 from data.sqlite_util import configure_local
@@ -21,10 +37,17 @@ from web import freshness as freshness_mod
 
 log = logging.getLogger(__name__)
 
+DATASET = "TaiwanStockTradingDailyReport"
+FINMIND_TRADING_DAILY_REPORT_URL = (
+    "https://api.finmindtrade.com/api/v4/taiwan_stock_trading_daily_report"
+)
 DEFAULT_HOT_N = 80
 DEFAULT_K = 15
 HOT_N_MAX = 500
-EXPECTED_AFTER_HOUR = 21  # Historical freshness cutoff, not an active schedule.
+EXPECTED_AFTER_HOUR = 21  # Asia/Taipei. After the 18:00 stock_daily job.
+HTTP_TIMEOUT = 45
+HTTP_RETRIES = 4
+HTTP_RETRY_STATUSES = {429, 500, 502, 503, 504}
 
 TITLE_HOT_N = "熱門股分點動向"
 TITLE_FULL_MARKET = "全市場分點買賣超"
@@ -38,7 +61,22 @@ SLICE_DECISION = "hot_n"
 SOURCE_LIVE = "live"
 SOURCE_FIXTURE = "dev_fixture"
 
-BLOCKER = "分點自動更新已停用；僅供查詢既有資料。"
+BLOCKER = (
+    "FINMIND_TOKEN absent from this process. "
+    "Scheduled ingest (GitHub Actions / `python -m market.broker_branch ingest`) "
+    "needs the secret. Dashboard/API never call FinMind. "
+    "Path A is 熱門前 N, not 全市場."
+)
+REQUEST_TIME_REFUSAL = (
+    "FinMind HTTP is not allowed on dashboard/API request. "
+    "Actions write; service reads. Use `python -m market.broker_branch ingest`."
+)
+
+# Default True so CLI ingest / unit tests work. dashboard.api() sets False
+# for the request so a handler cannot call FinMind.
+_finmind_http_allowed: ContextVar[bool] = ContextVar(
+    "finmind_http_allowed", default=True
+)
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS broker_branch_daily (
@@ -71,6 +109,14 @@ DEFAULT_FIXTURE = repo_file("tests", "fixtures", "broker_branch_sample.json")
 _DOTENV_LOADED = False
 
 
+class FinMindError(RuntimeError):
+    """FinMind client error. Message must never include the token."""
+
+
+class FinMindAuthError(FinMindError):
+    """401/403. Fail the job; do not keep walking the hot-N list."""
+
+
 def _ensure_dotenv() -> None:
     """Load local display settings from .env once."""
     global _DOTENV_LOADED
@@ -90,6 +136,34 @@ def _env(env: dict[str, str] | None) -> dict[str, str]:
         _ensure_dotenv()
         return os.environ
     return env
+
+
+def token_value(env: dict[str, str] | None = None) -> str:
+    """Return the token string, or ''. Callers must not log the return value."""
+    return (_env(env).get("FINMIND_TOKEN") or "").strip()
+
+
+def token_present(env: dict[str, str] | None = None) -> bool:
+    return bool(token_value(env))
+
+
+def finmind_http_allowed() -> bool:
+    """False inside dashboard.api(); True for CLI ingest / tests."""
+    return bool(_finmind_http_allowed.get())
+
+
+def forbid_request_time_finmind():
+    """Disable FinMind HTTP for this request context. Returns a reset token."""
+    return _finmind_http_allowed.set(False)
+
+
+def reset_request_time_finmind(token) -> None:
+    _finmind_http_allowed.reset(token)
+
+
+def require_finmind_http() -> None:
+    if not finmind_http_allowed():
+        raise FinMindError(REQUEST_TIME_REFUSAL)
 
 
 def configured_hot_n(env: dict[str, str] | None = None) -> int:
@@ -112,18 +186,21 @@ def market_title(coverage: str) -> str:
 
 
 def ingest_status(env: dict[str, str] | None = None) -> dict:
-    """Read-only status; production ingestion is no longer available."""
+    """Token / path metadata. Does not fetch. ingest_configured ≠ website live."""
+    present = token_present(env)
     return {
         "kind": "broker_branch",
         "not": "t86_foreign",
-        "ingest_configured": False,
+        "dataset": DATASET,
+        "token_present": present,
+        "ingest_configured": present,
         "path": PATH,
         "slice_decision": SLICE_DECISION,
-        "blocker": BLOCKER,
+        "blocker": None if present else BLOCKER,
         "hot_n": configured_hot_n(env),
         "hot_n_default": DEFAULT_HOT_N,
         "expected_after_hour": EXPECTED_AFTER_HOUR,
-        "writes": "disabled",
+        "writes": "actions_or_cli",
         "reads": "db",
     }
 
@@ -255,8 +332,11 @@ def freshness_payload(conn: sqlite3.Connection, now: datetime | None = None) -> 
     status = freshness_mod.table_status("broker_branch_daily", last, today, expected)
     status["expected_trade_date"] = expected.isoformat()
     status["expected_after_hour"] = EXPECTED_AFTER_HOUR
-    status["automatic_updates"] = False
-    status["note"] = BLOCKER
+    status["automatic_updates"] = True
+    status["note"] = (
+        "分點 freshness 用 21:00 台灣時間。寫入是 GitHub Actions，"
+        "不併入 /api/freshness 的 T86 16:00 關鍵表。網站不即時拉 FinMind。"
+    )
     return status
 
 
@@ -272,12 +352,12 @@ def _envelope(
     mode = data_mode(conn, env)
     slice_day = _meta_get(conn, "slice_trade_date") or latest_stock_daily_date(conn)
     if coverage == "hot_n":
-        note = "加總範圍是已入庫的熱門前 N 檔，不是全市場。網站只讀資料庫；分點自動更新已停用。"
+        note = "加總範圍是已入庫的熱門前 N 檔，不是全市場。網站只讀資料庫，不即時拉 FinMind。"
     elif coverage == "single_stock":
         note = "該檔讀已入庫熱門前 N 列，不是全市場、也不是 on-demand 拉檔。網站只讀資料庫。"
     else:
         note = (
-            "路徑 A 空狀態：熱門前 N 尚無入庫列。網站只讀資料庫；分點自動更新已停用。"
+            "路徑 A 空狀態：熱門前 N 尚無入庫列。網站只讀資料庫，不即時拉 FinMind。"
             "標題是熱門股，不是全市場。"
         )
     body = {
@@ -293,7 +373,7 @@ def _envelope(
     if mode == DATA_MODE_FIXTURE:
         body["fixture_warning"] = (
             "Rows are a TEST/DEV fixture (or local upsert). "
-            "Not a production feed. Do not merge as live data."
+            "Not a production FinMind feed. Do not merge as live data."
         )
     body.update(extra)
     return body
@@ -555,6 +635,420 @@ def load_fixture(
     }
 
 
+def _as_int(value) -> int:
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _volume(raw: dict, *keys: str) -> int:
+    for key in keys:
+        if key in raw and raw[key] is not None and raw[key] != "":
+            return _as_int(raw[key])
+    return 0
+
+
+def _public_error_text(text: str, token: str) -> str:
+    """Truncate an API message and strip the bearer token if it was echoed."""
+    cleaned = " ".join((text or "").split())
+    if token:
+        cleaned = cleaned.replace(token, "[redacted]")
+    return cleaned[:300]
+
+
+def _error_summary(resp: requests.Response, token: str) -> str:
+    """Status / detail / msg only. Never the Authorization header or token."""
+    try:
+        payload = resp.json()
+    except ValueError:
+        return _public_error_text(getattr(resp, "text", "") or "", token)
+    if not isinstance(payload, dict):
+        return "non-object body"
+    detail = payload.get("detail") or payload.get("msg") or payload.get("message") or ""
+    status = payload.get("status")
+    return _public_error_text(f"status={status} detail={detail}", token)
+
+
+def aggregate_broker_rows(
+    raw_rows: list[dict],
+    *,
+    stock_id: str | None = None,
+    trade_date: str | None = None,
+) -> tuple[list[tuple], list[tuple[str, str]]]:
+    """Sum price-level TradingDailyReport rows into one broker-branch row.
+
+    ``broker_branch_daily`` is ``(trade_date, stock_id, broker_id)`` with
+    buy/sell/net share counts. ``price`` is dropped. ``securities_trader_id``
+    is the branch key, not a request parameter.
+    """
+    fallback_stock = (stock_id or "").strip()
+    fallback_day = (trade_date or "").strip()[:10]
+    buckets: dict[tuple[str, str, str], list[int]] = {}
+    names: dict[str, str] = {}
+    for raw in raw_rows or []:
+        if not isinstance(raw, dict):
+            continue
+        broker_id = str(raw.get("securities_trader_id") or "").strip()
+        row_stock = str(raw.get("stock_id") or raw.get("data_id") or "").strip()
+        row_day = str(raw.get("date") or raw.get("trade_date") or "").strip()[:10]
+        stock = row_stock or fallback_stock
+        day = row_day or fallback_day
+        if not broker_id or not stock or not day:
+            continue
+        buy = _volume(raw, "buy", "buy_volume")
+        sell = _volume(raw, "sell", "sell_volume")
+        key = (day, stock, broker_id)
+        slot = buckets.get(key)
+        if slot is None:
+            slot = [0, 0]
+            buckets[key] = slot
+        slot[0] += buy
+        slot[1] += sell
+        name = str(raw.get("securities_trader") or "").strip()
+        if name:
+            names[broker_id] = name
+    mapped: list[tuple] = []
+    brokers: list[tuple[str, str]] = []
+    seen_brokers: set[str] = set()
+    for key in sorted(buckets):
+        buy, sell = buckets[key]
+        if buy == 0 and sell == 0:
+            continue
+        day, stock, broker_id = key
+        mapped.append((day, stock, broker_id, buy, sell, buy - sell))
+        if broker_id not in seen_brokers:
+            seen_brokers.add(broker_id)
+            brokers.append((broker_id, names.get(broker_id) or broker_id))
+    return mapped, brokers
+
+
+def finmind_headers(token: str) -> dict[str, str]:
+    """Authorization only. Never put the token in the query string."""
+    return {"Authorization": f"Bearer {token}"}
+
+
+def fetch_trading_daily_report(
+    stock_id: str,
+    trade_date: str,
+    token: str,
+    *,
+    session: requests.Session | None = None,
+    sleep: callable = time.sleep,
+) -> list[dict]:
+    """GET TradingDailyReport for one stock and one date.
+
+    Query is ``data_id`` + ``date`` only. ``securities_trader_id`` is the
+    alternate (query-by-broker) parameter and is not sent here.
+    Token is Bearer-only and is never logged. CLI / Actions only.
+    """
+    require_finmind_http()
+    if not token:
+        raise FinMindError("FINMIND_TOKEN missing; refusing to call FinMind")
+    params = {
+        "data_id": stock_id,
+        "date": trade_date,
+    }
+    sess = session or requests.Session()
+    last_err: Exception | None = None
+    for attempt in range(HTTP_RETRIES):
+        try:
+            resp = sess.get(
+                FINMIND_TRADING_DAILY_REPORT_URL,
+                params=params,
+                headers=finmind_headers(token),
+                timeout=HTTP_TIMEOUT,
+            )
+        except requests.RequestException as exc:
+            last_err = exc
+            log.warning(
+                "FinMind TradingDailyReport network error stock_id=%s date=%s "
+                "attempt=%s: %s",
+                stock_id,
+                trade_date,
+                attempt + 1,
+                type(exc).__name__,
+            )
+            sleep(2 ** attempt)
+            continue
+        if resp.status_code in (401, 403):
+            raise FinMindAuthError(
+                "FinMind auth failed (check FINMIND_TOKEN; "
+                "TradingDailyReport is Sponsor-tier)"
+            )
+        if resp.status_code in HTTP_RETRY_STATUSES:
+            log.warning(
+                "FinMind TradingDailyReport HTTP %s stock_id=%s date=%s attempt=%s",
+                resp.status_code,
+                stock_id,
+                trade_date,
+                attempt + 1,
+            )
+            sleep(2 ** attempt)
+            continue
+        if resp.status_code >= 400:
+            detail = _error_summary(resp, token)
+            raise FinMindError(
+                f"FinMind TradingDailyReport HTTP {resp.status_code} "
+                f"stock_id={stock_id} date={trade_date} {detail}"
+            )
+        try:
+            payload = resp.json()
+        except ValueError as exc:
+            raise FinMindError(
+                f"FinMind TradingDailyReport invalid JSON stock_id={stock_id} "
+                f"date={trade_date}"
+            ) from exc
+        if not isinstance(payload, dict):
+            raise FinMindError(
+                f"FinMind TradingDailyReport unexpected payload stock_id={stock_id}"
+            )
+        status = payload.get("status")
+        msg = str(payload.get("msg") or "").lower()
+        if status not in (None, 200) and msg not in ("", "success"):
+            raise FinMindError(
+                f"FinMind TradingDailyReport status={status} stock_id={stock_id} "
+                f"date={trade_date} {_public_error_text(str(payload.get('msg') or ''), token)}"
+            )
+        data = payload.get("data") or []
+        if not isinstance(data, list):
+            raise FinMindError(
+                f"FinMind TradingDailyReport data is not a list stock_id={stock_id}"
+            )
+        return data
+    raise FinMindError(
+        f"FinMind TradingDailyReport failed after retries stock_id={stock_id} "
+        f"date={trade_date} "
+        f"({type(last_err).__name__ if last_err else 'http'})"
+    )
+
+
+def upsert_live_rows(
+    conn: sqlite3.Connection,
+    mapped: list[tuple],
+    brokers: list[tuple[str, str]],
+) -> int:
+    """Write day aggregates. Does not accept fixture provenance."""
+    if not mapped:
+        return 0
+    ensure_schema(conn)
+    if brokers:
+        conn.executemany(
+            "INSERT OR REPLACE INTO brokers (broker_id, broker_name) VALUES (?, ?)",
+            brokers,
+        )
+    conn.executemany(
+        "INSERT OR REPLACE INTO broker_branch_daily "
+        "(trade_date, stock_id, broker_id, buy_volume, sell_volume, net_volume) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        mapped,
+    )
+    conn.commit()
+    return len(mapped)
+
+
+def _ingest_dates(conn: sqlite3.Connection, end: str, days: int) -> list[str]:
+    """Trading days to ingest, newest first. days=1 is just `end`."""
+    if days <= 1:
+        return [end]
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT trade_date FROM stock_daily "
+            "WHERE trade_date <= ? ORDER BY trade_date DESC LIMIT ?",
+            (end, days),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return [end]
+    dates = [str(r[0]) for r in rows if r and r[0]]
+    return dates or [end]
+
+
+def resolve_ingest_date(
+    conn: sqlite3.Connection,
+    trade_date: str | None = None,
+    now: datetime | None = None,
+) -> str:
+    if trade_date:
+        return trade_date
+    expected = freshness_mod.expected_tw_trade_date(now, after_hour=EXPECTED_AFTER_HOUR)
+    latest_sd = latest_stock_daily_date(conn)
+    if latest_sd and latest_sd > expected.isoformat():
+        return latest_sd
+    return expected.isoformat()
+
+
+def ingest_hot_n(
+    conn: sqlite3.Connection,
+    *,
+    trade_date: str | None = None,
+    n: int | None = None,
+    days: int = 1,
+    env: dict[str, str] | None = None,
+    fetcher=None,
+    now: datetime | None = None,
+) -> dict:
+    """Path A scheduled ingest: hot-N from stock_daily.turnover, then report.
+
+    One TradingDailyReport call per stock per day (``data_id`` + ``date``).
+    Price rows are aggregated by broker branch. A per-stock FinMindError
+    (including HTTP 400) is logged and skipped. Auth failures abort the job.
+    The job still fails when every ticker fails or more than half fail.
+    """
+    require_finmind_http()
+    token = token_value(env)
+    if not token:
+        raise FinMindError(
+            "FINMIND_TOKEN missing; path A scheduled ingest will not call FinMind"
+        )
+    n = configured_hot_n(env) if n is None else max(1, min(int(n), HOT_N_MAX))
+    days = max(1, min(int(days), 730))
+    end = resolve_ingest_date(conn, trade_date, now)
+    fetch = fetcher or (
+        lambda sid, day: fetch_trading_daily_report(sid, day, token)
+    )
+    ensure_schema(conn)
+
+    days_done: list[dict] = []
+    failed_stocks: list[str] = []
+    total_rows = 0
+    last_slice = None
+    ingest_days = _ingest_dates(conn, end, days)
+
+    for day in ingest_days:
+        slice_day = stock_daily_date_on_or_before(conn, day) or latest_stock_daily_date(
+            conn
+        )
+        picked = select_hot_n(conn, n=n, trade_date=slice_day) if slice_day else []
+        if not picked:
+            raise FinMindError(
+                "no stock_daily turnover slice; cannot pick 熱門前 N "
+                f"(ingest_date={day})"
+            )
+        last_slice = slice_day
+        mapped: list[tuple] = []
+        brokers: list[tuple[str, str]] = []
+        day_fail: list[str] = []
+        for stock_id, _name, _turnover in picked:
+            try:
+                raw_rows = fetch(stock_id, day)
+            except FinMindAuthError:
+                log.error(
+                    "FinMind TradingDailyReport auth failed stock_id=%s date=%s; "
+                    "aborting hot-N ingest",
+                    stock_id,
+                    day,
+                )
+                raise
+            except FinMindError as exc:
+                log.warning(
+                    "FinMind TradingDailyReport skip stock_id=%s date=%s: %s",
+                    stock_id,
+                    day,
+                    exc,
+                )
+                day_fail.append(stock_id)
+                continue
+            except Exception:
+                log.exception(
+                    "FinMind TradingDailyReport failed stock_id=%s date=%s",
+                    stock_id,
+                    day,
+                )
+                day_fail.append(stock_id)
+                continue
+            day_mapped, day_brokers = aggregate_broker_rows(
+                raw_rows, stock_id=stock_id, trade_date=day,
+            )
+            mapped.extend(day_mapped)
+            brokers.extend(day_brokers)
+        wrote = upsert_live_rows(conn, mapped, brokers)
+        total_rows += wrote
+        failed_stocks.extend(day_fail)
+        days_done.append(
+            {
+                "trade_date": day,
+                "slice_trade_date": slice_day,
+                "hot_n": len(picked),
+                "rows": wrote,
+                "failed_stocks": day_fail,
+                "title": TITLE_HOT_N,
+            }
+        )
+        log.info(
+            "熱門股分點 ingest date=%s slice=%s n=%s rows=%s failed=%s dataset=%s",
+            day,
+            slice_day,
+            len(picked),
+            wrote,
+            len(day_fail),
+            DATASET,
+        )
+
+    attempts = sum(item["hot_n"] for item in days_done)
+    if total_rows == 0:
+        raise FinMindError(
+            "FinMind returned no TradingDailyReport rows for 熱門前 N "
+            f"(date={end} failed={len(failed_stocks)}/{attempts}); "
+            "data may not be published yet"
+        )
+    fail_ratio = len(failed_stocks) / max(attempts, 1)
+    if fail_ratio > 0.5:
+        raise FinMindError(
+            f"FinMind failed for {len(failed_stocks)} of {attempts} hot-N "
+            "stock-days; not marking live"
+        )
+
+    _meta_set(
+        conn,
+        {
+            "source": SOURCE_LIVE,
+            "slice_trade_date": last_slice or end,
+            "ingest_trade_date": end,
+            "hot_n": str(n),
+            "dataset": DATASET,
+        },
+    )
+    return {
+        "title": TITLE_HOT_N,
+        "coverage": "hot_n",
+        "path": PATH,
+        "ingest_configured": True,
+        "production": True,
+        "data_mode": DATA_MODE_LIVE,
+        "trade_date": end,
+        "slice_trade_date": last_slice,
+        "hot_n": n,
+        "rows": total_rows,
+        "failed_stocks": failed_stocks,
+        "days": days_done,
+        "dataset": DATASET,
+    }
+
+
+def push_turso_if_configured(
+    *,
+    days: int = 14,
+    today: date | None = None,
+    skip: bool = False,
+) -> dict:
+    """Reuse cloud_db.push_market_files (trade_date window + full brokers/meta)."""
+    from data import cloud_db
+
+    if skip:
+        log.info("Turso push skipped (--skip-turso)")
+        return {"skipped": True}
+    if not cloud_db.configured():
+        log.info(
+            "Turso not configured; broker_branch_daily stayed in local sqlite. "
+            "Set TURSO_DATABASE_URL + TURSO_AUTH_TOKEN to push "
+            "broker_branch_daily / brokers / broker_branch_meta."
+        )
+        return {"skipped": True, "reason": "not_configured"}
+    pushed = cloud_db.push_market_files(days=days, today=today)
+    log.info("Turso push complete for 熱門股分點 tables (existing cloud_db window)")
+    return pushed
+
+
 def _connect_local() -> sqlite3.Connection:
     from market.collector import DB_PATH, init_db
 
@@ -568,12 +1062,15 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
     _ensure_dotenv()
     parser = argparse.ArgumentParser(
-        description="Broker-branch read-only status and TEST/DEV fixture helpers.",
+        description=(
+            "Broker-branch helpers: status, TEST/DEV fixture, or path A scheduled "
+            "ingest（熱門股分點動向，不是全市場）。FinMind writes are CLI/Actions only."
+        ),
     )
     parser.add_argument(
         "command",
         nargs="?",
-        choices=("status", "load-fixture"),
+        choices=("status", "load-fixture", "ingest"),
         default="status",
     )
     parser.add_argument(
@@ -582,10 +1079,25 @@ def main(argv: list[str] | None = None) -> int:
         help="required for load-fixture; marks the write as TEST/DEV",
     )
     parser.add_argument("--fixture", type=Path, default=DEFAULT_FIXTURE)
+    parser.add_argument("--date", default="", help="ingest trade date YYYY-MM-DD")
+    parser.add_argument("--n", type=int, default=None, help="hot-N (default BROKER_BRANCH_HOT_N or 80)")
+    parser.add_argument("--days", type=int, default=1, help="trading days to ingest ending at --date")
+    parser.add_argument(
+        "--skip-turso",
+        action="store_true",
+        help="do not push local sqlite to Turso even if secrets are set",
+    )
+    parser.add_argument(
+        "--turso-days",
+        type=int,
+        default=14,
+        help="N-day window for cloud_db.push_market_files (default 14)",
+    )
     args = parser.parse_args(argv)
 
     if args.command == "status":
         status = ingest_status()
+        # Never dump the token; ingest_status only has booleans.
         print(json.dumps(status, ensure_ascii=False, indent=2))
         return 0
 
@@ -599,6 +1111,42 @@ def main(argv: list[str] | None = None) -> int:
         finally:
             conn.close()
         print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "ingest":
+        if not token_present():
+            log.error(
+                "ingest refused: FINMIND_TOKEN missing. "
+                "Path A scheduled ingest will not call FinMind. "
+                "Set the GitHub Actions secret or local .env (not required on Cloud Run)."
+            )
+            return 2
+        conn = _connect_local()
+        try:
+            result = ingest_hot_n(
+                conn,
+                trade_date=args.date or None,
+                n=args.n,
+                days=args.days,
+            )
+        except FinMindError as exc:
+            log.error("scheduled ingest failed: %s", exc)
+            conn.close()
+            return 1
+        except Exception:
+            log.exception("scheduled ingest failed")
+            conn.close()
+            return 1
+        conn.close()
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        try:
+            push_turso_if_configured(
+                days=args.turso_days,
+                skip=args.skip_turso,
+            )
+        except Exception:
+            log.exception("Turso push failed")
+            return 1
         return 0
 
     return 1

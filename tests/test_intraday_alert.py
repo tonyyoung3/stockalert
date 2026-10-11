@@ -12,7 +12,7 @@ from notify.intraday_alert import (
     Monitor, load_settings, open_store, parse_codes, recent_events, record_signal,
     save_settings, validate_settings, worker_lock,
 )
-from notify.local_app import event_row
+from notify.local_app import event_row, quote_problem_text, summary_status_text
 from web.tw_calendar import TW
 
 
@@ -257,10 +257,18 @@ class WorkerTests(unittest.TestCase):
 
     def test_stale_quotes_are_observable(self):
         self.fetch.return_value={'1100':bars(clock(minute=1,second=0))}
-        got=self.worker.cycle(clock())
+        with self.assertLogs('notify.intraday_alert',level='WARNING') as logs:
+            got=self.worker.cycle(clock())
         self.assertEqual(got['counts']['stale'],1)
         self.assertEqual(got['counts']['missing'],49)
         self.assertEqual(got['events'],0)
+        self.assertIn('stale=1', ' '.join(logs.output))
+
+    def test_unavailable_summary_explains_delayed_quotes(self):
+        summary={'status':'quote_unavailable','checked':50,
+                 'counts':{'stale':50},'max_delay_seconds':1166}
+        self.assertEqual(summary_status_text(summary),'Yahoo 行情延遲')
+        self.assertEqual(quote_problem_text(summary),'行情過期 50 檔')
 
     def test_all_stocks_are_rotated_in_batches_of_fifty(self):
         path = Path(self.tmp.name) / "all.txt"

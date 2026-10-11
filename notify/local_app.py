@@ -37,6 +37,34 @@ STATUS_TEXT = {
 }
 UNIVERSE_LABELS = {"0050": "0050 成分股", "all": "全部上市股票", "custom": "自訂清單"}
 LABEL_UNIVERSES = {value: key for key, value in UNIVERSE_LABELS.items()}
+QUOTE_COUNT_LABELS = {
+    "stale": "行情過期",
+    "missing": "沒有行情",
+    "incomplete": "分鐘線不完整",
+    "invalid": "行情無效",
+}
+
+
+def summary_status_text(summary):
+    """Return an actionable UI status for quote availability summaries."""
+    status = summary.get("status", "error")
+    counts = summary.get("counts", {})
+    checked = summary.get("checked", 0)
+    if status == "quote_unavailable" and checked:
+        if counts.get("stale") == checked:
+            return "Yahoo 行情延遲"
+        if counts.get("missing") == checked:
+            return "Yahoo 沒有行情資料"
+    return STATUS_TEXT.get(status, status)
+
+
+def quote_problem_text(summary):
+    counts = summary.get("counts", {})
+    return "、".join(
+        f"{label} {counts[key]} 檔"
+        for key, label in QUOTE_COUNT_LABELS.items()
+        if counts.get(key)
+    )
 
 
 def event_row(event):
@@ -182,7 +210,7 @@ class IntradayApp:
 
     def _show_summary(self, summary):
         status = summary.get("status", "error")
-        self.status.set(STATUS_TEXT.get(status, status))
+        self.status.set(summary_status_text(summary))
         checked = datetime.fromisoformat(summary["at"]).strftime("%Y-%m-%d %H:%M:%S")
         parts = [f"最後檢查：{checked}（台灣時間）"]
         if summary.get("members"):
@@ -195,6 +223,9 @@ class IntradayApp:
             parts.append(f"門檻：{summary['threshold_pct']:g}%")
         if summary.get("max_delay_seconds") is not None:
             parts.append(f"最大行情延遲：{summary['max_delay_seconds']:.0f} 秒")
+        problems = quote_problem_text(summary)
+        if problems:
+            parts.append(problems)
         self.detail.set("｜".join(parts))
 
     def _show_event(self, event, *, prepend=True):
